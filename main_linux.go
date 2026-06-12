@@ -16,12 +16,6 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed assets/server/deploy.sh
-var deployScript []byte
-
-//go:embed assets/server/wdtt-server
-var serverBinary []byte
-
 //go:embed assets/icons/icon.png
 var appIcon []byte
 
@@ -29,7 +23,6 @@ var appIcon []byte
 var trayIcon []byte
 
 func main() {
-	backend.Init(deployScript, serverBinary)
 	app := backend.NewApp(trayIcon)
 
 	err := wails.Run(&options.App{
@@ -42,7 +35,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
+		BackgroundColour: &options.RGBA{R: 20, G: 20, B: 22, A: 1},
 		OnStartup:        app.Startup,
 		OnBeforeClose:    app.OnBeforeClose,
 		Bind:             []interface{}{app},

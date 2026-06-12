@@ -105,8 +105,6 @@ function installGoMock() {
           emitDevEvent('log', 'INFO', '[dev] VPN отключён');
         },
         DeleteProfile: asyncVoid,
-        Deploy: asyncVoid,
-        Undeploy: asyncVoid,
         FetchSubscriptionStats: async (rawURL: unknown) => {
           const url = String(rawURL ?? '');
           markDevSubConnected(url, !!window.__pwdttDevConnected);

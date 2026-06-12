@@ -1,5 +1,5 @@
-import type { Server, AppSettings, DeployConfig } from './types';
-import { DEFAULT_SETTINGS, DEFAULT_DEPLOY } from './types';
+import type { Server, AppSettings } from './types';
+import { DEFAULT_SETTINGS } from './types';
 
 const SERVERS_KEY = 'wdtt_servers';
 const SETTINGS_KEY = 'wdtt_settings';
@@ -47,11 +47,4 @@ export const settingsStore = {
     return merged;
   },
   save: (settings: AppSettings) => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)),
-};
-
-const DEPLOY_KEY = 'wdtt_deploy';
-
-export const deployStore = {
-  get: (): DeployConfig => parse<DeployConfig>(DEPLOY_KEY, DEFAULT_DEPLOY),
-  save: (cfg: DeployConfig) => localStorage.setItem(DEPLOY_KEY, JSON.stringify(cfg)),
 };

@@ -207,6 +207,19 @@ export function expireLabel(stats: TrafficStats): string {
   return `Истекает: ${dd}.${mm}.${yyyy} · осталось ${daysLeft} ${daysWord(daysLeft)}`;
 }
 
+export function expireCompactLabel(stats: TrafficStats): string {
+  if (!stats.expire || stats.expire <= 0) return '∞';
+  const d = new Date(stats.expire * 1000);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expDay = new Date(d);
+  expDay.setHours(0, 0, 0, 0);
+  const daysLeft = Math.ceil((expDay.getTime() - today.getTime()) / 86400000);
+  if (daysLeft < 0) return 'истекло';
+  if (daysLeft === 0) return 'сегодня';
+  return `${daysLeft} ${daysWord(daysLeft)}`;
+}
+
 export function subRefreshMs(stats: TrafficStats | null): number {
   const hours = stats?.updateInterval;
   if (hours && hours > 0) return hours * 3600_000;

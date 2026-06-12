@@ -57,16 +57,13 @@ function ServerIcon({ iconKey, size }: { iconKey?: string; size: number }) {
 }
 import AddServer from '../modals/Add-server';
 import EditServer from '../modals/Edit-server';
-import { serverStore } from '../lib/store';
+import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
-import { settingsStore } from '../lib/store';
-import { themeStore } from '../lib/stores/themeStore';
 import { toastStore } from '../lib/stores/toastStore';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficRemainLabel, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, subRefreshMs, type TrafficStats } from '../lib/utils/wdttLink';
 import { SaveProfile } from '../../wailsjs/go/backend/App';
 import type { Server, TunnelState } from '../lib/types';
 import { Connect as WailsConnect, Disconnect as WailsDisconnect } from '../../wailsjs/go/backend/App';
-import shapeLight from '../assets/shape-light.png';
 import shapeDark from '../assets/shape-dark.png';
 import powerIcon from '../assets/power-icon.png';
 
@@ -105,9 +102,6 @@ export default function Connect() {
 
   const [addServerOpen, setAddServerOpen] = useState(false);
   const [editServer, setEditServer] = useState<Server | null>(null);
-  const [theme, setTheme] = useState(() => themeStore.get());
-  useEffect(() => themeStore.subscribe(setTheme), []);
-
   const [linkFlash, setLinkFlash] = useState(false);
   const [traffic, setTraffic] = useState<TrafficStats | null>(null);
 
@@ -303,7 +297,7 @@ export default function Connect() {
         @keyframes link-flash { 0% { opacity:1; } 30% { opacity:0.2; } 60% { opacity:1; } 80% { opacity:0.4; } 100% { opacity:1; } }
         .orb--flash { animation: link-flash 0.8s ease-out; }
         .power-icon { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; }
-        .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(420px, calc(100vw - 32px)); }
+        .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(560px, calc(100vw - 24px)); }
         .server-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 8px; background: var(--surface); animation: slide-down 0.28s ease-out; }
         .server-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 20px; background: var(--bg-2); font-size: 15px; color: var(--text); font-family: 'Geist', sans-serif; font-weight: 500; border-bottom: 1px solid var(--border-2); }
         .server-item:last-child { border-bottom: none; }
@@ -312,18 +306,18 @@ export default function Connect() {
         .server-icon-btn { background: none; border: none; cursor: pointer; padding: 0; display: flex; align-items: center; color: var(--text); }
         .server-edit-btn { background: none; border: none; cursor: pointer; padding: 0; display: flex; align-items: center; color: var(--text-3); opacity: 0; transition: opacity 0.15s; }
         .server-item:hover .server-edit-btn { opacity: 1; }
-        .status-server { display: flex; flex-direction: column; align-items: stretch; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 15px; color: var(--text); cursor: pointer; width: 100%; font-family: 'Geist', sans-serif; font-weight: 500; text-align: left; }
+        .status-server { display: flex; flex-direction: column; align-items: stretch; gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font-size: 13px; color: var(--text); cursor: pointer; width: 100%; font-family: 'Geist', sans-serif; font-weight: 500; text-align: left; line-height: 1.2; }
         .status-server--empty { color: var(--text-4); }
-        .status-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; }
-        .status-name { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .status-submeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 30px; font-size: 12px; color: var(--text-3); }
-        .status-traffic { position: relative; display: inline-flex; align-items: center; background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 8px; padding: 2px 8px; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; min-width: 120px; }
-        .status-traffic-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; transition: width 0.45s ease, background 0.3s ease; opacity: 0.55; }
+        .status-row-main { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
+        .status-name { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+        .status-submeta { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; padding-left: 22px; font-size: 11px; color: var(--text-3); width: 100%; min-width: 0; }
+        .status-traffic { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 6px; padding: 1px 6px; color: var(--text); font-size: 11px; white-space: nowrap; overflow: hidden; line-height: 1.3; }
+        .status-traffic-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width 0.45s ease, background 0.3s ease; opacity: 0.55; }
         .status-traffic-text { position: relative; z-index: 1; }
-        .status-expire { white-space: nowrap; font-size: 12px; }
-        .status-support { background: none; border: none; cursor: pointer; color: var(--accent); display: flex; padding: 0; margin-left: auto; }
-        .status-ping { display: flex; align-items: center; gap: 6px; font-size: 14px; }
-        .ping-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-expire { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+        .status-support { background: none; border: none; cursor: pointer; color: var(--accent); display: flex; padding: 0; margin-left: auto; flex-shrink: 0; }
+        .status-ping { display: flex; align-items: center; gap: 4px; font-size: 12px; flex-shrink: 0; }
+        .ping-dot { width: 6px; height: 6px; border-radius: 50%; }
         .tunnel-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, calc(-50% + 80px)); font-size: 13px; color: var(--text-3); pointer-events: none; }
         .traffic-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, calc(-50% + 118px)); display: flex; gap: 18px; font-size: 12px; color: var(--text-3); pointer-events: none; white-space: nowrap; }
         .traffic-panel span { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 88px; }
@@ -346,7 +340,7 @@ export default function Connect() {
           title={selected ? TUNNEL_LABEL[tunnelState] : 'Добавьте сервер'}
         >
           <div className={`orb${isSpinning ? ' orb--spinning' : isActive ? ' orb--active' : ''}${linkFlash ? ' orb--flash' : ''}`}>
-            <img src={theme === 'dark' ? shapeDark : shapeLight} alt="" draggable={false} />
+            <img src={shapeDark} alt="" draggable={false} />
           </div>
           <div className="power-icon">
             <img src={powerIcon} alt="" draggable={false} style={{ width: 28, height: 35 }} />
@@ -395,7 +389,7 @@ export default function Connect() {
 
           <button className={`status-server${!selected ? ' status-server--empty' : ''}`} onClick={() => setListOpen(o => !o)}>
             <div className="status-row-main">
-              <ServerIcon iconKey={selected?.icon} size={20} />
+              <ServerIcon iconKey={selected?.icon} size={16} />
               <span className="status-name">{selected ? selected.name : 'Нет серверов'}</span>
               {selected?.ping != null && (
                 <span className="status-ping">
@@ -404,7 +398,7 @@ export default function Connect() {
                 </span>
               )}
               <IconChevronUp
-                size={16}
+                size={14}
                 style={{ transform: listOpen ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s', flexShrink: 0 }}
               />
             </div>
@@ -426,16 +420,18 @@ export default function Connect() {
                   )}
                   <span className="status-traffic-text">{trafficCompactLabel(traffic)}</span>
                 </span>
-                <span className="status-expire">{expireLabel(traffic)}</span>
+                <span className="status-expire" title={expireLabel(traffic)}>{expireLabel(traffic)}</span>
                 {traffic.supportUrl && (
-                  <button
-                    type="button"
+                  <span
                     className="status-support"
+                    role="button"
+                    tabIndex={0}
                     title={traffic.supportUrl}
-                    onClick={() => window.open(traffic.supportUrl, '_blank', 'noopener,noreferrer')}
+                    onClick={(e) => { e.stopPropagation(); window.open(traffic.supportUrl, '_blank', 'noopener,noreferrer'); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); window.open(traffic.supportUrl, '_blank', 'noopener,noreferrer'); } }}
                   >
-                    <IconBrandTelegram size={18} stroke={1.8} />
-                  </button>
+                    <IconBrandTelegram size={15} stroke={1.7} />
+                  </span>
                 )}
               </div>
             )}

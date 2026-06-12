@@ -6,30 +6,6 @@
 }
 
 :root {
-  --bg: #f7f7f8;
-  --bg-2: #f0f0f2;
-  --bg-3: #e8e8eb;
-  --surface: #ffffff;
-  --border: #d8d8de;
-  --border-2: #ebebef;
-  --text: #18181b;
-  --text-2: #52525b;
-  --text-3: #71717a;
-  --text-4: #a1a1aa;
-  --accent: #18181b;
-  --accent-fg: #ffffff;
-  --seg-bg: #e4e4e8;
-  --seg-text: #52525b;
-  --input-border: #c4c4cc;
-  --input-bg: #ffffff;
-  --sidebar-from: #4f4f5a;
-  --sidebar-to: #0f0f12;
-  --sidebar-btn-active: rgba(255,255,255,0.12);
-  --shadow: 0 8px 40px rgba(0,0,0,0.12);
-  --overlay-bg: rgba(0,0,0,0.3);
-}
-
-[data-theme="dark"] {
   --bg: #141416;
   --bg-2: #1c1c1f;
   --bg-3: #242428;
