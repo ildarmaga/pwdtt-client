@@ -60,6 +60,7 @@ import EditServer from '../modals/Edit-server';
 import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
+import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, type TrafficStats } from '../lib/utils/wdttLink';
 import { SaveProfile } from '../../wailsjs/go/backend/App';
@@ -102,7 +103,7 @@ export default function Connect() {
   const [addServerOpen, setAddServerOpen] = useState(false);
   const [editServer, setEditServer] = useState<Server | null>(null);
   const [linkFlash, setLinkFlash] = useState(false);
-  const [traffic, setTraffic] = useState<TrafficStats | null>(null);
+  const [traffic, setTraffic] = useState<TrafficStats | null>(() => trafficStatsStore.get(selected?.subUrl));
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   useEffect(() => settingsStore.subscribe(s => setMetricsRefreshSec(s.metricsRefreshSec)), []);
@@ -146,6 +147,7 @@ export default function Connect() {
         }
         if (consumed.stats) {
           setTraffic(consumed.stats);
+          trafficStatsStore.set(consumed.subUrl, consumed.stats);
         }
         setServers(serverStore.getAll());
         setSelected({ ...s });
@@ -162,6 +164,10 @@ export default function Connect() {
       setTraffic(null);
       return;
     }
+    // Сразу показываем последнее сохранённое значение, чтобы метрика не мигала пустым
+    // при возврате на главную или смене сервера — оно обновится после запроса.
+    const cached = trafficStatsStore.get(selected.subUrl);
+    if (cached) setTraffic(cached);
     let cancelled = false;
     let timer = 0;
     const schedule = (ms: number) => {
@@ -172,6 +178,7 @@ export default function Connect() {
       const stats = await fetchTrafficStats(selected.subUrl!);
       if (cancelled || !stats) return;
       setTraffic(stats);
+      trafficStatsStore.set(selected.subUrl, stats);
       const userSec = metricsRefreshSec;
       schedule(metricsRefreshMs(stats, userSec));
     };
@@ -186,7 +193,10 @@ export default function Connect() {
     if (tunnelState !== 'connected' || !selected?.subUrl) return;
     let cancelled = false;
     fetchTrafficStats(selected.subUrl).then((stats) => {
-      if (!cancelled && stats) setTraffic(stats);
+      if (!cancelled && stats) {
+        setTraffic(stats);
+        trafficStatsStore.set(selected.subUrl, stats);
+      }
     });
     return () => { cancelled = true; };
   }, [tunnelState, selected?.subUrl, selected?.id]);
