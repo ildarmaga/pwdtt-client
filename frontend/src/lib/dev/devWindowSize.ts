@@ -1,7 +1,7 @@
 export type DevWindowSize = { width: number; height: number };
 
 const STORAGE_KEY = 'pwdtt-dev-window-size';
-export const DEFAULT_DEV_WINDOW: DevWindowSize = { width: 650, height: 730 };
+export const DEFAULT_DEV_WINDOW: DevWindowSize = { width: 680, height: 700 };
 
 type Listener = (size: DevWindowSize) => void;
 const listeners = new Set<Listener>();

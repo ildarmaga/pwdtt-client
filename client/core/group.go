@@ -323,9 +323,15 @@ func WorkerGroup(
 				}
 
 				retryDelay := time.Duration(min(2<<uint(attempt-1), 30)) * time.Second
-				if strings.Contains(strings.ToLower(sessErr.Error()), "quota") ||
-					strings.Contains(strings.ToLower(sessErr.Error()), "486") ||
-					strings.Contains(strings.ToLower(sessErr.Error()), "turn квота") {
+				errLower := strings.ToLower(sessErr.Error())
+				if strings.Contains(errLower, "wrap_auth_timeout") ||
+					strings.Contains(errLower, "dtls timeout") ||
+					strings.Contains(errLower, "dtls хендшейк") {
+					retryDelay = 2*time.Second + time.Duration(rand.Intn(2))*time.Second
+				}
+				if strings.Contains(errLower, "quota") ||
+					strings.Contains(errLower, "486") ||
+					strings.Contains(errLower, "turn квота") {
 					retryDelay = 60*time.Second + time.Duration(rand.Intn(15))*time.Second
 				}
 				retryDelay += time.Duration(rand.Intn(3)) * time.Second

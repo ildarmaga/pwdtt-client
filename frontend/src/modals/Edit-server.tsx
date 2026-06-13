@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type React from 'react';
 import { IconCircleHalf2, IconInfoCircle, IconHash } from '@tabler/icons-react';
 import type { Server } from '../lib/types';
+import { isLinkManagedServer } from '../lib/types';
 import { settingsStore } from '../lib/store';
 import Hash from './Hash';
 import { handleControlledPaste } from '../lib/utils/inputPaste';
@@ -30,6 +31,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
   const [hashOpen, setHashOpen] = useState(false);
 
   const globalOn = settingsStore.get().useGlobalHashes;
+  const locked = isLinkManagedServer(server);
   const filledHashes = hashes.filter(h => h.trim()).length;
   const powerMax = Math.max(9, filledHashes * 27);
   const [power, setPower] = useState<number>(server.power ?? Math.max(9, filledHashes * 9));
@@ -89,7 +91,8 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
         .es-btn--save { background: var(--accent); color: var(--accent-fg); }
         .es-btn--save:disabled { opacity: 0.4; cursor: not-allowed; }
         .es-btn--delete { background: #cc0000; color: #fff; }
-        .es-hint { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
+        .es-input--locked { opacity: 0.65; cursor: not-allowed; }
+        .es-hint-lock { font-size: 11px; color: var(--text-3); margin: -4px 0 10px; line-height: 1.35; }
         .es-slider-wrap { padding: 4px 0 11px; border-bottom: 1px solid var(--border-2); margin-bottom: 10px; }
         .es-slider-label { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); margin-bottom: 8px; }
         .es-slider { width: 100%; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--accent) calc(var(--v) * 1%), var(--border) calc(var(--v) * 1%)); }
@@ -104,19 +107,56 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
             <button className="es-close" onClick={onClose}>✕</button>
           </div>
 
-          <input className="es-input" placeholder="Комментарий (name)" value={name} onChange={e => setName(e.target.value)} onPaste={e => void handleControlledPaste(e, name, setName)} />
-          <input className="es-input" placeholder="Название VPN (vpn)" value={vpnName} onChange={e => setVpnName(e.target.value)} onPaste={e => void handleControlledPaste(e, vpnName, setVpnName)} />
+          {locked && (
+            <p className="es-hint-lock">
+              Сервер добавлен по ссылке или подписке — название, адрес и URL подписки нельзя изменить.
+            </p>
+          )}
+
+          <input
+            className={`es-input${locked ? ' es-input--locked' : ''}`}
+            placeholder="Комментарий (name)"
+            value={name}
+            readOnly={locked}
+            onChange={e => { if (!locked) setName(e.target.value); }}
+            onPaste={e => { if (!locked) void handleControlledPaste(e, name, setName); }}
+          />
+          <input
+            className={`es-input${locked ? ' es-input--locked' : ''}`}
+            placeholder="Название VPN (vpn)"
+            value={vpnName}
+            readOnly={locked}
+            onChange={e => { if (!locked) setVpnName(e.target.value); }}
+            onPaste={e => { if (!locked) void handleControlledPaste(e, vpnName, setVpnName); }}
+          />
           <div style={{ display: 'flex', gap: 8 }}>
-            <input className="es-input" style={{ flex: 1 }} placeholder="IP сервера" value={serverIp} onChange={e => setServerIp(e.target.value)} onPaste={e => void handleControlledPaste(e, serverIp, setServerIp)} />
-            <input className="es-input" style={{ width: 100 }} placeholder="Порт" value={serverPort} onChange={e => setServerPort(e.target.value)} onPaste={e => void handleControlledPaste(e, serverPort, setServerPort)} />
+            <input
+              className={`es-input${locked ? ' es-input--locked' : ''}`}
+              style={{ flex: 1 }}
+              placeholder="IP сервера"
+              value={serverIp}
+              readOnly={locked}
+              onChange={e => { if (!locked) setServerIp(e.target.value); }}
+              onPaste={e => { if (!locked) void handleControlledPaste(e, serverIp, setServerIp); }}
+            />
+            <input
+              className={`es-input${locked ? ' es-input--locked' : ''}`}
+              style={{ width: 100 }}
+              placeholder="Порт"
+              value={serverPort}
+              readOnly={locked}
+              onChange={e => { if (!locked) setServerPort(e.target.value); }}
+              onPaste={e => { if (!locked) void handleControlledPaste(e, serverPort, setServerPort); }}
+            />
           </div>
           <input className="es-input" placeholder="Пароль туннеля" type="password" value={password} onChange={e => setPassword(e.target.value)} onPaste={e => void handleControlledPaste(e, password, setPassword)} />
           <input
-            className="es-input"
+            className={`es-input${locked ? ' es-input--locked' : ''}`}
             placeholder="URL подписки (https://.../sub/...) — для метрик"
             value={subUrl}
-            onChange={e => setSubUrl(e.target.value)}
-            onPaste={e => void handleControlledPaste(e, subUrl, setSubUrl)}
+            readOnly={locked}
+            onChange={e => { if (!locked) setSubUrl(e.target.value); }}
+            onPaste={e => { if (!locked) void handleControlledPaste(e, subUrl, setSubUrl); }}
           />
 
           <div className={`es-slider-wrap${globalOn ? ' es-slider--disabled' : ''}`}>
@@ -145,7 +185,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
             {globalOn && <IconInfoCircle size={14} style={{ marginLeft: 4, color: 'var(--text-3)' }} />}
           </button>
           {globalOn && (
-            <div className="es-hint">
+            <div className="es-hint" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
               <IconInfoCircle size={11} />
               Отключите «Глобальные хеши» в Настройках, чтобы использовать хеши профиля
             </div>

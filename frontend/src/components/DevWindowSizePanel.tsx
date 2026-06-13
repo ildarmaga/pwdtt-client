@@ -3,7 +3,7 @@ import { isBrowserDev } from '../lib/dev/mockWails';
 import { DEFAULT_DEV_WINDOW, devWindowSizeStore } from '../lib/dev/devWindowSize';
 
 const PRESETS: { label: string; w: number; h: number }[] = [
-  { label: '650×730', w: 650, h: 730 },
+  { label: '680×700', w: 680, h: 700 },
   { label: '900×600', w: 900, h: 600 },
   { label: '480×720', w: 480, h: 720 },
   { label: '420×640', w: 420, h: 640 },

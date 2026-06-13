@@ -74,6 +74,45 @@ func (w *wailsLogWriter) flush() {
 	w.mu.Unlock()
 	for _, e := range batch {
 		runtime.EventsEmit(w.ctx, "log", e.level, e.msg)
+		if friendly := formatConnectionError(e.msg); friendly != "" {
+			runtime.EventsEmit(w.ctx, "error", friendly)
+		}
+	}
+}
+
+func formatConnectionError(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "неверный пароль"):
+		return "Неверный пароль VPN"
+	case strings.Contains(low, "срок действия") && strings.Contains(low, "истёк"):
+		return "Срок подписки истёк"
+	case strings.Contains(low, "другому устройству") || strings.Contains(low, "device_mismatch"):
+		return "Это устройство не привязано к паролю (лимит устройств)"
+	case strings.Contains(low, "деактивирован") || strings.Contains(low, "deactivated"):
+		return "Пароль деактивирован администратором"
+	case strings.Contains(low, "too_many_sessions") || strings.Contains(low, "слишком много параллельных"):
+		return "Слишком много параллельных подключений с этого устройства"
+	case strings.Contains(low, "traffic_exceeded") || strings.Contains(low, "лимит трафика"):
+		return "Лимит трафика исчерпан"
+	case strings.Contains(low, "wrap_auth_timeout"):
+		return "Сервер не подтвердил пароль (таймаут DTLS)"
+	case strings.Contains(low, "fatal_auth"):
+		if i := strings.Index(low, "fatal_auth:"); i >= 0 {
+			tail := strings.TrimSpace(msg[i+len("fatal_auth:"):])
+			if tail != "" {
+				if again := formatConnectionError(tail); again != "" {
+					return again
+				}
+				return tail
+			}
+		}
+		return "Сервер отклонил подключение"
+	default:
+		return ""
 	}
 }
 
@@ -339,27 +378,23 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 			)
 		case core.EventLog:
 			runtime.EventsEmit(o.appCtx, "log", ev.Level, ev.Message)
-			if strings.Contains(ev.Message, "FATAL_AUTH") {
-				friendly := ev.Message
-				if strings.Contains(friendly, "неверный пароль") {
-					friendly = "Неверный пароль подключения"
-				} else if strings.Contains(friendly, "истёк") {
-					friendly = "Срок действия пароля истёк"
-				} else if strings.Contains(friendly, "другому устройству") {
-					friendly = "Пароль привязан к другому устройству"
-				} else if strings.Contains(friendly, "запрещён") {
-					friendly = "Доступ запрещён сервером"
-				}
+			if friendly := formatConnectionError(ev.Message); friendly != "" {
 				runtime.EventsEmit(o.appCtx, "error", friendly)
-				go func() {
-					if sess.c != nil {
-						sess.c.Stop()
-					}
-				}()
+				if strings.Contains(ev.Message, "FATAL_AUTH") {
+					go func() {
+						if sess.c != nil {
+							sess.c.Stop()
+						}
+					}()
+				}
 			}
 		case core.EventError:
-			runtime.EventsEmit(o.appCtx, "error", ev.Message)
-			runtime.EventsEmit(o.appCtx, "log", "ERROR", fmt.Sprintf("[ОШИБКА] %s", ev.Message))
+			friendly := formatConnectionError(ev.Message)
+			if friendly == "" {
+				friendly = ev.Message
+			}
+			runtime.EventsEmit(o.appCtx, "error", friendly)
+			runtime.EventsEmit(o.appCtx, "log", "ERROR", fmt.Sprintf("[ОШИБКА] %s", friendly))
 		case core.EventEvent:
 			if ev.Name == "wg_config" {
 				turnIPs := sess.c.GetTurnIPs()

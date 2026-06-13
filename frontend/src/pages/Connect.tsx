@@ -62,6 +62,7 @@ import { tunnelStore } from '../lib/stores/tunnelStore';
 import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
+import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, type TrafficStats } from '../lib/utils/wdttLink';
 import { SaveProfile } from '../../wailsjs/go/backend/App';
 import type { Server, TunnelState } from '../lib/types';
@@ -128,22 +129,28 @@ export default function Connect() {
           turn: '', port: '', device_id: '', listen: '',
         });
         const existing = serverStore.getAll().find(s => s.host === host);
-        let s = existing ?? serverStore.add({
-          name,
-          vpnName,
-          host,
-          password: consumed.password,
-          subUrl: consumed.subUrl,
-        });
-        if (consumed.hashes.length > 0 || consumed.subUrl || vpnName) {
-          const updated = {
-            ...s,
-            hashes: padded,
-            subUrl: consumed.subUrl ?? s.subUrl,
-            vpnName: vpnName ?? s.vpnName,
+        let s: Server;
+        if (existing) {
+          s = {
+            ...existing,
+            name,
+            vpnName: vpnName ?? existing.vpnName,
+            password: consumed.password,
+            subUrl: consumed.subUrl ?? existing.subUrl,
+            hashes: consumed.hashes.length > 0 ? padded : existing.hashes,
+            linkManaged: true,
           };
-          serverStore.update(updated);
-          s = updated;
+          serverStore.update(s);
+        } else {
+          s = serverStore.add({
+            name,
+            vpnName,
+            host,
+            password: consumed.password,
+            subUrl: consumed.subUrl,
+            hashes: consumed.hashes.length > 0 ? padded : undefined,
+            linkManaged: true,
+          });
         }
         if (consumed.stats) {
           setTraffic(consumed.stats);
@@ -462,12 +469,52 @@ export default function Connect() {
         .icon-picker-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 18px; }
         .icon-picker-btn:hover { background: var(--bg-3); border-color: var(--border); }
         .icon-picker-btn--active { background: var(--bg-3); border-color: var(--accent); }
+        .connect-error {
+          position: absolute;
+          top: 52px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: min(420px, calc(100vw - 32px));
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 38px 12px 12px;
+          background: color-mix(in srgb, #ef4444 14%, var(--surface));
+          border: 1px solid color-mix(in srgb, #ef4444 45%, var(--border));
+          border-radius: 12px;
+          z-index: 40;
+          animation: error-banner-in 0.28s ease-out;
+          box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+        }
+        .connect-error__icon { flex-shrink: 0; color: #f87171; margin-top: 1px; }
+        .connect-error__body { min-width: 0; flex: 1; }
+        .connect-error__title { font-size: 12px; font-weight: 600; color: #fca5a5; margin-bottom: 4px; letter-spacing: 0.02em; }
+        .connect-error__text { font-size: 13px; line-height: 1.45; color: var(--text); word-break: break-word; }
+        .connect-error__close {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          background: none;
+          border: none;
+          color: var(--text-3);
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 6px;
+          display: flex;
+        }
+        .connect-error__close:hover { color: var(--text); background: var(--bg-3); }
+        @keyframes error-banner-in {
+          from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
 
       `}</style>
       <main className="main">
         <button className="btn-add" onClick={() => setAddServerOpen(true)}>
           <IconPlus stroke={2} size={22} />
         </button>
+
+        <ConnectionErrorBanner />
 
         <div className="connect-center" style={{ bottom: stackBottom }}>
           <div className="connect-stack">

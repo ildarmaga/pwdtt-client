@@ -11,6 +11,12 @@ export interface Server {
   subUrl?: string;
   /** Название VPN из ссылки (vpn) или Profile-Title */
   vpnName?: string;
+  /** Сервер добавлен по wdtt:// или URL подписки — поля подключения не редактируются */
+  linkManaged?: boolean;
+}
+
+export function isLinkManagedServer(s: Server): boolean {
+  return s.linkManaged === true;
 }
 
 export interface AppSettings {

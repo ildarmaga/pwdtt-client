@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Settings from '../modals/Settings';
 import DevMetricsPanel from './DevMetricsPanel';
+import DevConnectionErrorsPanel from './DevConnectionErrorsPanel';
 import { isBrowserDev } from '../lib/dev/mockWails';
 
 export default function Layout() {
@@ -16,6 +17,7 @@ export default function Layout() {
       </div>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       <DevMetricsPanel />
+      <DevConnectionErrorsPanel />
     </div>
   );
 }

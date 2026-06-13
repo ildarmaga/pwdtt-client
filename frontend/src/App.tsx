@@ -8,6 +8,8 @@ import Toast from './components/Toast';
 import { wdttLinkStore, resolveWdttImport, isImportableInput } from './lib/utils/wdttLink';
 import { isPasteTargetEditable } from './lib/utils/inputPaste';
 import { toastStore } from './lib/stores/toastStore';
+import { connectionErrorStore } from './lib/stores/connectionErrorStore';
+import { parseConnectionError } from './lib/utils/connectionErrors';
 import { logStore } from './lib/stores/logStore';
 import { tunnelStore } from './lib/stores/tunnelStore';
 import { tunnelStatsStore } from './lib/stores/tunnelStatsStore';
@@ -42,16 +44,24 @@ function useWailsEvents() {
   useEffect(() => {
     const offs = [
       EventsOn('log', (level: unknown, msg: unknown) => {
-        logStore.push((level as LogLevel) ?? 'INFO', String(msg ?? ''));
+        const text = String(msg ?? '');
+        logStore.push((level as LogLevel) ?? 'INFO', text);
+        const connErr = parseConnectionError(text);
+        if (connErr) connectionErrorStore.show(connErr);
       }),
       EventsOn('error', (msg: unknown) => {
         const s = String(msg ?? '');
         logStore.push('ERROR', s);
-        toastStore.show(s, 5000);
+        connectionErrorStore.show(s);
+        toastStore.show(s, 8000);
       }),
       EventsOn('state_changed', (status: unknown) => {
         const s = String(status ?? '');
-        if (s === 'running') { tunnelStore.set('connected'); logStore.push('INFO', '✓ Туннель активен'); }
+        if (s === 'running') {
+          tunnelStore.set('connected');
+          connectionErrorStore.clear();
+          logStore.push('INFO', '✓ Туннель активен');
+        }
         else if (s === 'connecting') { tunnelStore.set('connecting'); logStore.push('INFO', '⟳ Подключение...'); }
         else if (s === 'stopped' || s === 'error' || s === 'disconnected') {
           tunnelStore.set('idle');

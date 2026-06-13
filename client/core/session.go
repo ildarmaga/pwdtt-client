@@ -25,6 +25,7 @@ const (
 	socketBufSize      = 625 * 1024
 	keepaliveByte      = 0xFF // DTLS-level keepalive marker
 	keepaliveInterval  = 15 * time.Second
+	dtlsHandshakeWait  = 28 * time.Second // cap: не ждать 45s на мёртвом TURN relay
 )
 
 // Handshake semaphore: limit concurrent DTLS handshakes (queue under load)
@@ -279,6 +280,7 @@ func RunSession(
 		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
 		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
+		FlightInterval:        100 * time.Millisecond,
 		// No ServerName (SNI) — less detectable by DPI
 	}
 
@@ -289,7 +291,7 @@ func RunSession(
 	}
 	defer dtlsConn.Close()
 
-	hctx, hcancel := context.WithTimeout(sessCtx, 45*time.Second)
+	hctx, hcancel := context.WithTimeout(sessCtx, dtlsHandshakeWait)
 	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
 	dtlsStart := time.Now()
 	err = dtlsConn.HandshakeContext(hctx)
@@ -300,7 +302,7 @@ func RunSession(
 		if useWrap {
 			errStr := strings.ToLower(err.Error())
 			if strings.Contains(errStr, "deadline") || strings.Contains(errStr, "timeout") {
-				return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout, пароль/WRAP не подтверждён")
+				return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout (мёртвый TURN relay, повтор с новым allocation)")
 			}
 		}
 		return false, fmt.Errorf("DTLS хендшейк: %w", err)

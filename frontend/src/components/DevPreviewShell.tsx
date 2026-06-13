@@ -36,7 +36,7 @@ export default function DevPreviewShell({ children }: { children: ReactNode }) {
         padding: '4px 8px',
         pointerEvents: 'none',
       }}>
-        DEV preview — размер окна слева внизу, метрики sub справа внизу
+        DEV preview — размер окна слева внизу, ошибки слева, метрики sub справа внизу
       </div>
 
       <div
