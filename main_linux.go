@@ -26,13 +26,13 @@ func main() {
 	app := backend.NewApp(trayIcon)
 
 	err := wails.Run(&options.App{
-		Title:         "PWDTT",
-		Width:         900,
-		Height:        600,
-		MinWidth:      900,
-		MinHeight:     600,
-		MaxWidth:      900,
-		MaxHeight:     600,
+		Title:         "WDTT",
+		Width:         650,
+		Height:        700,
+		MinWidth:      650,
+		MinHeight:     700,
+		MaxWidth:      650,
+		MaxHeight:     700,
 		DisableResize: true,
 		Frameless:     false,
 		AssetServer: &assetserver.Options{
@@ -43,7 +43,7 @@ func main() {
 		OnBeforeClose:    app.OnBeforeClose,
 		Bind:             []interface{}{app},
 		Linux: &linux.Options{
-			ProgramName: "PWDTT",
+			ProgramName: "WDTT",
 		},
 	})
 	if err != nil {

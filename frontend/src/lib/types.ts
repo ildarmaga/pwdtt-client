@@ -30,7 +30,7 @@ export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 export const DEFAULT_SETTINGS: AppSettings = {
   bypassMode: 'АВТ',
   power: 9,
-  mtu: 1380,
+  mtu: 1280,
   tray: true,
   autoStart: true,
   hashes: ['', '', '', ''],

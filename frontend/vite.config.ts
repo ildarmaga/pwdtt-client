@@ -28,7 +28,7 @@ function subFetchPlugin(): Plugin {
           const method = req.method === 'HEAD' ? 'HEAD' : 'GET';
           const r = await fetch(target, {
             method,
-            headers: { Accept: 'text/plain', 'User-Agent': 'PWDTT/1.0' },
+            headers: { Accept: 'text/plain', 'User-Agent': 'WDTT/1.0' },
           });
           res.statusCode = r.status;
           SUB_HDR.forEach(h => {

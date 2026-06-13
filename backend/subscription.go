@@ -44,7 +44,7 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/plain")
-	req.Header.Set("User-Agent", "PWDTT/1.0")
+	req.Header.Set("User-Agent", "WDTT/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -95,7 +95,7 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/plain")
-	req.Header.Set("User-Agent", "PWDTT/1.0")
+	req.Header.Set("User-Agent", "WDTT/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 			return nil, err
 		}
 		req.Header.Set("Accept", "text/plain")
-		req.Header.Set("User-Agent", "PWDTT/1.0")
+		req.Header.Set("User-Agent", "WDTT/1.0")
 		resp, err = client.Do(req)
 		if err != nil {
 			return nil, err

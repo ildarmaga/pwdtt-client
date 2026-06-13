@@ -158,7 +158,7 @@ function installGoMock() {
   };
 
   seedDevSettings();
-  console.info('[PWDTT] browser dev — sub import, connect, metrics simulation');
+  console.info('[WDTT] browser dev — sub import, connect, metrics simulation');
 }
 
 export function installWailsDevMocks() {

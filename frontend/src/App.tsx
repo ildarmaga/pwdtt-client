@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import DevPreviewShell from './components/DevPreviewShell';
 import Connect from './pages/Connect';
 import Logs from './pages/Logs';
 import Toast from './components/Toast';
@@ -92,14 +93,16 @@ export default function App() {
   }, []);
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Connect />} />
-          <Route path="/logs" element={<Logs />} />
-        </Route>
-      </Routes>
-      <Toast />
-    </BrowserRouter>
+    <DevPreviewShell>
+      <BrowserRouter>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Connect />} />
+            <Route path="/logs" element={<Logs />} />
+          </Route>
+        </Routes>
+        <Toast />
+      </BrowserRouter>
+    </DevPreviewShell>
   );
 }

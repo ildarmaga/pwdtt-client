@@ -70,9 +70,9 @@ func setTrayStatus(connected bool, rx, tx int64, workers int32) {
 	}
 	var tip string
 	if connected {
-		tip = fmt.Sprintf("PWDTT — Подключено\n↑%.1f МБ  воркеры: %d", float64(rx+tx)/1024/1024, workers)
+		tip = fmt.Sprintf("WDTT — Подключено\n↑%.1f МБ  воркеры: %d", float64(rx+tx)/1024/1024, workers)
 	} else {
-		tip = "PWDTT — Отключено"
+		tip = "WDTT — Отключено"
 	}
 	nid := trayNID
 	nid.UFlags = win.NIF_TIP
@@ -186,7 +186,7 @@ func runTrayLoop(iconData []byte, onShow, onToggle, onQuit func()) {
 		win.HWND_MESSAGE, 0, 0, nil)
 	trayHwnd = hwnd
 
-	tip, _ := syscall.UTF16FromString("PWDTT — Отключено")
+	tip, _ := syscall.UTF16FromString("WDTT — Отключено")
 	nid := win.NOTIFYICONDATA{
 		HWnd:             hwnd,
 		UID:              1,

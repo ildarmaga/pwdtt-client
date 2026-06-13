@@ -74,7 +74,7 @@ async function fetchSubRaw(url: string, method: 'GET' | 'HEAD') {
   logDevMetric(method, url, `via ${fetchUrl}`, true);
   const resp = await fetch(fetchUrl, {
     method,
-    headers: { Accept: 'text/plain', 'User-Agent': 'PWDTT/1.0' },
+    headers: { Accept: 'text/plain', 'User-Agent': 'WDTT/1.0' },
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp;

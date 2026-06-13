@@ -17,13 +17,13 @@ func (a *App) SetAutoStart(v bool) error {
 	}
 	defer k.Close()
 	if !v {
-		return k.DeleteValue("PWDTT")
+		return k.DeleteValue("WDTT")
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	return k.SetStringValue("PWDTT", exe)
+	return k.SetStringValue("WDTT", exe)
 }
 
 func (a *App) GetAutoStart() bool {
@@ -32,6 +32,6 @@ func (a *App) GetAutoStart() bool {
 		return false
 	}
 	defer k.Close()
-	_, _, err = k.GetStringValue("PWDTT")
+	_, _, err = k.GetStringValue("WDTT")
 	return err == nil
 }

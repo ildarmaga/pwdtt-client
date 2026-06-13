@@ -213,7 +213,7 @@ export default function Connect() {
         profile: selected!.name,
         captchaMode: 'auto',
         workers,
-        mtu: s.mtu || 1380,
+        mtu: s.mtu || 1280,
         hashes,
       });
     } catch {
