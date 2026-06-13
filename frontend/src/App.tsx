@@ -9,6 +9,7 @@ import { isPasteTargetEditable } from './lib/utils/inputPaste';
 import { toastStore } from './lib/stores/toastStore';
 import { logStore } from './lib/stores/logStore';
 import { tunnelStore } from './lib/stores/tunnelStore';
+import { tunnelStatsStore } from './lib/stores/tunnelStatsStore';
 import type { LogLevel } from './lib/stores/logStore';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { settingsStore } from './lib/store';
@@ -51,7 +52,27 @@ function useWailsEvents() {
         const s = String(status ?? '');
         if (s === 'running') { tunnelStore.set('connected'); logStore.push('INFO', '✓ Туннель активен'); }
         else if (s === 'connecting') { tunnelStore.set('connecting'); logStore.push('INFO', '⟳ Подключение...'); }
-        else if (s === 'stopped' || s === 'error' || s === 'disconnected') { tunnelStore.set('idle'); logStore.push('INFO', '— Отключено'); }
+        else if (s === 'stopped' || s === 'error' || s === 'disconnected') {
+          tunnelStore.set('idle');
+          tunnelStatsStore.reset();
+          logStore.push('INFO', '— Отключено');
+        }
+      }),
+      EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
+        const rxN = Number(rx) || 0;
+        const txN = Number(tx) || 0;
+        if (rxN === 0 && txN === 0 && Number(workers) === 0) {
+          tunnelStatsStore.reset();
+          return;
+        }
+        tunnelStatsStore.update({
+          rxBytes: rxN,
+          txBytes: txN,
+          workers: Number(workers) || 0,
+          turnRttMs: Number(turnRtt) || 0,
+          dtlsHsMs: Number(dtlsHs) || 0,
+          internetRttMs: Number(internetRtt) || 0,
+        });
       }),
       EventsOn('event', (name: unknown) => {
         if (name === 'wg_config') tunnelStore.set('connected');

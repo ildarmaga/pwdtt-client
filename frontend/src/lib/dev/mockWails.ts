@@ -26,6 +26,25 @@ function asyncVoid() {
 }
 
 let emitDevEvent: (name: string, ...args: unknown[]) => void = noop;
+let devStatsTimer = 0;
+let devStatsRx = 0;
+let devStatsTx = 0;
+
+function startDevTunnelStats() {
+  window.clearInterval(devStatsTimer);
+  devStatsRx = 0;
+  devStatsTx = 0;
+  devStatsTimer = window.setInterval(() => {
+    devStatsRx += 180_000 + Math.random() * 120_000;
+    devStatsTx += 45_000 + Math.random() * 35_000;
+    emitDevEvent('tunnel_stats', devStatsRx, devStatsTx, 9, 142 + Math.random() * 40, 68 + Math.random() * 30, 28 + Math.random() * 20);
+  }, 2000);
+}
+
+function stopDevTunnelStats() {
+  window.clearInterval(devStatsTimer);
+  emitDevEvent('tunnel_stats', 0, 0, 0, 0, 0, 0);
+}
 
 function installRuntimeMock() {
   if (window.runtime?.EventsOnMultiple) return;
@@ -96,8 +115,10 @@ function installGoMock() {
           window.__pwdttDevConnected = true;
           emitDevEvent('state_changed', 'running');
           emitDevEvent('log', 'INFO', '[dev] VPN подключён — опрос sub активен');
+          startDevTunnelStats();
         },
         Disconnect: async () => {
+          stopDevTunnelStats();
           emitDevEvent('state_changed', 'disconnecting');
           await new Promise(r => setTimeout(r, 400));
           window.__pwdttDevConnected = false;
@@ -120,6 +141,7 @@ function installGoMock() {
             dtlsPort: parsed.dtlsPort,
             password: parsed.password,
             name: parsed.name,
+            vpnName: parsed.vpnName,
             hashes: parsed.hashes,
             subUrl: parsed.subUrl ?? '',
             stats: parsed.stats,

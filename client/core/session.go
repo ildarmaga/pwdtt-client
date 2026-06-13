@@ -128,6 +128,7 @@ func RunSession(
 		return false, fmt.Errorf("TURN Listen: %w", err)
 	}
 
+	allocStart := time.Now()
 	relay, err := tc.Allocate()
 	if err != nil {
 		if isAuthError(err) {
@@ -140,6 +141,8 @@ func RunSession(
 		return false, fmt.Errorf("TURN Allocate: %w", err)
 	}
 	defer relay.Close()
+
+	atomic.StoreInt64(&stats.TurnRTTNs, time.Since(allocStart).Nanoseconds())
 
 	// Reset error count on successful allocation
 	getStreamCache(creds.CacheStreamID).errorCount.Store(0)
@@ -279,6 +282,7 @@ func RunSession(
 
 	hctx, hcancel := context.WithTimeout(sessCtx, 20*time.Second)
 	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
+	dtlsStart := time.Now()
 	err = dtlsConn.HandshakeContext(hctx)
 	hcancel()
 	<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
@@ -292,6 +296,7 @@ func RunSession(
 		}
 		return false, fmt.Errorf("DTLS хендшейк: %w", err)
 	}
+	atomic.StoreInt64(&stats.DTLSHSNs, time.Since(dtlsStart).Nanoseconds())
 	log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
 
 	atomic.AddInt32(&stats.ActiveConnections, 1)

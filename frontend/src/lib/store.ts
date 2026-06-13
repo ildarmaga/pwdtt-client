@@ -37,6 +37,9 @@ export const serverStore = {
   },
 };
 
+type SettingsListener = (s: AppSettings) => void;
+const settingsListeners = new Set<SettingsListener>();
+
 export const settingsStore = {
   get: (): AppSettings => {
     const saved = parse<Partial<AppSettings>>(SETTINGS_KEY, {});
@@ -44,7 +47,18 @@ export const settingsStore = {
     // ensure hashes is always exactly 4 strings
     const h = Array.isArray(merged.hashes) ? merged.hashes : [];
     merged.hashes = [h[0] ?? '', h[1] ?? '', h[2] ?? '', h[3] ?? ''];
+    if (typeof merged.metricsRefreshSec !== 'number' || merged.metricsRefreshSec < 0) {
+      merged.metricsRefreshSec = DEFAULT_SETTINGS.metricsRefreshSec;
+    }
     return merged;
   },
-  save: (settings: AppSettings) => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)),
+  save: (settings: AppSettings) => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    settingsListeners.forEach(fn => fn(settings));
+  },
+  subscribe: (fn: SettingsListener) => {
+    settingsListeners.add(fn);
+    fn(settingsStore.get());
+    return () => { settingsListeners.delete(fn); };
+  },
 };

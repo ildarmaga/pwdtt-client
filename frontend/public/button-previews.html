@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WDTT — выбор кнопки подключения</title>
+  <style>
+    :root {
+      --bg: #0c0c0f;
+      --surface: #16161a;
+      --border: #2a2a32;
+      --text: #f4f4f5;
+      --muted: #71717a;
+      --accent: #8b5cf6;
+      --green: #22c55e;
+      --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 32px 20px 48px;
+    }
+    h1 { font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 8px; }
+    p.sub { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 32px; max-width: 520px; margin-inline: auto; line-height: 1.5; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 16px;
+      padding: 24px 20px 20px;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .card.selected { border-color: var(--accent); }
+    .card h2 { font-size: 15px; margin-bottom: 4px; }
+    .card .desc { font-size: 12px; color: var(--muted); margin-bottom: 20px; line-height: 1.4; min-height: 34px; }
+    .demo { display: flex; align-items: center; justify-content: center; min-height: 180px; }
+    .pick-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: rgba(12,12,15,0.92);
+      border-top: 1px solid var(--border);
+      padding: 14px 20px;
+      text-align: center;
+      font-size: 14px;
+      backdrop-filter: blur(8px);
+    }
+    .pick-bar strong { color: var(--accent); }
+
+    /* 1. Neon Ring */
+    .btn-neon {
+      position: relative; width: 120px; height: 120px;
+      border: none; background: transparent; cursor: pointer;
+    }
+    .btn-neon .ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 2px solid var(--accent);
+      opacity: 0.5;
+    }
+    .btn-neon .ring-pulse {
+      position: absolute; inset: -8px; border-radius: 50%;
+      border: 1px solid var(--accent);
+      animation: neon-pulse 2s ease-out infinite;
+    }
+    .btn-neon .core {
+      position: absolute; inset: 18px; border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px; color: var(--accent);
+      transition: background 0.3s, color 0.3s;
+    }
+    .btn-neon.on .core { background: var(--accent); color: #fff; }
+    .btn-neon.on .ring { border-color: var(--green); opacity: 1; }
+    @keyframes neon-pulse {
+      0% { transform: scale(1); opacity: 0.6; }
+      100% { transform: scale(1.35); opacity: 0; }
+    }
+
+    /* 2. Glass Orb */
+    .btn-glass {
+      width: 120px; height: 120px; border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(12px);
+      cursor: pointer; position: relative; overflow: hidden;
+      transition: border-color 0.3s;
+    }
+    .btn-glass::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.15), transparent 55%);
+    }
+    .btn-glass .icon { font-size: 32px; position: relative; z-index: 1; color: var(--text); }
+    .btn-glass.on { border-color: rgba(34,197,94,0.5); }
+    .btn-glass.on::after {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(circle, rgba(34,197,94,0.2), transparent 70%);
+      animation: glass-breathe 2s ease-in-out infinite;
+    }
+    @keyframes glass-breathe {
+      0%,100% { opacity: 0.5; } 50% { opacity: 1; }
+    }
+
+    /* 3. Ripple Material */
+    .btn-ripple {
+      width: 120px; height: 120px; border-radius: 50%;
+      border: none; background: #1e1e24; cursor: pointer;
+      position: relative; overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      transition: background 0.3s;
+    }
+    .btn-ripple .icon { font-size: 30px; color: var(--muted); transition: color 0.3s; }
+    .btn-ripple.on { background: #14532d; }
+    .btn-ripple.on .icon { color: var(--green); }
+    .btn-ripple .wave {
+      position: absolute; inset: 50%; width: 0; height: 0;
+      border-radius: 50%; background: rgba(139,92,246,0.3);
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+    }
+    .btn-ripple:active .wave { animation: ripple 0.6s ease-out; }
+    @keyframes ripple {
+      to { width: 200px; height: 200px; opacity: 0; }
+    }
+
+    /* 4. Dual Ring Spinner */
+    .btn-dual {
+      width: 120px; height: 120px; border: none; background: transparent; cursor: pointer; position: relative;
+    }
+    .btn-dual .outer {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      animation: spin 1.2s linear infinite;
+      animation-play-state: paused;
+    }
+    .btn-dual .inner {
+      position: absolute; inset: 14px; border-radius: 50%;
+      background: var(--surface); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; color: var(--accent);
+    }
+    .btn-dual.connecting .outer { animation-play-state: running; }
+    .btn-dual.on .inner { color: var(--green); border-color: rgba(34,197,94,0.4); }
+    .btn-dual.on .outer { border-color: var(--green); border-top-color: transparent; animation: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 5. Soft Glow (iOS-like) */
+    .btn-glow {
+      width: 120px; height: 120px; border-radius: 50%;
+      border: none; cursor: pointer; position: relative;
+      background: linear-gradient(145deg, #1a1a22, #121218);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+      transition: box-shadow 0.4s;
+    }
+    .btn-glow .icon { font-size: 30px; color: #a1a1aa; transition: color 0.3s; }
+    .btn-glow.on {
+      box-shadow: 0 0 40px rgba(34,197,94,0.35), 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+    .btn-glow.on .icon { color: var(--green); }
+    .btn-glow .halo {
+      position: absolute; inset: -4px; border-radius: 50%;
+      opacity: 0; transition: opacity 0.4s;
+      background: radial-gradient(circle, rgba(34,197,94,0.25), transparent 65%);
+    }
+    .btn-glow.on .halo { opacity: 1; animation: halo-pulse 2.5s ease-in-out infinite; }
+    @keyframes halo-pulse {
+      0%,100% { transform: scale(1); opacity: 0.6; }
+      50% { transform: scale(1.08); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Выбор кнопки подключения</h1>
+  <p class="sub">Нажмите на карточку — кнопка переключится (выкл → подключение → вкл). Напишите номер понравившегося варианта.</p>
+
+  <div class="grid">
+    <div class="card" data-id="1">
+      <h2>1. Neon Ring</h2>
+      <p class="desc">Классика VPN-приложений: пульсирующее кольцо, яркий акцент при подключении.</p>
+      <div class="demo">
+        <button type="button" class="btn-neon" aria-label="Neon">
+          <span class="ring-pulse"></span>
+          <span class="ring"></span>
+          <span class="core">⏻</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card" data-id="2">
+      <h2>2. Glass Orb</h2>
+      <p class="desc">Стеклянная сфера с мягким дыханием — стиль iOS / WireGuard UI.</p>
+      <div class="demo">
+        <button type="button" class="btn-glass" aria-label="Glass">
+          <span class="icon">⏻</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card" data-id="3">
+      <h2>3. Material Ripple</h2>
+      <p class="desc">Минимализм: тёмная кнопка, волна при нажатии, зелёный при активном VPN.</p>
+      <div class="demo">
+        <button type="button" class="btn-ripple" aria-label="Ripple">
+          <span class="wave"></span>
+          <span class="icon">⏻</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card" data-id="4">
+      <h2>4. Dual Ring</h2>
+      <p class="desc">Кольцо крутится при «Подключение…», замирает зелёным когда активно.</p>
+      <div class="demo">
+        <button type="button" class="btn-dual" aria-label="Dual ring">
+          <span class="outer"></span>
+          <span class="inner">⏻</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card" data-id="5">
+      <h2>5. Soft Glow</h2>
+      <p class="desc">Мягкое свечение вокруг кнопки — спокойный «премиум» вид как в iOS VPN.</p>
+      <div class="demo">
+        <button type="button" class="btn-glow" aria-label="Glow">
+          <span class="halo"></span>
+          <span class="icon">⏻</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pick-bar">Выбрано: <strong id="picked">—</strong> · кликните карточку и переключите кнопку</div>
+
+  <script>
+    const states = ['off', 'connecting', 'on'];
+    const picked = document.getElementById('picked');
+
+    document.querySelectorAll('.card').forEach(card => {
+      let stateIdx = 0;
+      const btn = card.querySelector('button');
+      card.addEventListener('click', (e) => {
+        if (e.target === btn || btn.contains(e.target)) {
+          stateIdx = (stateIdx + 1) % states.length;
+          applyState(btn, states[stateIdx]);
+        }
+        document.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        picked.textContent = card.dataset.id + ' — ' + card.querySelector('h2').textContent;
+      });
+    });
+
+    function applyState(btn, state) {
+      btn.classList.remove('on', 'connecting');
+      if (state === 'on') btn.classList.add('on');
+      if (state === 'connecting') btn.classList.add('connecting');
+    }
+  </script>
+</body>
+</html>

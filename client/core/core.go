@@ -51,9 +51,11 @@ type Event struct {
 	Data string
 
 	// stats
-	RxBytes int64
-	TxBytes int64
-	Workers int32
+	RxBytes   int64
+	TxBytes   int64
+	Workers   int32
+	TurnRTTMs float64
+	DTLSHSMs  float64
 }
 
 // Core — runtime controller ядра.
@@ -199,8 +201,8 @@ func (c *Core) Start() (<-chan Event, error) {
 		func(level, msg string) {
 			c.emit(Event{Type: EventLog, Level: level, Message: msg})
 		},
-		func(rx, tx int64, workers int32) {
-			c.emit(Event{Type: EventStats, RxBytes: rx, TxBytes: tx, Workers: workers})
+		func(rx, tx int64, workers int32, turnRttMs, dtlsHsMs float64) {
+			c.emit(Event{Type: EventStats, RxBytes: rx, TxBytes: tx, Workers: workers, TurnRTTMs: turnRttMs, DTLSHSMs: dtlsHsMs})
 		},
 	)
 

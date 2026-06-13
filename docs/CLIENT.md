@@ -287,7 +287,9 @@ cp /path/to/wdtt-server-linux-amd64 assets/server/wdtt-server
 
 - [x] **P0** — парсер `wdtt://` base64 JSON (`ip`, `pass`, `dtls`, `ps`)
 - [x] **P0** — импорт URL подписки `https://.../sub/<id>`
-- [x] **P1** — статистика трафика после подключения (Загружено / Отправлено / Остаток)
+- [x] **P1** — метрики сессии (TX/RX, TURN/DTLS/Internet RTT) под кнопкой
+- [x] **P1** — поля `vpn` + `name` в wdtt-ссылке и UI
+- [x] **P1** — объявление подписки (Announce) в интерфейсе
 - [ ] **P1** — ребрендинг PWDTT → WDTT (название, иконки)
 - [ ] **P1** — обновить `assets/server/wdtt-server` до v1.2.1+
 - [ ] **P2** — убрать или переписать встроенный Deploy под wdtt-install
@@ -320,6 +322,27 @@ wails dev
 | `wdtt/docs/SERVER.md` | протокол wdtt-server, порты, БД |
 | `wdtt/docs/API.md` | API панели, формат ссылки v1.2.1 |
 | WDTT release v1.2.1 | sub-страница, `last_seen_at`, новый JSON в ссылке |
+
+---
+
+## 14. Changelog (2026-06-13)
+
+### Клиент (pwdtt-client)
+
+- **Кнопка подключения** — Soft Glow (вариант 5): зелёное свечение при активном VPN, кольцо при подключении.
+- **Метрики сессии** — карточка всегда видна; при отключении значения «—», при VPN — TX/RX, скорость, TURN / DTLS / Интернет RTT (как в iOS vk-turn-proxy).
+- **Заголовок сервера** — «MAGIC VPN - PC-ildar» (`vpn` + `name`).
+- **Объявление подписки** — отдельная строка под блоком сервера; UTF-8 для русского `Announce`.
+- **Импорт wdtt://** — поля `vpn` и `name`; исправлен dev-мок `ParseWdttLink`.
+- **Настройки** — интервал обновления метрик подписки (`metricsRefreshSec`).
+- **Стабильность** — TURN quota backoff, stagger воркеров (без лимита workers).
+- **UI** — кнопка + метрики в одном блоке над панелью сервера; превью кнопок `/button-previews.html`.
+
+### Панель (wdtt)
+
+- **`vpn` в wdtt-ссылке** — из «Заголовок подписки» (`SubTitle`), не из inbound tag.
+- **`name`** — комментарий пользователя; подпись на sub-странице из `json.name`.
+- **JS** — `wdtt-share.js`, модал пользователя: `vpnTitle` из настроек подписки.
 
 ---
 

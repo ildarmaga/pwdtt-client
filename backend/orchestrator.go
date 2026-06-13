@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,10 +184,65 @@ type Orchestrator struct {
 	sess          *coreSession
 	prevLogWriter io.Writer
 	onTray        func(connected bool, rx, tx int64, workers int32)
+	internetMu    sync.RWMutex
+	internetRTTMs float64
+	pingStop      chan struct{}
 }
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
 	return &Orchestrator{appCtx: ctx, onTray: onTray}
+}
+
+func measureInternetRTT() float64 {
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", "1.1.1.1:443", 3*time.Second)
+	if err != nil {
+		return 0
+	}
+	_ = conn.Close()
+	return float64(time.Since(start).Milliseconds())
+}
+
+func (o *Orchestrator) startInternetPing() {
+	o.stopInternetPing()
+	stop := make(chan struct{})
+	o.pingStop = stop
+	go func() {
+		tick := 0
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(2 * time.Second):
+				tick++
+				if tick%5 != 0 {
+					continue
+				}
+				ms := measureInternetRTT()
+				if ms > 0 {
+					o.internetMu.Lock()
+					o.internetRTTMs = ms
+					o.internetMu.Unlock()
+				}
+			}
+		}
+	}()
+}
+
+func (o *Orchestrator) stopInternetPing() {
+	if o.pingStop != nil {
+		close(o.pingStop)
+		o.pingStop = nil
+	}
+	o.internetMu.Lock()
+	o.internetRTTMs = 0
+	o.internetMu.Unlock()
+}
+
+func (o *Orchestrator) internetRTT() float64 {
+	o.internetMu.RLock()
+	defer o.internetMu.RUnlock()
+	return o.internetRTTMs
 }
 
 func (o *Orchestrator) Start(p ConnectParams) error {
@@ -277,6 +333,10 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 			if o.onTray != nil {
 				o.onTray(connected, ev.RxBytes, ev.TxBytes, ev.Workers)
 			}
+			runtime.EventsEmit(o.appCtx, "tunnel_stats",
+				ev.RxBytes, ev.TxBytes, ev.Workers,
+				ev.TurnRTTMs, ev.DTLSHSMs, o.internetRTT(),
+			)
 		case core.EventLog:
 			runtime.EventsEmit(o.appCtx, "log", ev.Level, ev.Message)
 			if strings.Contains(ev.Message, "FATAL_AUTH") {
@@ -309,6 +369,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 					runtime.EventsEmit(o.appCtx, "log", "ERROR", msg)
 				} else {
 					connected = true
+					o.startInternetPing()
 					runtime.EventsEmit(o.appCtx, "state_changed", "running", "")
 					runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Конфиг применён, туннель активен ✓")
 					if o.onTray != nil {
@@ -321,6 +382,8 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 	}
 	// Канал закрыт — core завершился
 	teardownWG()
+	o.stopInternetPing()
+	runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
 	// Останавливаем буферизованный логгер и восстанавливаем оригинальный
 	if lw, ok := log.Writer().(*wailsLogWriter); ok {
 		select {

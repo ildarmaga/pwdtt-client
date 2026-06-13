@@ -116,6 +116,39 @@ func WorkerGroup(
 	var credsMu sync.RWMutex
 	var refreshMu sync.Mutex
 	var lastCredRefresh atomic.Int64
+	var quotaBackoffUntil atomic.Int64
+
+	waitQuotaBackoff := func(wid int) bool {
+		until := quotaBackoffUntil.Load()
+		if until == 0 {
+			return true
+		}
+		now := time.Now().Unix()
+		if now >= until {
+			return true
+		}
+		wait := time.Duration(until-now)*time.Second + time.Duration(rand.Intn(3))*time.Second
+		log.Printf("[ВОРКЕР #%d] TURN квота: ждём %s перед повтором", wid, wait.Round(time.Second))
+		select {
+		case <-time.After(wait):
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	setQuotaBackoff := func(seconds int64) {
+		until := time.Now().Unix() + seconds
+		for {
+			cur := quotaBackoffUntil.Load()
+			if cur >= until {
+				return
+			}
+			if quotaBackoffUntil.CompareAndSwap(cur, until) {
+				return
+			}
+		}
+	}
 
 	refreshCreds := func(reason string) bool {
 		refreshMu.Lock()
@@ -123,7 +156,11 @@ func WorkerGroup(
 
 		now := time.Now().Unix()
 		last := lastCredRefresh.Load()
-		if last > 0 && now-last < 15 {
+		minGap := int64(15)
+		if strings.Contains(strings.ToLower(reason), "quota") {
+			minGap = 30
+		}
+		if last > 0 && now-last < minGap {
 			log.Printf("[TURN] Креды уже обновлялись %d сек назад, ждём следующий retry (%s)", now-last, reason)
 			return true
 		}
@@ -162,8 +199,8 @@ func WorkerGroup(
 	for i, wid := range workerIDs {
 		wg.Add(1)
 
-		// Stagger: 500мс между воркерами
-		workerDelay := time.Duration(i) * 500 * time.Millisecond
+		// Stagger: 1.2с между воркерами — меньше одновременных TURN Allocate
+		workerDelay := time.Duration(i) * 1200 * time.Millisecond
 
 		go func(wid int, delay time.Duration) {
 			defer wg.Done()
@@ -181,6 +218,9 @@ func WorkerGroup(
 
 			for {
 				if ctx.Err() != nil {
+					return
+				}
+				if !waitQuotaBackoff(wid) {
 					return
 				}
 
@@ -249,6 +289,12 @@ func WorkerGroup(
 						log.Printf("[ВОРКЕР #%d] [TURN] Allocate вернул неполный ответ, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
 						refreshCreds("TURN Allocate attribute-not-found")
 					} else if turnCredRefreshNeeded {
+						isQuota := strings.Contains(errStrLower, "turn квота") ||
+							strings.Contains(errStrLower, "quota") ||
+							strings.Contains(errStrLower, "486")
+						if isQuota {
+							setQuotaBackoff(45)
+						}
 						log.Printf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
 						refreshCreds("TURN allocation error")
 					} else {
@@ -270,6 +316,11 @@ func WorkerGroup(
 				}
 
 				retryDelay := time.Duration(min(2<<uint(attempt-1), 30)) * time.Second
+				if strings.Contains(strings.ToLower(sessErr.Error()), "quota") ||
+					strings.Contains(strings.ToLower(sessErr.Error()), "486") ||
+					strings.Contains(strings.ToLower(sessErr.Error()), "turn квота") {
+					retryDelay = 45*time.Second + time.Duration(rand.Intn(10))*time.Second
+				}
 				retryDelay += time.Duration(rand.Intn(3)) * time.Second
 				select {
 				case <-time.After(retryDelay):

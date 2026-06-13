@@ -9,6 +9,8 @@ export interface Server {
   hashes?: [string, string, string, string];
   power?: number;
   subUrl?: string;
+  /** Название VPN из ссылки (vpn) или Profile-Title */
+  vpnName?: string;
 }
 
 export interface AppSettings {
@@ -19,6 +21,8 @@ export interface AppSettings {
   autoStart: boolean;
   hashes: [string, string, string, string];
   useGlobalHashes: boolean;
+  /** 0 = авто (Profile-Update-Interval из sub, иначе 30 мин) */
+  metricsRefreshSec: number;
 }
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
@@ -31,4 +35,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoStart: true,
   hashes: ['', '', '', ''],
   useGlobalHashes: false,
+  metricsRefreshSec: 0,
 };
+
+export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'Авто' },
+  { value: 30, label: '30 сек' },
+  { value: 60, label: '1 мин' },
+  { value: 300, label: '5 мин' },
+  { value: 900, label: '15 мин' },
+  { value: 1800, label: '30 мин' },
+  { value: 3600, label: '1 час' },
+];

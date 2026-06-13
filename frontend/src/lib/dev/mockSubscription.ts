@@ -1,4 +1,4 @@
-import { parseWdttUrl, type TrafficStats, type WdttLink } from '../utils/wdttLink';
+import { parseWdttUrl, decodeBase64Utf8, type TrafficStats, type WdttLink } from '../utils/wdttLink';
 import { logDevMetric } from './devMetricsLog';
 
 const STORE_KEY = 'pwdtt_dev_subs';
@@ -47,7 +47,7 @@ function decodeHeaderValue(v: string): string {
   v = v.trim();
   if (v.startsWith('base64:')) {
     try {
-      return atob(v.slice(7));
+      return decodeBase64Utf8(v.slice(7));
     } catch {
       return '';
     }
@@ -115,12 +115,20 @@ function defaultStats(): TrafficStats {
 }
 
 function linkFromStats(subUrl: string, stats: TrafficStats, parsed?: WdttLink | null): WdttLink {
-  if (parsed) return { ...parsed, subUrl, stats };
+  if (parsed) {
+    return {
+      ...parsed,
+      subUrl,
+      stats,
+      vpnName: parsed.vpnName || stats.title,
+    };
+  }
   return {
     ip: 'devgamemaga.mooo.com',
     dtlsPort: '56000',
     password: 'demo-pass',
-    name: stats.title ?? 'Demo VPN',
+    name: 'PC-ildar',
+    vpnName: stats.title ?? 'MAGIC VPN',
     hashes: [],
     subUrl,
     stats,
@@ -164,6 +172,7 @@ export async function devFetchSubscriptionURL(rawURL: string) {
       dtlsPort: link.dtlsPort,
       password: link.password,
       name: link.name,
+      vpnName: link.vpnName,
       hashes: link.hashes,
       subUrl,
       stats,
@@ -177,6 +186,7 @@ export async function devFetchSubscriptionURL(rawURL: string) {
         dtlsPort: link.dtlsPort,
         password: link.password,
         name: link.name,
+        vpnName: link.vpnName,
         hashes: link.hashes,
         subUrl,
         stats,

@@ -5,7 +5,7 @@ import {
   IconFlameFilled, IconShieldFilled, IconLayoutGridFilled, IconCloudFilled, IconBrandSpeedtest,
   IconStarFilled, IconHeartFilled, IconBoltFilled, IconRocket,
   IconCrownFilled, IconDiamondFilled, IconLeafFilled, IconSnowflake,
-  IconServer, IconGlobe, IconLockFilled, IconWifi, IconBrandTelegram,
+  IconServer, IconGlobe, IconLockFilled, IconWifi, IconBrandTelegram, IconPower,
 } from '@tabler/icons-react';
 
 const SERVER_ICONS: { key: string; render: (size: number) => React.ReactNode }[] = [
@@ -59,13 +59,12 @@ import AddServer from '../modals/Add-server';
 import EditServer from '../modals/Edit-server';
 import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
+import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
-import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficRemainLabel, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, subRefreshMs, type TrafficStats } from '../lib/utils/wdttLink';
+import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, type TrafficStats } from '../lib/utils/wdttLink';
 import { SaveProfile } from '../../wailsjs/go/backend/App';
 import type { Server, TunnelState } from '../lib/types';
 import { Connect as WailsConnect, Disconnect as WailsDisconnect } from '../../wailsjs/go/backend/App';
-import shapeDark from '../assets/shape-dark.png';
-import powerIcon from '../assets/power-icon.png';
 
 const PING_COLORS: Record<string, string> = {
   good: '#22c55e',
@@ -104,6 +103,10 @@ export default function Connect() {
   const [editServer, setEditServer] = useState<Server | null>(null);
   const [linkFlash, setLinkFlash] = useState(false);
   const [traffic, setTraffic] = useState<TrafficStats | null>(null);
+  const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
+  const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
+  useEffect(() => settingsStore.subscribe(s => setMetricsRefreshSec(s.metricsRefreshSec)), []);
+  useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
 
   useEffect(() => {
     return wdttLinkStore.subscribe((link) => {
@@ -112,6 +115,7 @@ export default function Connect() {
       if (!consumed) return;
       const host = `${consumed.ip}:${consumed.dtlsPort}`;
       const name = consumed.name;
+      const vpnName = consumed.vpnName;
 
       const applyLink = async () => {
         const h4 = consumed.hashes.slice(0, 4);
@@ -125,24 +129,23 @@ export default function Connect() {
         const existing = serverStore.getAll().find(s => s.host === host);
         let s = existing ?? serverStore.add({
           name,
+          vpnName,
           host,
           password: consumed.password,
           subUrl: consumed.subUrl,
         });
-        if (consumed.hashes.length > 0 || consumed.subUrl) {
+        if (consumed.hashes.length > 0 || consumed.subUrl || vpnName) {
           const updated = {
             ...s,
             hashes: padded,
             subUrl: consumed.subUrl ?? s.subUrl,
+            vpnName: vpnName ?? s.vpnName,
           };
           serverStore.update(updated);
           s = updated;
         }
         if (consumed.stats) {
           setTraffic(consumed.stats);
-          if (consumed.stats.announce) {
-            toastStore.show(consumed.stats.announce, 6000);
-          }
         }
         setServers(serverStore.getAll());
         setSelected({ ...s });
@@ -169,14 +172,15 @@ export default function Connect() {
       const stats = await fetchTrafficStats(selected.subUrl!);
       if (cancelled || !stats) return;
       setTraffic(stats);
-      schedule(subRefreshMs(stats));
+      const userSec = metricsRefreshSec;
+      schedule(metricsRefreshMs(stats, userSec));
     };
     refresh();
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selected?.subUrl, selected?.id]);
+  }, [selected?.subUrl, selected?.id, metricsRefreshSec]);
 
   useEffect(() => {
     if (tunnelState !== 'connected' || !selected?.subUrl) return;
@@ -279,24 +283,106 @@ export default function Connect() {
   const isSpinning = tunnelState === 'connecting' || tunnelState === 'disconnecting';
   const isBusy = tunnelState === 'disconnecting';
   const trafficUsedPct = traffic ? trafficUsedPercent(traffic) : null;
+  const statsLive = isActive && sessionStats;
+  const rxDisplay = statsLive ? formatBytes(sessionStats!.rxBytes) : '—';
+  const txDisplay = statsLive ? formatBytes(sessionStats!.txBytes) : '—';
+  const rxRateDisplay = statsLive ? formatRate(sessionStats!.rxRate) : '—';
+  const txRateDisplay = statsLive ? formatRate(sessionStats!.txRate) : '—';
+  const turnDisplay = statsLive ? formatMs(sessionStats!.turnRttMs) : '—';
+  const dtlsDisplay = statsLive ? formatMs(sessionStats!.dtlsHsMs) : '—';
+  const netDisplay = statsLive ? formatMs(sessionStats!.internetRttMs) : '—';
 
   return (
     <>
       <style>{`
         * { font-family: 'Geist', sans-serif; font-weight: 500; box-sizing: border-box; }
         .main { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; animation: page-in 0.25s ease-out; background: var(--bg); }
+        .connect-center {
+          position: absolute;
+          left: 50%;
+          bottom: 158px;
+          transform: translateX(-50%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          width: min(340px, calc(100vw - 32px));
+        }
+        .connect-stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
         .btn-add { position: absolute; top: 16px; right: 20px; background: none; border: none; cursor: pointer; color: var(--text); }
-        .power-btn { position: relative; width: 160px; height: 160px; background: none; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: opacity 0.2s; }
-        .power-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .orb { position: absolute; width: 130px; height: 130px; }
-        .orb img { width: 100%; height: 100%; display: block; }
-        .orb--spinning { animation: shape-spin 2s linear infinite; }
-        .orb--active { animation: shape-pulse 1.2s ease-in-out infinite; }
-        @keyframes shape-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes shape-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-        @keyframes link-flash { 0% { opacity:1; } 30% { opacity:0.2; } 60% { opacity:1; } 80% { opacity:0.4; } 100% { opacity:1; } }
-        .orb--flash { animation: link-flash 0.8s ease-out; }
-        .power-icon { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; }
+        .connect-btn {
+          position: relative;
+          width: 140px;
+          height: 140px;
+          border-radius: 50%;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          background: linear-gradient(145deg, var(--bg-3), var(--bg-2));
+          box-shadow: 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+          transition: box-shadow 0.4s ease, transform 0.15s ease;
+          color: var(--text-3);
+        }
+        .connect-btn:hover:not(:disabled) { transform: scale(1.03); }
+        .connect-btn:active:not(:disabled) { transform: scale(0.97); }
+        .connect-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .connect-btn__icon { position: relative; z-index: 2; transition: color 0.35s ease; }
+        .connect-btn__halo {
+          position: absolute;
+          inset: -6px;
+          border-radius: 50%;
+          opacity: 0;
+          pointer-events: none;
+          background: radial-gradient(circle, rgba(34,197,94,0.28), transparent 68%);
+          transition: opacity 0.4s ease;
+        }
+        .connect-btn__ring {
+          position: absolute;
+          inset: -3px;
+          border-radius: 50%;
+          border: 2px solid transparent;
+          opacity: 0;
+          pointer-events: none;
+        }
+        .connect-btn--on {
+          color: #22c55e;
+          box-shadow: 0 0 44px rgba(34,197,94,0.32), 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+        }
+        .connect-btn--on .connect-btn__halo {
+          opacity: 1;
+          animation: connect-halo-pulse 2.5s ease-in-out infinite;
+        }
+        .connect-btn--busy {
+          color: var(--accent);
+          box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 35%, transparent), 0 8px 32px rgba(0,0,0,0.45);
+        }
+        .connect-btn--busy .connect-btn__ring {
+          opacity: 1;
+          border-top-color: var(--accent);
+          border-right-color: color-mix(in srgb, var(--accent) 40%, transparent);
+          animation: connect-ring-spin 1.1s linear infinite;
+        }
+        .connect-btn--busy .connect-btn__halo {
+          opacity: 0.55;
+          background: radial-gradient(circle, color-mix(in srgb, var(--accent) 30%, transparent), transparent 68%);
+          animation: connect-halo-pulse 1.4s ease-in-out infinite;
+        }
+        .connect-btn--flash {
+          animation: connect-flash 0.8s ease-out;
+        }
+        @keyframes connect-halo-pulse {
+          0%, 100% { transform: scale(1); opacity: 0.55; }
+          50% { transform: scale(1.08); opacity: 1; }
+        }
+        @keyframes connect-ring-spin { to { transform: rotate(360deg); } }
+        @keyframes connect-flash {
+          0%, 100% { opacity: 1; }
+          35% { opacity: 0.35; }
+          65% { opacity: 1; }
+        }
         .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(560px, calc(100vw - 24px)); }
         .server-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 8px; background: var(--surface); animation: slide-down 0.28s ease-out; }
         .server-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 20px; background: var(--bg-2); font-size: 15px; color: var(--text); font-family: 'Geist', sans-serif; font-weight: 500; border-bottom: 1px solid var(--border-2); }
@@ -315,13 +401,32 @@ export default function Connect() {
         .status-traffic-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width 0.45s ease, background 0.3s ease; opacity: 0.55; }
         .status-traffic-text { position: relative; z-index: 1; }
         .status-expire { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+        .status-announce { margin-top: 6px; padding: 8px 12px; font-size: 11px; color: var(--text-3); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 100%; min-width: 0; line-height: 1.4; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .status-support { background: none; border: none; cursor: pointer; color: var(--accent); display: flex; padding: 0; margin-left: auto; flex-shrink: 0; }
         .status-ping { display: flex; align-items: center; gap: 4px; font-size: 12px; flex-shrink: 0; }
         .ping-dot { width: 6px; height: 6px; border-radius: 50%; }
-        .tunnel-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, calc(-50% + 80px)); font-size: 13px; color: var(--text-3); pointer-events: none; }
-        .traffic-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, calc(-50% + 118px)); display: flex; gap: 18px; font-size: 12px; color: var(--text-3); pointer-events: none; white-space: nowrap; }
-        .traffic-panel span { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 88px; }
-        .traffic-panel strong { font-size: 13px; color: var(--text); font-weight: 600; }
+        .tunnel-label { font-size: 13px; color: var(--text-3); pointer-events: none; line-height: 1.2; }
+        .session-stats {
+          width: 100%;
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          padding: 12px 14px;
+          pointer-events: none;
+        }
+        .session-stats--idle .session-stat-value,
+        .session-stats--idle .session-stat-sub,
+        .session-stats--idle .session-latency strong { color: var(--text-4); }
+        .session-stats--idle .session-stat-sub { color: var(--text-4); }
+        .session-stats-grid { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
+        .session-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .session-stat--right { align-items: flex-end; text-align: right; }
+        .session-stat-label { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-4); }
+        .session-stat-value { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .session-stat-sub { font-size: 11px; color: var(--accent); }
+        .session-latency { display: flex; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-2); font-size: 11px; color: var(--text-3); }
+        .session-latency span { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+        .session-latency strong { font-size: 12px; color: var(--text); font-weight: 600; }
         .icon-picker { position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; box-shadow: var(--shadow); display: grid; grid-template-columns: repeat(6, 36px); gap: 4px; animation: modal-in 0.15s ease-out; }
         .icon-picker-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 18px; }
         .icon-picker-btn:hover { background: var(--bg-3); border-color: var(--border); }
@@ -333,29 +438,52 @@ export default function Connect() {
           <IconPlus stroke={2} size={22} />
         </button>
 
-        <button
-          className="power-btn"
-          onClick={handleTunnel}
-          disabled={!selected || isBusy}
-          title={selected ? TUNNEL_LABEL[tunnelState] : 'Добавьте сервер'}
-        >
-          <div className={`orb${isSpinning ? ' orb--spinning' : isActive ? ' orb--active' : ''}${linkFlash ? ' orb--flash' : ''}`}>
-            <img src={shapeDark} alt="" draggable={false} />
-          </div>
-          <div className="power-icon">
-            <img src={powerIcon} alt="" draggable={false} style={{ width: 28, height: 35 }} />
-          </div>
-        </button>
+        <div className="connect-center">
+          <div className="connect-stack">
+            <button
+              className={`connect-btn${isActive ? ' connect-btn--on' : ''}${isSpinning ? ' connect-btn--busy' : ''}${linkFlash ? ' connect-btn--flash' : ''}`}
+              onClick={handleTunnel}
+              disabled={!selected || isBusy}
+              title={selected ? TUNNEL_LABEL[tunnelState] : 'Добавьте сервер'}
+              aria-label={selected ? TUNNEL_LABEL[tunnelState] : 'Добавьте сервер'}
+            >
+              <span className="connect-btn__halo" aria-hidden />
+              <span className="connect-btn__ring" aria-hidden />
+              <IconPower className="connect-btn__icon" size={36} stroke={2} />
+            </button>
 
-        <span className="tunnel-label">{selected ? TUNNEL_LABEL[tunnelState] : 'Нет серверов'}</span>
-
-        {isActive && traffic && (
-          <div className="traffic-panel">
-            <span>Загружено<strong>{formatBytes(traffic.download)}</strong></span>
-            <span>Отправлено<strong>{formatBytes(traffic.upload)}</strong></span>
-            <span>Остаток<strong>{trafficRemainLabel(traffic)}</strong></span>
+            <span className="tunnel-label">{selected ? TUNNEL_LABEL[tunnelState] : 'Нет серверов'}</span>
           </div>
-        )}
+
+          <div className={`session-stats${statsLive ? '' : ' session-stats--idle'}`}>
+          <div className="session-stats-grid">
+            <div className="session-stat">
+              <span className="session-stat-label">↓ Загружено</span>
+              <span className="session-stat-value">{rxDisplay}</span>
+              <span className="session-stat-sub">{rxRateDisplay}</span>
+            </div>
+            <div className="session-stat session-stat--right">
+              <span className="session-stat-label">↑ Отправлено</span>
+              <span className="session-stat-value">{txDisplay}</span>
+              <span className="session-stat-sub">{txRateDisplay}</span>
+            </div>
+          </div>
+          <div className="session-latency">
+            <span title="TURN Allocate RTT">
+              TURN
+              <strong>{turnDisplay}</strong>
+            </span>
+            <span title="DTLS Handshake">
+              DTLS
+              <strong>{dtlsDisplay}</strong>
+            </span>
+            <span title="TCP до 1.1.1.1">
+              Интернет
+              <strong>{netDisplay}</strong>
+            </span>
+          </div>
+        </div>
+        </div>
 
         <div className="status-bar">
           {listOpen && servers.length > 0 && (
@@ -371,7 +499,7 @@ export default function Connect() {
                     <ServerIcon iconKey={s.icon} size={20} />
                   </button>
                   <span className="status-name">
-                    {s.name}
+                    {serverVpnTitle(s, null)}
                   </span>
                   {s.ping != null && (
                     <span className="status-ping">
@@ -390,7 +518,7 @@ export default function Connect() {
           <button className={`status-server${!selected ? ' status-server--empty' : ''}`} onClick={() => setListOpen(o => !o)}>
             <div className="status-row-main">
               <ServerIcon iconKey={selected?.icon} size={16} />
-              <span className="status-name">{selected ? selected.name : 'Нет серверов'}</span>
+              <span className="status-name">{serverVpnTitle(selected, traffic)}</span>
               {selected?.ping != null && (
                 <span className="status-ping">
                   <span className="ping-dot" style={{ background: pingColor(selected.ping) }} />
@@ -436,6 +564,11 @@ export default function Connect() {
               </div>
             )}
           </button>
+          {traffic?.announce && selected?.subUrl && (
+            <div className="status-announce" title={traffic.announce}>
+              {traffic.announce}
+            </div>
+          )}
         </div>
 
         {addServerOpen && <AddServer onClose={() => setAddServerOpen(false)} onAdd={handleAdd} />}

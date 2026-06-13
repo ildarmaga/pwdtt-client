@@ -4,6 +4,7 @@ import Hash from './Hash';
 import { settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
+import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { SetTrayEnabled, SetAutoStart, GetAutoStart } from '../../wailsjs/go/backend/App';
 
 interface Props {
@@ -68,6 +69,8 @@ export default function Settings({ onClose }: Props) {
         .st-num-input { width: 80px; padding: 5px 10px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 14px; font-family: 'Geist', sans-serif; text-align: right; outline: none; background: var(--input-bg); color: var(--text); transition: border-color 0.15s; }
         .st-num-input:focus { border-color: var(--accent); }
         .st-num-input--error { border-color: #ef4444; }
+        .st-select { padding: 5px 8px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 13px; font-family: 'Geist', sans-serif; background: var(--input-bg); color: var(--text); outline: none; cursor: pointer; max-width: 130px; }
+        .st-select:focus { border-color: var(--accent); }
         .st-hash-btn { width: 100%; margin-top: 16px; padding: 13px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .st-locked { opacity: 0.4; pointer-events: none; }
         .st-lock-hint { font-size: 11px; color: var(--text-3); margin-bottom: 4px; text-align: center; }
@@ -134,6 +137,19 @@ export default function Settings({ onClose }: Props) {
           <div className="st-row">
             <span>Глобальные хеши</span>
             <button className={`st-toggle st-toggle--${settings.useGlobalHashes ? 'on' : 'off'}`} onClick={() => update('useGlobalHashes', !settings.useGlobalHashes)} />
+          </div>
+
+          <div className="st-row">
+            <span>Обновление метрик</span>
+            <select
+              className="st-select"
+              value={settings.metricsRefreshSec}
+              onChange={e => update('metricsRefreshSec', +e.target.value)}
+            >
+              {METRICS_REFRESH_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
           </div>
 
           <button

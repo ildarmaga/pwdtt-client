@@ -27,6 +27,7 @@ type SubImportResult struct {
 	DtlsPort string           `json:"dtlsPort"`
 	Password string           `json:"password"`
 	Name     string           `json:"name"`
+	VpnName  string           `json:"vpnName,omitempty"`
 	Hashes   []string         `json:"hashes"`
 	SubURL   string           `json:"subUrl"`
 	Stats    *SubTrafficStats `json:"stats,omitempty"`
@@ -65,14 +66,18 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		return nil, err
 	}
 	name := parsed.Name
-	if stats != nil && stats.Title != "" {
-		name = stats.Title
+	vpnName := parsed.VpnName
+	if stats != nil {
+		if vpnName == "" && stats.Title != "" {
+			vpnName = stats.Title
+		}
 	}
 	return &SubImportResult{
 		IP:       parsed.IP,
 		DtlsPort: parsed.DtlsPort,
 		Password: parsed.Password,
 		Name:     name,
+		VpnName:  vpnName,
 		Hashes:   parsed.Hashes,
 		SubURL:   strings.Split(rawURL, "?")[0],
 		Stats:    stats,
@@ -129,6 +134,7 @@ func (a *App) ParseWdttLink(link string) (*SubImportResult, error) {
 		DtlsPort: parsed.DtlsPort,
 		Password: parsed.Password,
 		Name:     parsed.Name,
+		VpnName:  parsed.VpnName,
 		Hashes:   parsed.Hashes,
 		SubURL:   parsed.SubURL,
 	}, nil
@@ -217,6 +223,7 @@ type wdttLinkParsed struct {
 	DtlsPort string
 	Password string
 	Name     string
+	VpnName  string
 	Hashes   []string
 	SubURL   string
 }
@@ -310,7 +317,8 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 	}
 	ip := strings.TrimSpace(fmt.Sprint(firstStr(raw, "ip", "add")))
 	pass := strings.TrimSpace(fmt.Sprint(firstStr(raw, "pass", "id")))
-	name := strings.TrimSpace(fmt.Sprint(firstStr(raw, "ps", "remark", "email")))
+	name := strings.TrimSpace(fmt.Sprint(firstStr(raw, "name", "ps", "remark", "email")))
+	vpnName := strings.TrimSpace(fmt.Sprint(firstStr(raw, "vpn", "VPN")))
 	if name == "" {
 		name = "Server"
 	}
@@ -337,6 +345,7 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 		DtlsPort: strconv.FormatInt(dtls, 10),
 		Password: pass,
 		Name:     name,
+		VpnName:  vpnName,
 		Hashes:   hashes,
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
 	}, nil

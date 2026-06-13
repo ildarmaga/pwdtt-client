@@ -16,6 +16,7 @@ interface Props {
 
 export default function EditServer({ server, onClose, onSave, onDelete }: Props) {
   const [name, setName] = useState(server.name);
+  const [vpnName, setVpnName] = useState(server.vpnName ?? '');
   const lastColon = server.host.lastIndexOf(':');
   const ip = lastColon !== -1 ? server.host.slice(0, lastColon) : server.host;
   const port0 = lastColon !== -1 ? server.host.slice(lastColon + 1) : '56000';
@@ -46,6 +47,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
     const updated: Server = {
       ...server,
       name: name.trim(),
+      vpnName: vpnName.trim() || undefined,
       host: `${serverIp.trim()}:${serverPort.trim() || '56000'}`,
       password,
       subUrl: subUrl.trim() || undefined,
@@ -102,7 +104,8 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
             <button className="es-close" onClick={onClose}>✕</button>
           </div>
 
-          <input className="es-input" placeholder="Название сервера" value={name} onChange={e => setName(e.target.value)} onPaste={e => void handleControlledPaste(e, name, setName)} />
+          <input className="es-input" placeholder="Комментарий (name)" value={name} onChange={e => setName(e.target.value)} onPaste={e => void handleControlledPaste(e, name, setName)} />
+          <input className="es-input" placeholder="Название VPN (vpn)" value={vpnName} onChange={e => setVpnName(e.target.value)} onPaste={e => void handleControlledPaste(e, vpnName, setVpnName)} />
           <div style={{ display: 'flex', gap: 8 }}>
             <input className="es-input" style={{ flex: 1 }} placeholder="IP сервера" value={serverIp} onChange={e => setServerIp(e.target.value)} onPaste={e => void handleControlledPaste(e, serverIp, setServerIp)} />
             <input className="es-input" style={{ width: 100 }} placeholder="Порт" value={serverPort} onChange={e => setServerPort(e.target.value)} onPaste={e => void handleControlledPaste(e, serverPort, setServerPort)} />

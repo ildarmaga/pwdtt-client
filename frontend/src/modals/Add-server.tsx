@@ -14,6 +14,7 @@ interface Props {
 export default function AddServer({ onClose, onAdd }: Props) {
   const [link, setLink] = useState('');
   const [name, setName] = useState('');
+  const [vpnName, setVpnName] = useState('');
   const [ip, setIp] = useState('');
   const [port, setPort] = useState('56000');
   const [password, setPassword] = useState('');
@@ -24,6 +25,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
     setPort(parsed.dtlsPort);
     setPassword(parsed.password);
     setName(parsed.name !== 'Server' ? parsed.name : parsed.ip);
+    if (parsed.vpnName) setVpnName(parsed.vpnName);
     if (parsed.subUrl) setSubUrl(parsed.subUrl);
   };
 
@@ -43,6 +45,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
         setPort(legacy.dtlsPort);
         setPassword(legacy.password);
         if (legacy.name !== 'Server') setName(legacy.name);
+        if (legacy.vpnName) setVpnName(legacy.vpnName);
         if (legacy.subUrl) setSubUrl(legacy.subUrl);
         return;
       }
@@ -99,6 +102,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
     const h4: [string,string,string,string] = [hashes[0]??'', hashes[1]??'', hashes[2]??'', hashes[3]??''];
     onAdd({
       name: finalName,
+      vpnName: vpnName.trim() || parsed?.vpnName || legacy?.vpnName || undefined,
       host,
       password: finalPassword,
       hashes: h4,
@@ -140,7 +144,8 @@ export default function AddServer({ onClose, onAdd }: Props) {
 
           <div className="as-divider">или вручную</div>
 
-          <input className="as-input" placeholder="Название сервера" value={name} onChange={e => setName(e.target.value)} onPaste={e => void handleControlledPaste(e, name, setName)} />
+          <input className="as-input" placeholder="Комментарий (name)" value={name} onChange={e => setName(e.target.value)} onPaste={e => void handleControlledPaste(e, name, setName)} />
+          <input className="as-input" placeholder="Название VPN (vpn)" value={vpnName} onChange={e => setVpnName(e.target.value)} onPaste={e => void handleControlledPaste(e, vpnName, setVpnName)} />
           <div style={{ display: 'flex', gap: 8 }}>
             <input className="as-input" style={{ flex: 1 }} placeholder="IP сервера" value={ip} onChange={e => setIp(e.target.value)} onPaste={e => void handleControlledPaste(e, ip, setIp)} />
             <input className="as-input" style={{ width: 100 }} placeholder="Порт" value={port} onChange={e => setPort(e.target.value)} onPaste={e => void handleControlledPaste(e, port, setPort)} />

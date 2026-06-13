@@ -37,6 +37,21 @@ func TestParseJSONWdttLinkWithSub(t *testing.T) {
 	if p.SubURL != "https://devgamemaga.mooo.com:2096/sub/abc123" {
 		t.Fatalf("unexpected sub url: %+v", p)
 	}
+	if p.Name != "PC-ildar" {
+		t.Fatalf("unexpected name: %+v", p)
+	}
+}
+
+func TestParseJSONWdttLinkVpnAndName(t *testing.T) {
+	payload := `{"vpn":"MAGIC VPN","name":"PC-ildar","ip":"devgamemaga.mooo.com","dtls":56000,"pass":"ildar123I","sub":"https://devgamemaga.mooo.com:2096/subs/g6q0on09dlh3km2m"}`
+	link := "wdtt://" + base64.StdEncoding.EncodeToString([]byte(payload))
+	p, err := parseWdttLink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.VpnName != "MAGIC VPN" || p.Name != "PC-ildar" {
+		t.Fatalf("unexpected parse: %+v", p)
+	}
 }
 
 func TestParseSubUserInfo(t *testing.T) {

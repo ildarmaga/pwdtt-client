@@ -19,7 +19,7 @@ export default function DevMetricsPanel() {
 
   return (
     <div style={{
-      position: 'fixed', right: 12, bottom: 12, zIndex: 9998,
+      position: 'fixed', right: 12, bottom: 132, zIndex: 9998,
       width: open ? 420 : 160, maxWidth: 'calc(100vw - 24px)',
       background: 'var(--surface)', border: '1px solid var(--border)',
       borderRadius: 10, boxShadow: 'var(--shadow)', fontSize: 11,

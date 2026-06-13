@@ -4,6 +4,7 @@ import {
   ParseWdttLink,
 } from '../../../wailsjs/go/backend/App';
 import type { backend } from '../../../wailsjs/go/models';
+import type { Server } from '../types';
 
 export interface TrafficStats {
   upload: number;
@@ -21,7 +22,10 @@ export interface WdttLink {
   dtlsPort: string;
   password: string;
   hashes: string[];
+  /** Комментарий пользователя (name / ps) */
   name: string;
+  /** Название VPN (vpn / Profile-Title) */
+  vpnName?: string;
   subUrl?: string;
   stats?: TrafficStats;
 }
@@ -37,7 +41,7 @@ export function isImportableInput(raw: string): boolean {
   return isHttpUrl(s);
 }
 
-function decodeBase64Utf8(b64: string): string {
+export function decodeBase64Utf8(b64: string): string {
   const bin = atob(b64.replace(/\s/g, ''));
   const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
   return new TextDecoder().decode(bytes);
@@ -63,7 +67,8 @@ function parseJsonWdtt(stripped: string): WdttLink | null {
     const pass = String(json.pass ?? json.id ?? '').trim();
     const dtls = json.dtls ?? json.Dtls;
     const dtlsPort = dtls != null ? String(dtls) : '';
-    const name = String(json.ps ?? json.remark ?? json.email ?? 'Server').trim() || 'Server';
+    const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? 'Server').trim() || 'Server';
+    const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
     const hashRaw = json.hash ?? json.vk_hash ?? '';
     const hashes = typeof hashRaw === 'string'
       ? hashRaw.split(',').map((h: string) => h.trim()).filter(Boolean)
@@ -71,7 +76,7 @@ function parseJsonWdtt(stripped: string): WdttLink | null {
     const subRaw = String(json.sub ?? json.subUrl ?? json.sub_url ?? '').trim();
     const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
     if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, password: pass, hashes, name, subUrl };
+    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, subUrl };
   } catch {
     return null;
   }
@@ -95,18 +100,42 @@ function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
   };
 }
 
+function mergeWdttLink(primary: WdttLink, fallback: WdttLink | null): WdttLink {
+  if (!fallback) return primary;
+  return {
+    ...primary,
+    vpnName: primary.vpnName || fallback.vpnName,
+    name: primary.name && primary.name !== 'Server' ? primary.name : fallback.name,
+    subUrl: primary.subUrl || fallback.subUrl,
+    hashes: primary.hashes?.length ? primary.hashes : fallback.hashes,
+  };
+}
+
 function subResultToLink(r: backend.SubImportResult): WdttLink {
   const stats = r.stats ? statsFromResult(r.stats) : undefined;
-  const name = stats?.title || r.name || 'Server';
+  const vpnName = r.vpnName || stats?.title || undefined;
+  const name = r.name || 'Server';
   return {
     ip: r.ip,
     dtlsPort: r.dtlsPort,
     password: r.password,
     name,
+    vpnName,
     hashes: r.hashes ?? [],
     subUrl: r.subUrl || undefined,
     stats,
   };
+}
+
+/** Заголовок в статус-баре: «MAGIC VPN - ildar» (vpn + комментарий) */
+export function serverVpnTitle(server: Server | null, traffic?: TrafficStats | null): string {
+  if (!server) return 'Нет серверов';
+  const vpn = (server.vpnName || traffic?.title || '').trim();
+  const user = (server.name || '').trim();
+  if (vpn && user && user.toLowerCase() !== vpn.toLowerCase()) {
+    return `${vpn} - ${user}`;
+  }
+  return vpn || user || 'Server';
 }
 
 // wdtt:// — colon-формат или base64(JSON), fallback для dev/preview
@@ -144,6 +173,7 @@ export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | 
 export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
   const s = raw.trim();
   if (!s) return null;
+  const localWdtt = s.startsWith('wdtt://') ? parseWdttUrl(s) : null;
   try {
     if (isHttpUrl(s)) {
       const r = await FetchSubscriptionURL(s);
@@ -152,13 +182,13 @@ export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
     if (s.startsWith('wdtt://')) {
       try {
         const r = await ParseWdttLink(s);
-        return subResultToLink(r);
+        return mergeWdttLink(subResultToLink(r), localWdtt);
       } catch {
-        return parseWdttUrl(s);
+        return localWdtt;
       }
     }
   } catch {
-    return null;
+    return localWdtt;
   }
   return null;
 }
@@ -224,6 +254,12 @@ export function subRefreshMs(stats: TrafficStats | null): number {
   const hours = stats?.updateInterval;
   if (hours && hours > 0) return hours * 3600_000;
   return 30 * 60_000;
+}
+
+/** Интервал опроса sub: userSec=0 → авто из подписки или 30 мин. */
+export function metricsRefreshMs(stats: TrafficStats | null, userSec: number): number {
+  if (userSec > 0) return userSec * 1000;
+  return subRefreshMs(stats);
 }
 
 export function trafficRemainLabel(stats: TrafficStats): string {
