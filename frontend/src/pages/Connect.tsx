@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type React from 'react';
 import {
   IconCloverFilled, IconPlus, IconChevronUp, IconPencil,
@@ -302,6 +302,25 @@ export default function Connect() {
   const dtlsDisplay = statsLive ? formatMs(sessionStats!.dtlsHsMs) : '—';
   const netDisplay = statsLive ? formatMs(sessionStats!.internetRttMs) : '—';
 
+  // Блок кнопки+метрик держится на фиксированном расстоянии над панелью сервера.
+  // При длинном объявлении панель растёт вверх — поднимаем блок ровно на её высоту.
+  const statusInfoRef = useRef<HTMLDivElement>(null);
+  const STATUS_BOTTOM = 24; // отступ панели от низа окна
+  const STACK_GAP = 18;     // зазор между панелью и блоком метрик
+  const [stackBottom, setStackBottom] = useState(128);
+  useEffect(() => {
+    const el = statusInfoRef.current;
+    if (!el) return;
+    const update = () => {
+      const h = el.getBoundingClientRect().height;
+      setStackBottom(Math.round(STATUS_BOTTOM + h + STACK_GAP));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <>
       <style>{`
@@ -311,6 +330,7 @@ export default function Connect() {
           position: absolute;
           left: 50%;
           bottom: 128px;
+          transition: bottom 0.22s ease;
           transform: translateX(-50%);
           display: flex;
           flex-direction: column;
@@ -394,6 +414,7 @@ export default function Connect() {
           65% { opacity: 1; }
         }
         .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(420px, calc(100vw - 24px)); }
+        .status-info { display: flex; flex-direction: column; align-items: stretch; }
         .server-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 8px; background: var(--surface); animation: slide-down 0.28s ease-out; }
         .server-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 20px; background: var(--bg-2); font-size: 15px; color: var(--text); font-family: 'Geist', sans-serif; font-weight: 500; border-bottom: 1px solid var(--border-2); }
         .server-item:last-child { border-bottom: none; }
@@ -448,7 +469,7 @@ export default function Connect() {
           <IconPlus stroke={2} size={22} />
         </button>
 
-        <div className="connect-center">
+        <div className="connect-center" style={{ bottom: stackBottom }}>
           <div className="connect-stack">
             <button
               className={`connect-btn${isActive ? ' connect-btn--on' : ''}${isSpinning ? ' connect-btn--busy' : ''}${linkFlash ? ' connect-btn--flash' : ''}`}
@@ -525,6 +546,7 @@ export default function Connect() {
             </div>
           )}
 
+          <div ref={statusInfoRef} className="status-info">
           <button className={`status-server${!selected ? ' status-server--empty' : ''}`} onClick={() => setListOpen(o => !o)}>
             <div className="status-row-main">
               <ServerIcon iconKey={selected?.icon} size={16} />
@@ -579,6 +601,7 @@ export default function Connect() {
               {traffic.announce}
             </div>
           )}
+          </div>
         </div>
 
         {addServerOpen && <AddServer onClose={() => setAddServerOpen(false)} onAdd={handleAdd} />}
