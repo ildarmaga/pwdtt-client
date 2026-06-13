@@ -256,10 +256,10 @@ export function subRefreshMs(stats: TrafficStats | null): number {
   return 30 * 60_000;
 }
 
-/** Интервал опроса sub: userSec=0 → авто из подписки или 30 мин. */
-export function metricsRefreshMs(stats: TrafficStats | null, userSec: number): number {
+/** Интервал опроса sub: userSec=0 → авто каждые 5 сек. */
+export function metricsRefreshMs(_stats: TrafficStats | null, userSec: number): number {
   if (userSec > 0) return userSec * 1000;
-  return subRefreshMs(stats);
+  return 5_000;
 }
 
 export function trafficRemainLabel(stats: TrafficStats): string {

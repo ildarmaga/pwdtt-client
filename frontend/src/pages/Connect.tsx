@@ -300,7 +300,7 @@ export default function Connect() {
         .connect-center {
           position: absolute;
           left: 50%;
-          bottom: 158px;
+          bottom: 128px;
           transform: translateX(-50%);
           display: flex;
           flex-direction: column;
@@ -383,7 +383,7 @@ export default function Connect() {
           35% { opacity: 0.35; }
           65% { opacity: 1; }
         }
-        .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(560px, calc(100vw - 24px)); }
+        .status-bar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: stretch; width: min(420px, calc(100vw - 24px)); }
         .server-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 8px; background: var(--surface); animation: slide-down 0.28s ease-out; }
         .server-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 20px; background: var(--bg-2); font-size: 15px; color: var(--text); font-family: 'Geist', sans-serif; font-weight: 500; border-bottom: 1px solid var(--border-2); }
         .server-item:last-child { border-bottom: none; }

@@ -162,7 +162,7 @@ func WorkerGroup(
 		}
 		if last > 0 && now-last < minGap {
 			log.Printf("[TURN] Креды уже обновлялись %d сек назад, ждём следующий retry (%s)", now-last, reason)
-			return true
+			return false
 		}
 
 		getStreamCache(credStreamID).invalidate(credStreamID)
@@ -250,6 +250,13 @@ func WorkerGroup(
 				}
 
 				if sessErr == nil {
+					attempt = 0
+					delay := 2*time.Second + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return
+					}
 					continue
 				}
 
@@ -293,7 +300,7 @@ func WorkerGroup(
 							strings.Contains(errStrLower, "quota") ||
 							strings.Contains(errStrLower, "486")
 						if isQuota {
-							setQuotaBackoff(45)
+							setQuotaBackoff(60)
 						}
 						log.Printf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
 						refreshCreds("TURN allocation error")
@@ -319,7 +326,7 @@ func WorkerGroup(
 				if strings.Contains(strings.ToLower(sessErr.Error()), "quota") ||
 					strings.Contains(strings.ToLower(sessErr.Error()), "486") ||
 					strings.Contains(strings.ToLower(sessErr.Error()), "turn квота") {
-					retryDelay = 45*time.Second + time.Duration(rand.Intn(10))*time.Second
+					retryDelay = 60*time.Second + time.Duration(rand.Intn(15))*time.Second
 				}
 				retryDelay += time.Duration(rand.Intn(3)) * time.Second
 				select {

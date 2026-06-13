@@ -27,8 +27,11 @@ const (
 	keepaliveInterval  = 15 * time.Second
 )
 
-// Handshake semaphore: limit to 3 concurrent DTLS handshakes
-var handshakeSem = make(chan struct{}, 3)
+// Handshake semaphore: limit concurrent DTLS handshakes (queue under load)
+var handshakeSem = make(chan struct{}, 6)
+
+// turnAllocateSem: limit parallel TURN Allocate across all workers (VK quota)
+var turnAllocateSem = make(chan struct{}, 4)
 
 // NullLoggerFactory подавляет логи pion
 type NullLoggerFactory struct{}
@@ -129,7 +132,13 @@ func RunSession(
 	}
 
 	allocStart := time.Now()
+	select {
+	case turnAllocateSem <- struct{}{}:
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
 	relay, err := tc.Allocate()
+	<-turnAllocateSem
 	if err != nil {
 		if isAuthError(err) {
 			handleAuthError(creds.CacheStreamID)
@@ -280,7 +289,7 @@ func RunSession(
 	}
 	defer dtlsConn.Close()
 
-	hctx, hcancel := context.WithTimeout(sessCtx, 20*time.Second)
+	hctx, hcancel := context.WithTimeout(sessCtx, 45*time.Second)
 	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
 	dtlsStart := time.Now()
 	err = dtlsConn.HandshakeContext(hctx)

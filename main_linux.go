@@ -26,12 +26,15 @@ func main() {
 	app := backend.NewApp(trayIcon)
 
 	err := wails.Run(&options.App{
-		Title:     "PWDTT",
-		Width:     900,
-		Height:    600,
-		MinWidth:  800,
-		MinHeight: 550,
-		Frameless: false,
+		Title:         "PWDTT",
+		Width:         900,
+		Height:        600,
+		MinWidth:      900,
+		MinHeight:     600,
+		MaxWidth:      900,
+		MaxHeight:     600,
+		DisableResize: true,
+		Frameless:     false,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

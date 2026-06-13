@@ -21,7 +21,7 @@ export interface AppSettings {
   autoStart: boolean;
   hashes: [string, string, string, string];
   useGlobalHashes: boolean;
-  /** 0 = авто (Profile-Update-Interval из sub, иначе 30 мин) */
+  /** 0 = авто (каждые 5 сек) */
   metricsRefreshSec: number;
 }
 
@@ -39,7 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [
-  { value: 0, label: 'Авто' },
+  { value: 0, label: 'Авто (5 сек)' },
   { value: 30, label: '30 сек' },
   { value: 60, label: '1 мин' },
   { value: 300, label: '5 мин' },
