@@ -41,7 +41,7 @@ func startTray(iconData []byte, onShow, onToggle, onQuit func()) {
 	trayShowFn = onShow
 	trayQuitFn = onQuit
 
-	tmp := filepath.Join(os.TempDir(), "wdtt-tray-icon.png")
+	tmp := filepath.Join(os.TempDir(), "wdtt-tray-w-icon.png")
 
 	if src, _, err := image.Decode(bytes.NewReader(iconData)); err == nil {
 		dst := image.NewRGBA(image.Rect(0, 0, 22, 22))

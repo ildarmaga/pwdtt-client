@@ -17,7 +17,7 @@ var assets embed.FS
 //go:embed assets/icons/icon.png
 var appIcon []byte
 
-//go:embed assets/icons/icon.png
+//go:embed assets/icons/tray-icon.png
 var trayIcon []byte
 
 //go:embed assets/wintun.dll
