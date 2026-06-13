@@ -17,5 +17,7 @@ export function logDevMetric(method: string, url: string, detail: string, ok = t
 export function subscribeDevMetrics(fn: (entries: DevMetricEntry[]) => void) {
   listeners.add(fn);
   fn(entries);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
