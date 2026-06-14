@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import type React from 'react';
 import {
   IconCloverFilled, IconPlus, IconChevronUp, IconPencil,
@@ -59,6 +59,7 @@ import AddServer from '../modals/Add-server';
 import EditServer from '../modals/Edit-server';
 import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
+import { activeServerStore } from '../lib/stores/activeServerStore';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
@@ -111,7 +112,20 @@ export default function Connect() {
   const [tunnelState, setTunnelState] = useState<TunnelState>(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
 
-  // Смена сервера: сброс метрик сессии и кулдауна — иначе «залипают» данные прошлой подписки.
+  const [activeServerId, setActiveServerId] = useState<string | null>(() => activeServerStore.getId());
+  useEffect(() => activeServerStore.subscribe(setActiveServerId), []);
+
+  /** Пока VPN активен — панель и метрики всегда от активного профиля, не от последнего добавленного. */
+  const displayServer = useMemo(() => {
+    if (tunnelState !== 'idle' && activeServerId) {
+      return servers.find(s => s.id === activeServerId) ?? selected;
+    }
+    return selected;
+  }, [tunnelState, activeServerId, servers, selected]);
+
+  const listHighlightId = tunnelState !== 'idle' && activeServerId ? activeServerId : selected?.id;
+
+  // Смена сервера (только в idle): сброс метрик сессии и кулдауна.
   useEffect(() => {
     if (tunnelState !== 'idle') return;
     tunnelStatsStore.reset();
@@ -174,36 +188,39 @@ export default function Connect() {
             linkManaged: true,
           });
         }
-        if (consumed.stats) {
-          setTraffic(consumed.stats);
+        if (consumed.stats && consumed.subUrl) {
           trafficStatsStore.set(consumed.subUrl, consumed.stats);
         }
         setServers(serverStore.getAll());
-        setSelected({ ...s });
-        setLinkFlash(true);
-        setTimeout(() => setLinkFlash(false), 800);
-        toastStore.show(existing ? `Профиль обновлён: ${name}` : `Профиль добавлен: ${name}`, 3000);
+        const vpnIdle = tunnelStore.get() === 'idle';
+        if (vpnIdle) {
+          if (consumed.stats) setTraffic(consumed.stats);
+          setSelected({ ...s });
+          setLinkFlash(true);
+          setTimeout(() => setLinkFlash(false), 800);
+        }
+        toastStore.show(
+          existing
+            ? `Профиль обновлён: ${name}${vpnIdle ? '' : ' (подключение не изменено)'}`
+            : `Профиль добавлен: ${name}${vpnIdle ? '' : ' (подключение не изменено)'}`,
+          3000,
+        );
       };
       applyLink();
     });
   }, []);
 
   useEffect(() => {
-    if (!selected?.subUrl) {
-      setTraffic(null);
+    if (!displayServer?.subUrl) {
+      if (tunnelState === 'idle') setTraffic(null);
       return;
     }
-    // Сразу показываем последнее сохранённое значение, чтобы метрика не мигала пустым
-    // при возврате на главную или смене сервера — оно обновится после запроса.
-    const subUrl = selected.subUrl;
+    const subUrl = displayServer.subUrl;
     const cached = trafficStatsStore.get(subUrl);
     if (cached) setTraffic(cached);
     let cancelled = false;
     let timer = 0;
     const fallbackMs = (metricsRefreshSec > 0 ? metricsRefreshSec : 5) * 1000;
-    // Самоперепланирующийся опрос: перепланируем ВСЕГДА (в finally), даже если
-    // запрос вернул null/ошибку — иначе одна неудача останавливала автообновление
-    // навсегда (раньше оживало только при перемонтировании на смене страницы).
     const tick = async () => {
       let nextMs = fallbackMs;
       try {
@@ -223,19 +240,19 @@ export default function Connect() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [selected?.subUrl, selected?.id, metricsRefreshSec]);
+  }, [displayServer?.subUrl, displayServer?.id, metricsRefreshSec, tunnelState]);
 
   useEffect(() => {
-    if (tunnelState !== 'connected' || !selected?.subUrl) return;
+    if (tunnelState !== 'connected' || !displayServer?.subUrl) return;
     let cancelled = false;
-    fetchTrafficStats(selected.subUrl).then((stats) => {
+    fetchTrafficStats(displayServer.subUrl).then((stats) => {
       if (!cancelled && stats) {
         setTraffic(stats);
-        trafficStatsStore.set(selected.subUrl, stats);
+        trafficStatsStore.set(displayServer.subUrl!, stats);
       }
     });
     return () => { cancelled = true; };
-  }, [tunnelState, selected?.subUrl, selected?.id]);
+  }, [tunnelState, displayServer?.subUrl, displayServer?.id]);
 
   const doConnect = async () => {
     const s = settingsStore.get();
@@ -251,6 +268,7 @@ export default function Connect() {
       return;
     }
     tunnelStore.set('connecting');
+    activeServerStore.setId(selected!.id);
     try {
       const workers = s.useGlobalHashes
         ? (s.power || 9)
@@ -264,6 +282,7 @@ export default function Connect() {
       });
     } catch (e) {
       tunnelStore.set('idle');
+      activeServerStore.setId(null);
       const msg = e instanceof Error ? e.message : String(e ?? '');
       toastStore.show(msg || 'Не удалось подключиться', 4000);
     }
@@ -291,7 +310,11 @@ export default function Connect() {
   const handleAdd = (data: Omit<Server, 'id'>) => {
     const s = serverStore.add(data);
     setServers(serverStore.getAll());
-    setSelected(s);
+    if (tunnelStore.get() === 'idle') {
+      setSelected(s);
+    } else {
+      toastStore.show(`Добавлено: ${s.name}. Переключение — после отключения`, 3000);
+    }
   };
 
   const handleSave = (server: Server) => {
@@ -302,6 +325,10 @@ export default function Connect() {
   };
 
   const handleDelete = (id: string) => {
+    if (tunnelStore.get() !== 'idle' && activeServerStore.getId() === id) {
+      toastStore.show('Сначала отключитесь от этого сервера', 3000);
+      return;
+    }
     serverStore.remove(id);
     const all = serverStore.getAll();
     setServers(all);
@@ -605,9 +632,13 @@ export default function Connect() {
               {servers.map(s => (
                 <div
                   key={s.id}
-                  className={`server-item${s.id === selected?.id ? ' server-item--active' : ''}`}
+                  className={`server-item${s.id === listHighlightId ? ' server-item--active' : ''}`}
                   style={{ cursor: 'pointer' }}
-                  onClick={() => { setSelected({ ...s }); setListOpen(false); }}
+                  onClick={() => {
+                    if (selectionLocked) return;
+                    setSelected({ ...s });
+                    setListOpen(false);
+                  }}
                 >
                   <button className="server-icon-btn" onClick={(e) => { e.stopPropagation(); handleIconClick(e, s); }}>
                     <ServerIcon iconKey={s.icon} size={20} />
@@ -631,17 +662,17 @@ export default function Connect() {
 
           <div ref={statusInfoRef} className="status-info">
           <button
-            className={`status-server${!selected ? ' status-server--empty' : ''}${selectionLocked ? ' status-server--locked' : ''}`}
+            className={`status-server${!displayServer ? ' status-server--empty' : ''}${selectionLocked ? ' status-server--locked' : ''}`}
             onClick={() => { if (!selectionLocked) setListOpen(o => !o); }}
             title={selectionLocked ? 'Сервер зафиксирован — отключитесь, чтобы сменить' : undefined}
           >
             <div className="status-row-main">
-              <ServerIcon iconKey={selected?.icon} size={16} />
-              <span className="status-name">{serverVpnTitle(selected, traffic)}</span>
-              {selected?.ping != null && (
+              <ServerIcon iconKey={displayServer?.icon} size={16} />
+              <span className="status-name">{serverVpnTitle(displayServer, traffic)}</span>
+              {displayServer?.ping != null && (
                 <span className="status-ping">
-                  <span className="ping-dot" style={{ background: pingColor(selected.ping) }} />
-                  {selected.ping}
+                  <span className="ping-dot" style={{ background: pingColor(displayServer.ping) }} />
+                  {displayServer.ping}
                 </span>
               )}
               {selectionLocked ? (
@@ -653,7 +684,7 @@ export default function Connect() {
                 />
               )}
             </div>
-            {traffic && selected?.subUrl && (
+            {traffic && displayServer?.subUrl && (
               <div className="status-submeta" onClick={(e) => e.stopPropagation()}>
                 <span
                   className="status-traffic"
@@ -687,7 +718,7 @@ export default function Connect() {
               </div>
             )}
           </button>
-          {traffic?.announce && selected?.subUrl && (
+          {traffic?.announce && displayServer?.subUrl && (
             <div className="status-announce" title={traffic.announce}>
               {traffic.announce}
             </div>

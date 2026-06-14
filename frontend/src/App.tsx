@@ -12,6 +12,7 @@ import { connectionErrorStore } from './lib/stores/connectionErrorStore';
 import { parseConnectionError } from './lib/utils/connectionErrors';
 import { logStore } from './lib/stores/logStore';
 import { tunnelStore } from './lib/stores/tunnelStore';
+import { activeServerStore } from './lib/stores/activeServerStore';
 import { tunnelStatsStore } from './lib/stores/tunnelStatsStore';
 import type { LogLevel } from './lib/stores/logStore';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -65,6 +66,7 @@ function useWailsEvents() {
         }
         else if (s === 'stopped' || s === 'error' || s === 'disconnected') {
           tunnelStore.set('idle');
+          activeServerStore.setId(null);
           tunnelStatsStore.reset();
           logStore.push('INFO', '— Отключено');
         }
