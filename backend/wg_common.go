@@ -7,23 +7,21 @@ import (
 
 const wgIface = "wg-turn"
 
-// vkExcludeCIDRs — подсети которые должны идти напрямую, а не через туннель.
+// vkExcludeCIDRs — VK/TURN: только то, что должно идти напрямую (иначе туннель не поднимется).
+// Яндекс, Google/Cloudflare DNS и прочий «обычный» трафик идут через VPN (AllowedIPs 0.0.0.0/0).
+// Конкретные IP TURN-релеев дополнительно исключаются в applyWGConfig (turnIPs /32).
 var vkExcludeCIDRs = []string{
 	"87.240.128.0/18",  // VK
 	"87.240.192.0/19",  // VK
-	"90.156.0.0/16",    // VK TURN (90.156.234.x, 90.156.236.x и др.)
+	"90.156.0.0/16",    // VK TURN
 	"93.186.224.0/21",  // VK
 	"95.142.192.0/21",  // VK
-	"95.163.0.0/16",    // VK TURN (95.163.34.x и др.)
-	"95.213.0.0/18",    // VK (id.vk.ru, login.vk.com)
+	"95.163.0.0/16",    // VK TURN
+	"95.213.0.0/18",    // VK (login/id)
 	"155.212.192.0/20", // OK/VK (calls.okcdn.ru)
 	"185.16.28.0/22",   // VK
 	"194.67.64.0/18",   // VK
 	"195.82.146.0/23",  // VK
-	"213.180.193.0/24", // Яндекс DNS
-	"77.88.0.0/18",     // Яндекс
-	"8.8.8.0/24",       // Google DNS
-	"1.1.1.0/24",       // Cloudflare DNS
 }
 
 // wg-quick-only fields that wg setconf doesn't understand
