@@ -63,11 +63,13 @@ function useWailsEvents() {
           connectionErrorStore.clear();
           logStore.push('INFO', '✓ Туннель активен');
         }
-        else if (s === 'connecting') { tunnelStore.set('connecting'); logStore.push('INFO', '⟳ Подключение...'); }
         else if (s === 'stopped' || s === 'error' || s === 'disconnected') {
           tunnelStore.set('idle');
           tunnelStatsStore.reset();
           logStore.push('INFO', '— Отключено');
+        }
+        else if (s === 'connecting') {
+          tunnelStore.set('connecting');
         }
       }),
       EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {

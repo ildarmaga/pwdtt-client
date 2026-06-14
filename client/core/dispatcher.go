@@ -33,22 +33,10 @@ func putPktBuf(b []byte) {
 const (
 	returnChBuf = 384
 
-	// chunkSize — количество последовательных пакетов, отправляемых в один worker
-	// перед переключением на следующий.
-	//
-	// Зачем: при round-robin (chunk=1) каждый пакет летит через разный TURN relay
-	// с разным latency, что приводит к reorder на сервере. TCP внутри WireGuard
-	// интерпретирует reorder как потери → cwnd collapse → скорость single-flow
-	// падает до ~8 KB/s.
-	//
-	// С chunk=8: пакеты в пределах одного TCP congestion window (~10 пакетов при
-	// initial cwnd) уходят через один TURN relay → прилетают по порядку.
-	// Reorder возможен только между chunk-границами, что покрывается WG replay
-	// window (2048 пакетов).
-	//
-	// Агрегатная пропускная способность не меняется — все workers загружены
-	// равномерно по-прежнему (каждый получает 1/N от общего трафика за время).
-	chunkSize = 8
+	chunkSizeMin     = 4
+	chunkSizeDefault = 8
+	chunkSizeMax     = 24
+	chunkRttSlowMs   = 120.0
 )
 
 type WorkerSlot struct {
@@ -84,6 +72,30 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) 
 	go d.readLoop()
 	go d.writeLoop()
 	return d
+}
+
+func (d *Dispatcher) effectiveChunkSize() int {
+	chunk := chunkSizeDefault
+	if d.stats == nil {
+		return chunk
+	}
+	turnMs := float64(atomic.LoadInt64(&d.stats.TurnRTTNs)) / 1e6
+	dtlsMs := float64(atomic.LoadInt64(&d.stats.DTLSHSNs)) / 1e6
+	pathMs := turnMs + dtlsMs
+	if pathMs >= chunkRttSlowMs {
+		chunk = chunkSizeDefault + int((pathMs-chunkRttSlowMs)/15)
+	}
+	active := atomic.LoadInt32(&d.stats.ActiveConnections)
+	if active > 0 && active <= 9 && chunk < 16 {
+		chunk = 16
+	}
+	if chunk > chunkSizeMax {
+		chunk = chunkSizeMax
+	}
+	if chunk < chunkSizeMin {
+		chunk = chunkSizeMin
+	}
+	return chunk
 }
 
 func (d *Dispatcher) Shutdown() {
@@ -166,7 +178,7 @@ func (d *Dispatcher) readLoop() {
 		case w.SendCh <- pkt:
 			sent = true
 			d.rrCount++
-			if d.rrCount >= chunkSize {
+			if d.rrCount >= d.effectiveChunkSize() {
 				d.rrIndex = (idx + 1) % nw
 				d.rrCount = 0
 			}

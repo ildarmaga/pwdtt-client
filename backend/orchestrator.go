@@ -212,7 +212,8 @@ func loadProfile(name string) (*ProfileData, error) {
 
 type coreSession struct {
 	c      *core.Core
-	doneCh <-chan core.Event // закрывается когда core завершился
+	doneCh <-chan core.Event
+	closed chan struct{} // закрывается когда forwardEvents завершился
 }
 
 // Orchestrator — тонкий прокси между Wails UI и core.
@@ -284,14 +285,29 @@ func (o *Orchestrator) internetRTT() float64 {
 	return o.internetRTTMs
 }
 
+func (o *Orchestrator) waitSessionEnd(timeout time.Duration) {
+	o.mu.Lock()
+	sess := o.sess
+	o.mu.Unlock()
+	if sess == nil || sess.closed == nil {
+		return
+	}
+	select {
+	case <-sess.closed:
+	case <-time.After(timeout):
+	}
+}
+
 func (o *Orchestrator) Start(p ConnectParams) error {
+	o.waitSessionEnd(60 * time.Second)
+
 	o.mu.Lock()
 	if o.sess != nil {
 		o.mu.Unlock()
-		return fmt.Errorf("already running")
+		return fmt.Errorf("уже подключено")
 	}
 	// Резервируем слот
-	placeholder := &coreSession{}
+	placeholder := &coreSession{closed: make(chan struct{})}
 	o.sess = placeholder
 	o.mu.Unlock()
 
@@ -302,6 +318,7 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 			o.sess = nil
 		}
 		o.mu.Unlock()
+		close(placeholder.closed)
 		return err
 	}
 
@@ -352,8 +369,11 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		return nil, fmt.Errorf("core start: %w", err)
 	}
 
-	sess := &coreSession{c: c, doneCh: events}
-	go o.forwardEvents(sess)
+	sess := &coreSession{c: c, doneCh: events, closed: make(chan struct{})}
+	go func() {
+		o.forwardEvents(sess)
+		close(sess.closed)
+	}()
 	return sess, nil
 }
 
@@ -451,9 +471,11 @@ func (o *Orchestrator) Stop() {
 	sess := o.sess
 	o.mu.Unlock()
 	if sess == nil || sess.c == nil {
+		o.waitSessionEnd(5 * time.Second)
 		return
 	}
 	sess.c.Stop()
+	o.waitSessionEnd(60 * time.Second)
 }
 
 func (o *Orchestrator) SendCaptchaResult(token string) {

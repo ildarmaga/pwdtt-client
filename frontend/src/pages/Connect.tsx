@@ -111,6 +111,18 @@ export default function Connect() {
   const [tunnelState, setTunnelState] = useState<TunnelState>(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
 
+  // Смена сервера: сброс метрик сессии и кулдауна — иначе «залипают» данные прошлой подписки.
+  useEffect(() => {
+    if (tunnelState !== 'idle') return;
+    tunnelStatsStore.reset();
+    setReconnectAt(0);
+    if (selected?.subUrl) {
+      setTraffic(trafficStatsStore.get(selected.subUrl));
+    } else {
+      setTraffic(null);
+    }
+  }, [selected?.id, selected?.subUrl, tunnelState]);
+
   const [addServerOpen, setAddServerOpen] = useState(false);
   const [editServer, setEditServer] = useState<Server | null>(null);
   const [linkFlash, setLinkFlash] = useState(false);
@@ -250,8 +262,10 @@ export default function Connect() {
         mtu: s.mtu || 1280,
         hashes,
       });
-    } catch {
+    } catch (e) {
       tunnelStore.set('idle');
+      const msg = e instanceof Error ? e.message : String(e ?? '');
+      toastStore.show(msg || 'Не удалось подключиться', 4000);
     }
   };
 
@@ -270,8 +284,7 @@ export default function Connect() {
     } else if (tunnelState === 'connected' || tunnelState === 'connecting') {
       tunnelStore.set('disconnecting');
       await WailsDisconnect();
-      tunnelStore.set('idle');
-      setReconnectAt(Date.now() + 4000);
+      setReconnectAt(Date.now() + 2000);
     }
   };
 

@@ -31,7 +31,10 @@ var vkCredentialsList = []VKCredentials{
 	{ClientID: "8202606", ClientSecret: "lMRsTiMCyPnp5vfoldmn"},
 }
 
-const vkCredentialAttemptLimit = 4
+const (
+	vkCredentialAttemptLimit = 4
+	vkCallsRetryLimit        = 8
+)
 
 // ─── Credential Caching ───
 
@@ -235,6 +238,22 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, capt
 	return fetchVkCreds(ctx, link, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
 }
 
+// isRetryableVKCallsError — transient VK Calls failures (error 10, network blips).
+// Legacy fallback uses login.vk.ru which is blocked on many whitelisted ISPs.
+func isRetryableVKCallsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "error_code:10") ||
+		strings.Contains(s, "Internal server error") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "EOF") ||
+		strings.Contains(s, "i/o timeout")
+}
+
 // ─── Main credential fetcher (rotates through stable credential sets) ───
 
 func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
@@ -243,16 +262,42 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 	}
 
 	// Prefer VK Calls path via api.vk.me (works when login.vk.ru is blocked).
-	log.Printf("[STREAM %d] [VK Auth] Trying VK Calls path (api.vk.me)...", streamID)
-	user, pass, addrs, vkCallsErr := getVKCredsViaVKCallsPath(ctx, link, streamID)
-	if vkCallsErr == nil {
-		log.Printf("[STREAM %d] [VK Auth] VK Calls path succeeded", streamID)
-		return user, pass, addrs, nil
+	var vkCallsErr error
+	for attempt := 0; attempt < vkCallsRetryLimit; attempt++ {
+		if attempt > 0 {
+			wait := time.Duration(2+attempt*2)*time.Second + time.Duration(rand.Intn(2000))*time.Millisecond
+			log.Printf("[STREAM %d] [VK Auth] VK Calls retry %d/%d after %v...", streamID, attempt+1, vkCallsRetryLimit, wait.Truncate(time.Millisecond))
+			select {
+			case <-ctx.Done():
+				return "", "", nil, ctx.Err()
+			case <-time.After(wait):
+			}
+		} else {
+			log.Printf("[STREAM %d] [VK Auth] Trying VK Calls path (api.vk.me)...", streamID)
+		}
+
+		user, pass, addrs, err := getVKCredsViaVKCallsPath(ctx, link, streamID)
+		if err == nil {
+			log.Printf("[STREAM %d] [VK Auth] VK Calls path succeeded", streamID)
+			return user, pass, addrs, nil
+		}
+		vkCallsErr = err
+		if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
+			return "", "", nil, err
+		}
+		if isRetryableVKCallsError(err) && attempt+1 < vkCallsRetryLimit {
+			log.Printf("[STREAM %d] [VK Auth] VK Calls retryable error: %v", streamID, err)
+			continue
+		}
+		break
 	}
-	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v — falling back to legacy", streamID, vkCallsErr)
-	if strings.Contains(vkCallsErr.Error(), "CAPTCHA_WAIT_REQUIRED") {
-		return "", "", nil, vkCallsErr
+
+	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v", streamID, vkCallsErr)
+	if isRetryableVKCallsError(vkCallsErr) {
+		return "", "", nil, fmt.Errorf("VK Calls path exhausted retries: %w", vkCallsErr)
 	}
+
+	log.Printf("[STREAM %d] [VK Auth] falling back to legacy (login.vk.ru)...", streamID)
 
 	var lastErr error
 	lastErr = vkCallsErr

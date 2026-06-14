@@ -113,8 +113,6 @@ func TestPickHealthyTurnURLSingleAndEmpty(t *testing.T) {
 func TestPickHealthyTurnURLSpreadUnknown(t *testing.T) {
 	resetRelayHealth()
 	urls := []string{"6.6.6.6:19302", "7.7.7.7:19302", "8.8.8.8:19302"}
-	// Все relay неизвестны → выбор должен распределяться по sessionID (spread),
-	// первый кандидат — «свой» relay sessionID%n.
 	counts := map[string]int{}
 	for sid := 0; sid < 9; sid++ {
 		counts[pickHealthyTurnURL(urls, sid)]++
@@ -123,5 +121,24 @@ func TestPickHealthyTurnURLSpreadUnknown(t *testing.T) {
 		if counts[u] == 0 {
 			t.Fatalf("relay %q ни разу не выбран при равном здоровье (нет spread): %v", u, counts)
 		}
+	}
+}
+
+func TestPickHealthyTurnURLPrefersLowRTT(t *testing.T) {
+	resetRelayHealth()
+	fast := "1.0.0.1:19302"
+	slow := "2.0.0.2:19302"
+	urls := []string{fast, slow}
+
+	for i := 0; i < 5; i++ {
+		recordRelayPathRTT(fast, 40)
+		recordRelayPathRTT(slow, 280)
+		recordRelaySession(fast, 2*time.Minute, true)
+		recordRelaySession(slow, 2*time.Minute, true)
+	}
+
+	got := pickHealthyTurnURL(urls, 1) // база на slow
+	if got != fast {
+		t.Fatalf("pick = %q, ожидался быстрый %q", got, fast)
 	}
 }

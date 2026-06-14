@@ -317,6 +317,7 @@ func RunSession(
 		return false, fmt.Errorf("DTLS хендшейк: %w", err)
 	}
 	atomic.StoreInt64(&stats.DTLSHSNs, time.Since(dtlsStart).Nanoseconds())
+	recordRelayPathRTT(turnAddr, float64(time.Since(allocStart).Milliseconds()))
 	log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
 
 	atomic.AddInt32(&stats.ActiveConnections, 1)
