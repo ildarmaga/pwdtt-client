@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { IconSettings2, IconHash, IconChevronDown } from '@tabler/icons-react';
+import { IconSettings2, IconHash, IconChevronDown, IconCopy, IconCheck } from '@tabler/icons-react';
 import Hash from './Hash';
-import { settingsStore } from '../lib/store';
+import { settingsStore, serverStore } from '../lib/store';
+import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile } from '../../wailsjs/go/backend/App';
 
 interface Props {
   onClose: () => void;
@@ -21,6 +22,8 @@ export default function Settings({ onClose }: Props) {
   const locked = tunnelState === 'connected' || tunnelState === 'connecting';
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedConfirm, setAdvancedConfirm] = useState(false);
+  const [deviceId, setDeviceId] = useState('');
+  const [idCopied, setIdCopied] = useState(false);
 
   // Sync autoStart from backend on open
   useEffect(() => {
@@ -28,6 +31,23 @@ export default function Settings({ onClose }: Props) {
       if (v !== settings.autoStart) update('autoStart', v);
     });
   }, []);
+
+  // ID устройства привязан к профилю выбранного сервера — показываем его.
+  useEffect(() => {
+    const all = serverStore.getAll();
+    const srv = all.find(s => s.id === selectedServerStore.getId()) ?? all[0];
+    if (!srv) return;
+    GetProfile(srv.name)
+      .then(p => { if (p?.device_id) setDeviceId(p.device_id); })
+      .catch(() => {});
+  }, []);
+
+  const copyDeviceId = () => {
+    if (!deviceId) return;
+    navigator.clipboard?.writeText(deviceId).catch(() => {});
+    setIdCopied(true);
+    setTimeout(() => setIdCopied(false), 1500);
+  };
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings(s => ({ ...s, [key]: value }));
@@ -72,6 +92,10 @@ export default function Settings({ onClose }: Props) {
         .st-select { padding: 5px 8px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 13px; font-family: 'Geist', sans-serif; background: var(--input-bg); color: var(--text); outline: none; cursor: pointer; max-width: 130px; }
         .st-select:focus { border-color: var(--accent); }
         .st-hash-btn { width: 100%; margin-top: 16px; padding: 13px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .st-devid { display: flex; align-items: center; gap: 6px; max-width: 200px; background: var(--seg-bg); border: none; border-radius: 6px; padding: 5px 9px; cursor: pointer; color: var(--text-2); font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; }
+        .st-devid:hover { color: var(--text); }
+        .st-devid-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+        .st-devid svg { flex-shrink: 0; }
         .st-locked { opacity: 0.4; pointer-events: none; }
         .st-lock-hint { font-size: 11px; color: var(--text-3); margin-bottom: 4px; text-align: center; }
         .st-adv-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; border-top: 1px solid var(--border-2); padding: 11px 0 0; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-3); font-family: 'Geist', sans-serif; margin-top: 4px; }
@@ -151,6 +175,16 @@ export default function Settings({ onClose }: Props) {
               ))}
             </select>
           </div>
+
+          {deviceId && (
+            <div className="st-row">
+              <span>ID устройства</span>
+              <button className="st-devid" onClick={copyDeviceId} title="Скопировать ID устройства">
+                <span className="st-devid-val">{deviceId}</span>
+                {idCopied ? <IconCheck stroke={2} size={14} /> : <IconCopy stroke={2} size={14} />}
+              </button>
+            </div>
+          )}
 
           <button
             className="st-hash-btn"

@@ -5,7 +5,7 @@ import {
   IconFlameFilled, IconShieldFilled, IconLayoutGridFilled, IconCloudFilled, IconBrandSpeedtest,
   IconStarFilled, IconHeartFilled, IconBoltFilled, IconRocket,
   IconCrownFilled, IconDiamondFilled, IconLeafFilled, IconSnowflake,
-  IconServer, IconGlobe, IconLockFilled, IconWifi, IconBrandTelegram, IconPower,
+  IconServer, IconGlobe, IconLockFilled, IconWifi, IconBrandTelegram, IconPower, IconLock,
 } from '@tabler/icons-react';
 
 const SERVER_ICONS: { key: string; render: (size: number) => React.ReactNode }[] = [
@@ -316,6 +316,11 @@ export default function Connect() {
   const isActive = tunnelState === 'connected';
   const isSpinning = tunnelState === 'connecting' || tunnelState === 'disconnecting';
   const isBusy = tunnelState === 'disconnecting';
+  // Пока туннель не отключён — сервер зафиксирован, выбор недоступен.
+  const selectionLocked = tunnelState !== 'idle';
+  useEffect(() => {
+    if (selectionLocked) setListOpen(false);
+  }, [selectionLocked]);
   const trafficUsedPct = traffic ? trafficUsedPercent(traffic) : null;
   const statsLive = isActive && sessionStats;
   const rxDisplay = statsLive ? formatBytes(sessionStats!.rxBytes) : '—';
@@ -449,6 +454,7 @@ export default function Connect() {
         .server-item:hover .server-edit-btn { opacity: 1; }
         .status-server { display: flex; flex-direction: column; align-items: stretch; gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font-size: 13px; color: var(--text); cursor: pointer; width: 100%; font-family: 'Geist', sans-serif; font-weight: 500; text-align: left; line-height: 1.2; }
         .status-server--empty { color: var(--text-4); }
+        .status-server--locked { cursor: default; }
         .status-row-main { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
         .status-name { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
         .status-submeta { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; padding-left: 22px; font-size: 11px; color: var(--text-3); width: 100%; min-width: 0; }
@@ -611,7 +617,11 @@ export default function Connect() {
           )}
 
           <div ref={statusInfoRef} className="status-info">
-          <button className={`status-server${!selected ? ' status-server--empty' : ''}`} onClick={() => setListOpen(o => !o)}>
+          <button
+            className={`status-server${!selected ? ' status-server--empty' : ''}${selectionLocked ? ' status-server--locked' : ''}`}
+            onClick={() => { if (!selectionLocked) setListOpen(o => !o); }}
+            title={selectionLocked ? 'Сервер зафиксирован — отключитесь, чтобы сменить' : undefined}
+          >
             <div className="status-row-main">
               <ServerIcon iconKey={selected?.icon} size={16} />
               <span className="status-name">{serverVpnTitle(selected, traffic)}</span>
@@ -621,10 +631,14 @@ export default function Connect() {
                   {selected.ping}
                 </span>
               )}
-              <IconChevronUp
-                size={14}
-                style={{ transform: listOpen ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s', flexShrink: 0 }}
-              />
+              {selectionLocked ? (
+                <IconLock size={13} style={{ flexShrink: 0, opacity: 0.6 }} />
+              ) : (
+                <IconChevronUp
+                  size={14}
+                  style={{ transform: listOpen ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s', flexShrink: 0 }}
+                />
+              )}
             </div>
             {traffic && selected?.subUrl && (
               <div className="status-submeta" onClick={(e) => e.stopPropagation()}>

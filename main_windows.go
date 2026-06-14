@@ -31,11 +31,11 @@ func main() {
 	err := wails.Run(&options.App{
 		Title:         "WDTT",
 		Width:         680,
-		Height:        700,
+		Height:        750,
 		MinWidth:      680,
-		MinHeight:     700,
+		MinHeight:     750,
 		MaxWidth:      680,
-		MaxHeight:     700,
+		MaxHeight:     750,
 		DisableResize: true,
 		Frameless:     false,
 		AssetServer: &assetserver.Options{

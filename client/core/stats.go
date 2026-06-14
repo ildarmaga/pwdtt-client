@@ -31,7 +31,7 @@ func (s *Stats) RunLoop(shutdown <-chan struct{}, logEmit func(level, msg string
 			up := atomic.LoadInt64(&s.TotalBytesUp)
 			down := atomic.LoadInt64(&s.TotalBytesDown)
 			totalMB := float64(up+down) / (1024.0 * 1024.0)
-			logEmit("INFO", fmt.Sprintf("[СТАТИСТИКА] Активных: %d | Трафик: %.2f МБ", active, totalMB))
+			logEmit("INFO", fmt.Sprintf("[СТАТ] Активных: %d | Трафик: %.2f МБ", active, totalMB))
 			turnMs := float64(atomic.LoadInt64(&s.TurnRTTNs)) / 1e6
 			dtlsMs := float64(atomic.LoadInt64(&s.DTLSHSNs)) / 1e6
 			if statsEmit != nil {
