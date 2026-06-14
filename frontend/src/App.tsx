@@ -52,8 +52,9 @@ function useWailsEvents() {
       EventsOn('error', (msg: unknown) => {
         const s = String(msg ?? '');
         logStore.push('ERROR', s);
+        // Только красный баннер сверху. Раньше дополнительно показывался синий
+        // тост снизу — это дублировало одно и то же сообщение об ошибке.
         connectionErrorStore.show(s);
-        toastStore.show(s, 8000);
       }),
       EventsOn('state_changed', (status: unknown) => {
         const s = String(status ?? '');

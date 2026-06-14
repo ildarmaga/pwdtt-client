@@ -238,8 +238,10 @@ func WorkerGroup(
 				credsSnapshot.TurnURLs = cloneStringSlice(creds.TurnURLs)
 				credsMu.RUnlock()
 
+				sessStart := time.Now()
 				configDelivered, sessErr := RunSession(ctx, tp, peer, d, localPort,
 					getConf, cc, wid, &credsSnapshot, deviceID, password, stats)
+				sessLife := time.Since(sessStart)
 
 				if getConf {
 					if configDelivered {
@@ -251,7 +253,14 @@ func WorkerGroup(
 
 				if sessErr == nil {
 					attempt = 0
-					delay := 2*time.Second + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
+					// База 2с при долгой сессии. Если relay сдох быстро (флак),
+					// разносим реаллокацию шире, чтобы не устраивать шторм запросов
+					// и дать health-выбору увести воркер на стабильный сервер.
+					base := 2 * time.Second
+					if sessLife < 60*time.Second {
+						base = 6 * time.Second
+					}
+					delay := base + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
 					select {
 					case <-time.After(delay):
 					case <-ctx.Done():

@@ -59,6 +59,7 @@ import AddServer from '../modals/Add-server';
 import EditServer from '../modals/Edit-server';
 import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
+import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
@@ -93,9 +94,18 @@ export default function Connect() {
   const [servers, setServers] = useState<Server[]>(() => serverStore.getAll());
   const [selected, setSelected] = useState<Server | null>(() => {
     const all = serverStore.getAll();
-    return all.length > 0 ? all[0] : null;
+    if (all.length === 0) return null;
+    // Восстанавливаем ранее выбранный сервер, чтобы он не слетал на первый
+    // при возврате на страницу (особенно когда туннель подключён).
+    const savedId = selectedServerStore.getId();
+    return all.find(s => s.id === savedId) ?? all[0];
   });
   const [listOpen, setListOpen] = useState(false);
+
+  // Персистим выбранный сервер: переживает смену роута Connect ↔ Logs.
+  useEffect(() => {
+    selectedServerStore.setId(selected?.id ?? null);
+  }, [selected?.id]);
 
   // tunnelState из глобального store — переживает смену роута
   const [tunnelState, setTunnelState] = useState<TunnelState>(() => tunnelStore.get());
@@ -173,26 +183,33 @@ export default function Connect() {
     }
     // Сразу показываем последнее сохранённое значение, чтобы метрика не мигала пустым
     // при возврате на главную или смене сервера — оно обновится после запроса.
-    const cached = trafficStatsStore.get(selected.subUrl);
+    const subUrl = selected.subUrl;
+    const cached = trafficStatsStore.get(subUrl);
     if (cached) setTraffic(cached);
     let cancelled = false;
     let timer = 0;
-    const schedule = (ms: number) => {
-      window.clearInterval(timer);
-      timer = window.setInterval(refresh, ms);
+    const fallbackMs = (metricsRefreshSec > 0 ? metricsRefreshSec : 5) * 1000;
+    // Самоперепланирующийся опрос: перепланируем ВСЕГДА (в finally), даже если
+    // запрос вернул null/ошибку — иначе одна неудача останавливала автообновление
+    // навсегда (раньше оживало только при перемонтировании на смене страницы).
+    const tick = async () => {
+      let nextMs = fallbackMs;
+      try {
+        const stats = await fetchTrafficStats(subUrl);
+        if (cancelled) return;
+        if (stats) {
+          setTraffic(stats);
+          trafficStatsStore.set(subUrl, stats);
+          nextMs = metricsRefreshMs(stats, metricsRefreshSec);
+        }
+      } finally {
+        if (!cancelled) timer = window.setTimeout(tick, nextMs);
+      }
     };
-    const refresh = async () => {
-      const stats = await fetchTrafficStats(selected.subUrl!);
-      if (cancelled || !stats) return;
-      setTraffic(stats);
-      trafficStatsStore.set(selected.subUrl, stats);
-      const userSec = metricsRefreshSec;
-      schedule(metricsRefreshMs(stats, userSec));
-    };
-    refresh();
+    tick();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [selected?.subUrl, selected?.id, metricsRefreshSec]);
 

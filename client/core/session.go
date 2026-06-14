@@ -75,7 +75,8 @@ func RunSession(
 	if len(creds.TurnURLs) == 0 {
 		return false, fmt.Errorf("нет TURN URL в учетных данных")
 	}
-	selectedURL := creds.TurnURLs[sessionID%len(creds.TurnURLs)]
+	// Уводим воркеры с «дохлых» VK-relay на более стабильные (см. relay_health.go).
+	selectedURL := pickHealthyTurnURL(creds.TurnURLs, sessionID)
 
 	urlhost, urlport, err := net.SplitHostPort(selectedURL)
 	if err != nil {
@@ -151,6 +152,14 @@ func RunSession(
 		return false, fmt.Errorf("TURN Allocate: %w", err)
 	}
 	defer relay.Close()
+
+	// Учёт «живучести» relay: измеряем полезную жизнь сессии от выхода в READY
+	// до завершения. becameReady=false → сессия умерла на хендшейке (плохой relay).
+	var becameReady bool
+	var readyAt time.Time
+	defer func() {
+		recordRelaySession(turnAddr, time.Since(readyAt), becameReady)
+	}()
 
 	atomic.StoreInt64(&stats.TurnRTTNs, time.Since(allocStart).Nanoseconds())
 
@@ -337,6 +346,8 @@ func RunSession(
 	}
 
 	log.Printf("[ВОРКЕР #%d] [READY] Туннель готов к работе ✓", sessionID)
+	becameReady = true
+	readyAt = time.Now()
 
 	// Регистрация в диспетчере
 	slot := &WorkerSlot{
