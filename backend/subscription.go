@@ -30,13 +30,14 @@ type SubImportResult struct {
 	VpnName  string           `json:"vpnName,omitempty"`
 	Hashes   []string         `json:"hashes"`
 	SubURL   string           `json:"subUrl"`
+	DeviceID string           `json:"deviceId,omitempty"`
 	Stats    *SubTrafficStats `json:"stats,omitempty"`
 }
 
 func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return nil, fmt.Errorf("empty url")
+	if err := validatePanelSubURL(rawURL); err != nil {
+		return nil, err
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -80,14 +81,15 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		VpnName:  vpnName,
 		Hashes:   parsed.Hashes,
 		SubURL:   strings.Split(rawURL, "?")[0],
+		DeviceID: parsed.DeviceID,
 		Stats:    stats,
 	}, nil
 }
 
 func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return nil, fmt.Errorf("empty url")
+	if err := validatePanelSubURL(rawURL); err != nil {
+		return nil, err
 	}
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest(http.MethodHead, rawURL, nil)
@@ -125,19 +127,7 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 }
 
 func (a *App) ParseWdttLink(link string) (*SubImportResult, error) {
-	parsed, err := parseWdttLink(link)
-	if err != nil {
-		return nil, err
-	}
-	return &SubImportResult{
-		IP:       parsed.IP,
-		DtlsPort: parsed.DtlsPort,
-		Password: parsed.Password,
-		Name:     parsed.Name,
-		VpnName:  parsed.VpnName,
-		Hashes:   parsed.Hashes,
-		SubURL:   parsed.SubURL,
-	}, nil
+	return nil, fmt.Errorf("прямой импорт wdtt:// отключён — используйте ссылку подписки панели")
 }
 
 func parseSubResponseStats(h http.Header) *SubTrafficStats {
@@ -226,6 +216,7 @@ type wdttLinkParsed struct {
 	VpnName  string
 	Hashes   []string
 	SubURL   string
+	DeviceID string
 }
 
 func decodeSubBody(body string) string {
@@ -333,13 +324,14 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 		return wdttLinkParsed{}, fmt.Errorf("incomplete json wdtt link")
 	}
 	var hashes []string
-	if h := strings.TrimSpace(fmt.Sprint(raw["hash"])); h != "" && h != "<nil>" {
+	if h := firstStr(raw, "hash", "vk_hash"); h != "" {
 		for _, part := range strings.Split(h, ",") {
 			if t := strings.TrimSpace(part); t != "" {
 				hashes = append(hashes, t)
 			}
 		}
 	}
+	deviceID := firstStr(raw, "did", "device_id")
 	return wdttLinkParsed{
 		IP:       ip,
 		DtlsPort: strconv.FormatInt(dtls, 10),
@@ -348,6 +340,7 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 		VpnName:  vpnName,
 		Hashes:   hashes,
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
+		DeviceID: deviceID,
 	}, nil
 }
 

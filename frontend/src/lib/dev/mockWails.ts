@@ -1,11 +1,9 @@
 /** Browser-only Vite preview: stub Wails runtime when window.go is missing. */
 
-import { parseWdttUrl } from '../utils/wdttLink';
 import { DEFAULT_SETTINGS } from '../types';
 import {
   devFetchSubscriptionStats,
   devFetchSubscriptionURL,
-  devRegisterWdttLink,
   markDevSubConnected,
 } from './mockSubscription';
 
@@ -132,20 +130,8 @@ function installGoMock() {
           return devFetchSubscriptionStats(url, !!window.__pwdttDevConnected);
         },
         FetchSubscriptionURL: async (rawURL: unknown) => devFetchSubscriptionURL(String(rawURL ?? '')),
-        ParseWdttLink: async (link: unknown) => {
-          const parsed = parseWdttUrl(String(link ?? ''));
-          if (!parsed) throw new Error('invalid link');
-          devRegisterWdttLink(parsed);
-          return {
-            ip: parsed.ip,
-            dtlsPort: parsed.dtlsPort,
-            password: parsed.password,
-            name: parsed.name,
-            vpnName: parsed.vpnName,
-            hashes: parsed.hashes,
-            subUrl: parsed.subUrl ?? '',
-            stats: parsed.stats,
-          };
+        ParseWdttLink: async () => {
+          throw new Error('прямой импорт wdtt:// отключён — используйте ссылку подписки панели');
         },
         GetAutoStart: async () => false,
         GetProfile: async () => null,

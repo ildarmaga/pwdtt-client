@@ -30,7 +30,7 @@ function useWdttPaste() {
       void (async () => {
         const link = await resolveWdttImport(trimmed);
         if (!link) {
-          toastStore.show('Неверный формат ссылки');
+          toastStore.show('Нужна ссылка подписки WDTT-панели (https://…/subs/…)');
           return;
         }
         wdttLinkStore.set(link);

@@ -1,4 +1,4 @@
-import { parseWdttUrl, decodeBase64Utf8, type TrafficStats, type WdttLink } from '../utils/wdttLink';
+import { parseWdttFromSubBody, decodeBase64Utf8, isPanelSubUrl, type TrafficStats, type WdttLink } from '../utils/wdttLink';
 import { logDevMetric } from './devMetricsLog';
 
 const STORE_KEY = 'pwdtt_dev_subs';
@@ -155,6 +155,9 @@ export function markDevSubConnected(subUrl: string, connected: boolean) {
 
 export async function devFetchSubscriptionURL(rawURL: string) {
   const subUrl = normSubUrl(rawURL);
+  if (!isPanelSubUrl(subUrl)) {
+    throw new Error('нужна ссылка подписки WDTT-панели');
+  }
   const store = loadStore();
 
   try {
@@ -162,7 +165,7 @@ export async function devFetchSubscriptionURL(rawURL: string) {
     const body = await resp.text();
     const stats = statsFromHeaders(resp) ?? defaultStats();
     const wdttLink = decodeSubBody(body);
-    const parsed = parseWdttUrl(wdttLink);
+    const parsed = parseWdttFromSubBody(wdttLink);
     const link = linkFromStats(subUrl, stats, parsed);
     store[subUrl] = { subUrl, link, stats };
     saveStore(store);

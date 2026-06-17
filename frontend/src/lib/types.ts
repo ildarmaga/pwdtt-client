@@ -11,7 +11,7 @@ export interface Server {
   subUrl?: string;
   /** Название VPN из ссылки (vpn) или Profile-Title */
   vpnName?: string;
-  /** Сервер добавлен по wdtt:// или URL подписки — поля подключения не редактируются */
+  /** Сервер добавлен по ссылке подписки панели — поля подключения не редактируются */
   linkManaged?: boolean;
 }
 

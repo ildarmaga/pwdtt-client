@@ -162,7 +162,7 @@ export default function Connect() {
           peer: host,
           password: consumed.password,
           hashes: [],
-          turn: '', port: '', device_id: '', listen: '',
+          turn: '', port: '', device_id: consumed.deviceId ?? '', listen: '',
         });
         const existing = serverStore.getAll().find(s => s.host === host);
         let s: Server;
@@ -173,6 +173,7 @@ export default function Connect() {
             vpnName: vpnName ?? existing.vpnName,
             password: consumed.password,
             subUrl: consumed.subUrl ?? existing.subUrl,
+            deviceId: consumed.deviceId ?? existing.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : existing.hashes,
             linkManaged: true,
           };
@@ -184,6 +185,7 @@ export default function Connect() {
             host,
             password: consumed.password,
             subUrl: consumed.subUrl,
+            deviceId: consumed.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : undefined,
             linkManaged: true,
           });

@@ -1,7 +1,6 @@
 import {
   FetchSubscriptionStats,
   FetchSubscriptionURL,
-  ParseWdttLink,
 } from '../../../wailsjs/go/backend/App';
 import type { backend } from '../../../wailsjs/go/models';
 import type { Server } from '../types';
@@ -22,69 +21,32 @@ export interface WdttLink {
   dtlsPort: string;
   password: string;
   hashes: string[];
-  /** Комментарий пользователя (name / ps) */
   name: string;
-  /** Название VPN (vpn / Profile-Title) */
   vpnName?: string;
   subUrl?: string;
+  deviceId?: string;
   stats?: TrafficStats;
 }
 
-export function isHttpUrl(raw: string): boolean {
-  return /^https?:\/\//i.test(raw.trim());
-}
-
-export function isImportableInput(raw: string): boolean {
-  const s = raw.trim();
-  if (!s) return false;
-  if (s.startsWith('wdtt://')) return true;
-  return isHttpUrl(s);
-}
-
-export function decodeBase64Utf8(b64: string): string {
-  const bin = atob(b64.replace(/\s/g, ''));
-  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function parseColonWdtt(stripped: string, name: string): WdttLink | null {
-  const parts = stripped.split(':');
-  if (parts.length < 5) return null;
-  const ip = parts[0];
-  const dtlsPort = parts[1];
-  const password = parts[4];
-  const hashes = parts[5]
-    ? parts[5].split(',').map(h => h.trim()).filter(Boolean)
-    : [];
-  if (!ip || !dtlsPort || !password) return null;
-  return { ip, dtlsPort, password, hashes, name };
-}
-
-function parseJsonWdtt(stripped: string): WdttLink | null {
+/** Ссылка подписки WDTT-панели: https://host:2096/subs/… */
+export function isPanelSubUrl(raw: string): boolean {
   try {
-    const json = JSON.parse(decodeBase64Utf8(stripped));
-    const ip = String(json.ip ?? json.add ?? '').trim();
-    const pass = String(json.pass ?? json.id ?? '').trim();
-    const dtls = json.dtls ?? json.Dtls;
-    const dtlsPort = dtls != null ? String(dtls) : '';
-    const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? 'Server').trim() || 'Server';
-    const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
-    const hashRaw = json.hash ?? json.vk_hash ?? '';
-    const hashes = typeof hashRaw === 'string'
-      ? hashRaw.split(',').map((h: string) => h.trim()).filter(Boolean)
-      : [];
-    const subRaw = String(json.sub ?? json.subUrl ?? json.sub_url ?? '').trim();
-    const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
-    if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, subUrl };
+    const u = new URL(raw.trim().split('?')[0]);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (!u.hostname) return false;
+    const parts = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+    if (parts.length < 2) return false;
+    const token = parts[parts.length - 1];
+    if (!/^[a-z0-9]{8,32}$/.test(token)) return false;
+    const prefix = parts.slice(0, -1).join('/');
+    return /sub/.test(prefix);
   } catch {
-    return null;
+    return false;
   }
 }
 
-function looksLikeColonFormat(stripped: string): boolean {
-  const parts = stripped.split(':');
-  return parts.length >= 5 && !stripped.includes('=') && /^\d+$/.test(parts[1] ?? '');
+export function isImportableInput(raw: string): boolean {
+  return isPanelSubUrl(raw);
 }
 
 function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
@@ -100,17 +62,6 @@ function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
   };
 }
 
-function mergeWdttLink(primary: WdttLink, fallback: WdttLink | null): WdttLink {
-  if (!fallback) return primary;
-  return {
-    ...primary,
-    vpnName: primary.vpnName || fallback.vpnName,
-    name: primary.name && primary.name !== 'Server' ? primary.name : fallback.name,
-    subUrl: primary.subUrl || fallback.subUrl,
-    hashes: primary.hashes?.length ? primary.hashes : fallback.hashes,
-  };
-}
-
 function subResultToLink(r: backend.SubImportResult): WdttLink {
   const stats = r.stats ? statsFromResult(r.stats) : undefined;
   const vpnName = r.vpnName || stats?.title || undefined;
@@ -123,6 +74,7 @@ function subResultToLink(r: backend.SubImportResult): WdttLink {
     vpnName,
     hashes: r.hashes ?? [],
     subUrl: r.subUrl || undefined,
+    deviceId: r.deviceId || undefined,
     stats,
   };
 }
@@ -138,29 +90,8 @@ export function serverVpnTitle(server: Server | null, traffic?: TrafficStats | n
   return vpn || user || 'Server';
 }
 
-// wdtt:// — colon-формат или base64(JSON), fallback для dev/preview
-export function parseWdttUrl(raw: string): WdttLink | null {
-  try {
-    let str = raw.trim();
-    let name = 'Server';
-    const hashIdx = str.indexOf('#');
-    if (hashIdx !== -1) {
-      const candidate = str.slice(hashIdx + 1).trim();
-      if (candidate) name = candidate;
-      str = str.slice(0, hashIdx);
-    }
-    const stripped = str.replace(/^wdtt:\/\//, '');
-    if (!stripped) return null;
-    if (looksLikeColonFormat(stripped)) {
-      return parseColonWdtt(stripped, name);
-    }
-    return parseJsonWdtt(stripped) ?? parseColonWdtt(stripped, name);
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | null> {
+  if (!isPanelSubUrl(subUrl)) return null;
   try {
     const r = await FetchSubscriptionStats(subUrl.trim());
     if (!r) return null;
@@ -170,27 +101,16 @@ export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | 
   }
 }
 
+/** Импорт только по URL подписки панели WDTT. */
 export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
-  const s = raw.trim();
-  if (!s) return null;
-  const localWdtt = s.startsWith('wdtt://') ? parseWdttUrl(s) : null;
+  const s = raw.trim().split('?')[0];
+  if (!isPanelSubUrl(s)) return null;
   try {
-    if (isHttpUrl(s)) {
-      const r = await FetchSubscriptionURL(s);
-      return subResultToLink(r);
-    }
-    if (s.startsWith('wdtt://')) {
-      try {
-        const r = await ParseWdttLink(s);
-        return mergeWdttLink(subResultToLink(r), localWdtt);
-      } catch {
-        return localWdtt;
-      }
-    }
+    const r = await FetchSubscriptionURL(s);
+    return subResultToLink(r);
   } catch {
-    return localWdtt;
+    return null;
   }
-  return null;
 }
 
 export function formatBytes(n: number): string {
@@ -279,6 +199,44 @@ export function trafficFillColor(pct: number): string {
   if (pct >= 95) return '#ef4444';
   if (pct >= 80) return '#f59e0b';
   return 'var(--accent)';
+}
+
+/** Внутренний парсер wdtt:// из тела ответа подписки (не для ввода пользователем). */
+export function parseWdttFromSubBody(raw: string): WdttLink | null {
+  try {
+    let str = raw.trim();
+    if (!str.startsWith('wdtt://')) return null;
+    const hashIdx = str.indexOf('#');
+    let name = 'Server';
+    if (hashIdx !== -1) {
+      const n = str.slice(hashIdx + 1).trim();
+      if (n) name = n;
+      str = str.slice(0, hashIdx);
+    }
+    const payload = str.slice(7);
+    const json = JSON.parse(decodeBase64Utf8(payload));
+    const ip = String(json.ip ?? json.add ?? '').trim();
+    const pass = String(json.pass ?? json.id ?? '').trim();
+    const dtls = json.dtls ?? json.Dtls;
+    const dtlsPort = dtls != null ? String(dtls) : '';
+    const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? name).trim() || name;
+    const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
+    const hashRaw = json.hash ?? json.vk_hash ?? '';
+    const hashes = typeof hashRaw === 'string'
+      ? hashRaw.split(',').map((h: string) => h.trim()).filter(Boolean)
+      : [];
+    const deviceId = String(json.did ?? json.device_id ?? '').trim() || undefined;
+    if (!ip || !dtlsPort || !pass) return null;
+    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId };
+  } catch {
+    return null;
+  }
+}
+
+export function decodeBase64Utf8(b64: string): string {
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 type Listener = (link: WdttLink | null) => void;

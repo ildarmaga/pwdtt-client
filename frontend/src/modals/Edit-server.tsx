@@ -6,6 +6,8 @@ import { isLinkManagedServer } from '../lib/types';
 import { settingsStore } from '../lib/store';
 import Hash from './Hash';
 import { handleControlledPaste } from '../lib/utils/inputPaste';
+import { isPanelSubUrl } from '../lib/utils/wdttLink';
+import { toastStore } from '../lib/stores/toastStore';
 import { SaveProfile, DeleteProfile } from '../../wailsjs/go/backend/App';
 
 interface Props {
@@ -46,13 +48,18 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
 
   const handleSave = async () => {
     if (!name.trim() || !serverIp.trim()) return;
+    const trimmedSub = subUrl.trim().split('?')[0];
+    if (trimmedSub && !isPanelSubUrl(trimmedSub)) {
+      toastStore.show('URL подписки должен быть ссылкой WDTT-панели (https://…/subs/…)', 4000);
+      return;
+    }
     const updated: Server = {
       ...server,
       name: name.trim(),
       vpnName: vpnName.trim() || undefined,
       host: `${serverIp.trim()}:${serverPort.trim() || '56000'}`,
       password,
-      subUrl: subUrl.trim() || undefined,
+      subUrl: trimmedSub || undefined,
       hashes,
       power,
     };
@@ -63,7 +70,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
       peer: updated.host,
       password: updated.password,
       hashes,
-      turn: '', port: '', device_id: '', listen: '',
+      turn: '', port: '', device_id: server.deviceId ?? '', listen: '',
     });
     onSave(updated);
     onClose();
