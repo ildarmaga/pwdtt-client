@@ -10,8 +10,8 @@ import (
 // subIDToken — как genSubID в панели WDTT (16 символов a-z0-9).
 var subIDToken = regexp.MustCompile(`^[a-z0-9]{8,32}$`)
 
-// IsPanelSubURL — только ссылки подписки WDTT-панели (https://host:2096/subs/…).
-// Прямой wdtt:// и произвольные URL отклоняются.
+// IsPanelSubURL — ссылка подписки WDTT-панели: https://host[:port]/любой/путь/TOKEN
+// Путь и порт настраиваются в панели (subPath, subPort, subURI).
 func IsPanelSubURL(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -28,20 +28,36 @@ func IsPanelSubURL(raw string) bool {
 		return false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 {
+	if len(parts) < 1 {
 		return false
 	}
 	token := parts[len(parts)-1]
-	if !subIDToken.MatchString(token) {
-		return false
-	}
-	prefix := strings.Join(parts[:len(parts)-1], "/")
-	return strings.Contains(prefix, "sub")
+	return subIDToken.MatchString(token)
 }
 
 func validatePanelSubURL(raw string) error {
 	if !IsPanelSubURL(raw) {
-		return fmt.Errorf("нужна ссылка подписки WDTT-панели (https://…/subs/…), не wdtt://")
+		return fmt.Errorf("нужна ссылка подписки WDTT-панели (https://…/TOKEN)")
 	}
 	return nil
+}
+
+// ExtractSubURLFromWdttLink — wdtt:// с полем sub внутри JSON (из панели).
+func ExtractSubURLFromWdttLink(link string) (string, error) {
+	link = strings.TrimSpace(link)
+	if !strings.HasPrefix(link, "wdtt://") {
+		return "", fmt.Errorf("not wdtt link")
+	}
+	parsed, err := parseWdttLink(link)
+	if err != nil {
+		return "", err
+	}
+	sub := strings.TrimSpace(parsed.SubURL)
+	if sub == "" {
+		return "", fmt.Errorf("wdtt link has no sub field")
+	}
+	if !IsPanelSubURL(sub) {
+		return "", fmt.Errorf("sub field is not a panel subscription url")
+	}
+	return sub, nil
 }

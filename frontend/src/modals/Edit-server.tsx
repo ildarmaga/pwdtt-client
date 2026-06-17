@@ -50,7 +50,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
     if (!name.trim() || !serverIp.trim()) return;
     const trimmedSub = subUrl.trim().split('?')[0];
     if (trimmedSub && !isPanelSubUrl(trimmedSub)) {
-      toastStore.show('URL подписки должен быть ссылкой WDTT-панели (https://…/subs/…)', 4000);
+      toastStore.show('URL подписки должен быть ссылкой WDTT-панели', 4000);
       return;
     }
     const updated: Server = {

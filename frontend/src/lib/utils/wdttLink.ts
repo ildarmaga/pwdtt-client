@@ -28,25 +28,33 @@ export interface WdttLink {
   stats?: TrafficStats;
 }
 
-/** Ссылка подписки WDTT-панели: https://host:2096/subs/… */
+/** Ссылка подписки WDTT-панели: https://host[:port]/любой/путь/TOKEN */
 export function isPanelSubUrl(raw: string): boolean {
   try {
     const u = new URL(raw.trim().split('?')[0]);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
     if (!u.hostname) return false;
     const parts = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-    if (parts.length < 2) return false;
+    if (parts.length < 1) return false;
     const token = parts[parts.length - 1];
-    if (!/^[a-z0-9]{8,32}$/.test(token)) return false;
-    const prefix = parts.slice(0, -1).join('/');
-    return /sub/.test(prefix);
+    return /^[a-z0-9]{8,32}$/.test(token);
   } catch {
     return false;
   }
 }
 
+function extractSubFromWdtt(raw: string): string | null {
+  if (!raw.trim().startsWith('wdtt://')) return null;
+  const link = parseWdttFromSubBody(raw.trim());
+  if (!link?.subUrl || !isPanelSubUrl(link.subUrl)) return null;
+  return link.subUrl;
+}
+
 export function isImportableInput(raw: string): boolean {
-  return isPanelSubUrl(raw);
+  const s = raw.trim();
+  if (!s) return false;
+  if (isPanelSubUrl(s)) return true;
+  return extractSubFromWdtt(s) !== null;
 }
 
 function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
@@ -101,12 +109,14 @@ export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | 
   }
 }
 
-/** Импорт только по URL подписки панели WDTT. */
+/** Импорт: URL подписки панели или wdtt:// с полем sub внутри. */
 export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
-  const s = raw.trim().split('?')[0];
-  if (!isPanelSubUrl(s)) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const sub = extractSubFromWdtt(s) || (isPanelSubUrl(s) ? s.split('?')[0] : null);
+  if (!sub) return null;
   try {
-    const r = await FetchSubscriptionURL(s);
+    const r = await FetchSubscriptionURL(sub);
     return subResultToLink(r);
   } catch {
     return null;
@@ -226,8 +236,10 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
       ? hashRaw.split(',').map((h: string) => h.trim()).filter(Boolean)
       : [];
     const deviceId = String(json.did ?? json.device_id ?? '').trim() || undefined;
+    const subRaw = String(json.sub ?? json.subUrl ?? json.sub_url ?? '').trim();
+    const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
     if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId };
+    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl };
   } catch {
     return null;
   }

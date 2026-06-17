@@ -21,8 +21,8 @@ export default function AddServer({ onClose, onAdd }: Props) {
     setParsed(null);
     const trimmed = raw.trim().split('?')[0];
     if (!trimmed) return;
-    if (!isPanelSubUrl(trimmed)) {
-      toastStore.show('Вставьте ссылку подписки из панели WDTT (https://…/subs/…)', 4500);
+    if (!isPanelSubUrl(trimmed) && !trimmed.startsWith('wdtt://')) {
+      toastStore.show('Вставьте ссылку подписки или wdtt:// с полем sub из панели WDTT', 4500);
       return;
     }
     void (async () => {
@@ -98,13 +98,13 @@ export default function AddServer({ onClose, onAdd }: Props) {
 
           <input
             className="as-input"
-            placeholder="https://ваш-сервер:2096/subs/…"
+            placeholder="https://…/subs/… или wdtt://… (с полем sub)"
             value={subUrl}
             onChange={e => applySubUrl(e.target.value)}
             onPaste={e => void handleControlledPaste(e, subUrl, applySubUrl)}
           />
           <p className="as-hint">
-            Скопируйте ссылку «Подписка» из панели WDTT. Прямые wdtt:// и ручной ввод не поддерживаются.
+            Скопируйте «Подписка» или «Ссылку» из панели WDTT. Если вставляете wdtt:// — внутри должен быть URL подписки (поле sub).
           </p>
 
           {loading && <p className="as-hint">Загрузка подписки…</p>}

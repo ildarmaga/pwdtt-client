@@ -127,7 +127,11 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 }
 
 func (a *App) ParseWdttLink(link string) (*SubImportResult, error) {
-	return nil, fmt.Errorf("прямой импорт wdtt:// отключён — используйте ссылку подписки панели")
+	sub, err := ExtractSubURLFromWdttLink(link)
+	if err != nil {
+		return nil, fmt.Errorf("вставьте ссылку подписки или wdtt:// с полем sub: %w", err)
+	}
+	return a.FetchSubscriptionURL(sub)
 }
 
 func parseSubResponseStats(h http.Header) *SubTrafficStats {
