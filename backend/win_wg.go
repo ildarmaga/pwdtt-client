@@ -97,12 +97,12 @@ func applyWGConfig(conf string, turnIPs []string) error {
 
 	// Exclude routes BEFORE adding tunnel routes
 	gw := defaultGateway()
+	rememberWGGateway(gw)
 	if gw != "" {
 		var excludes []string
 		for _, ip := range turnIPs {
 			excludes = append(excludes, ip+"/32")
 		}
-		excludes = append(excludes, vkExcludeCIDRs...)
 		for _, cidr := range excludes {
 			ip, mask, err := parseCIDR(cidr)
 			if err != nil {
@@ -111,6 +111,11 @@ func applyWGConfig(conf string, turnIPs []string) error {
 			_ = run("route", "add", ip, "mask", mask, gw)
 		}
 		activeExcludeRoutes = excludes
+		if err := installVKExcludeRoutes(gw); err == nil {
+			vkRouteMu.Lock()
+			vkExcludeInstalled = true
+			vkRouteMu.Unlock()
+		}
 	}
 
 	// Add AllowedIPs routes via the WG interface
@@ -130,6 +135,7 @@ func teardownWG() {
 		}
 	}
 	activeExcludeRoutes = nil
+	clearWGRouteState()
 
 	if activeDevice != nil {
 		activeDevice.Close()

@@ -85,14 +85,14 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
   return (
     <>
       <style>{`
-        .es-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; animation: overlay-in 0.3s ease-out; }
-        .es-modal { background: var(--surface); border-radius: 14px; padding: 20px; width: 380px; max-width: 95vw; box-shadow: var(--shadow); border: 1px solid var(--border); max-height: 90vh; overflow-y: auto; animation: modal-in 0.3s ease-out; }
-        .es-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: var(--text); }
+        .es-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
+        .es-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: 440px; max-width: calc(100vw - 24px); box-shadow: var(--shadow); border: 1px solid var(--border); overflow: visible; flex-shrink: 0; animation: modal-in 0.3s ease-out; }
+        .es-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .es-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }
         .es-close { background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text); line-height: 1; padding: 0; }
-        .es-input { width: 100%; padding: 11px 14px; border: 1.5px solid var(--input-border); border-radius: 10px; font-size: 14px; font-family: 'Geist', sans-serif; outline: none; margin-bottom: 10px; box-sizing: border-box; color: var(--text); background: var(--input-bg); }
+        .es-input { width: 100%; padding: 9px 12px; border: 1.5px solid var(--input-border); border-radius: 10px; font-size: 14px; font-family: 'Geist', sans-serif; outline: none; margin-bottom: 8px; box-sizing: border-box; color: var(--text); background: var(--input-bg); }
         .es-input::placeholder { color: var(--text-4); }
-        .es-hash-btn { width: 100%; margin-top: 4px; margin-bottom: 10px; padding: 13px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .es-hash-btn { width: 100%; margin-top: 2px; margin-bottom: 8px; padding: 11px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .es-btn-row { display: flex; gap: 10px; margin-top: 4px; }
         .es-btn { flex: 1; padding: 13px; border: none; border-radius: 10px; font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; }
         .es-btn--save { background: var(--accent); color: var(--accent-fg); }
@@ -100,7 +100,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
         .es-btn--delete { background: #cc0000; color: #fff; }
         .es-input--locked { opacity: 0.65; cursor: not-allowed; }
         .es-hint-lock { font-size: 11px; color: var(--text-3); margin: -4px 0 10px; line-height: 1.35; }
-        .es-slider-wrap { padding: 4px 0 11px; border-bottom: 1px solid var(--border-2); margin-bottom: 10px; }
+        .es-slider-wrap { padding: 2px 0 8px; border-bottom: 1px solid var(--border-2); margin-bottom: 8px; }
         .es-slider-label { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); margin-bottom: 8px; }
         .es-slider { width: 100%; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: linear-gradient(to right, var(--accent) calc(var(--v) * 1%), var(--border) calc(var(--v) * 1%)); }
         .es-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); cursor: pointer; }

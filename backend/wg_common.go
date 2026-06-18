@@ -3,13 +3,13 @@ package backend
 import (
 	"bufio"
 	"strings"
+	"sync"
 )
 
 const wgIface = "wg-turn"
 
-// vkExcludeCIDRs — VK/TURN: только то, что должно идти напрямую (иначе туннель не поднимется).
-// Яндекс, Google/Cloudflare DNS и прочий «обычный» трафик идут через VPN (AllowedIPs 0.0.0.0/0).
-// Конкретные IP TURN-релеев дополнительно исключаются в applyWGConfig (turnIPs /32).
+// vkExcludeCIDRs — VK TURN/DTLS: по умолчанию напрямую (минимальная задержка к relay).
+// SetVKThroughTunnel(true) — гнать эти подсети через VPN-туннель.
 var vkExcludeCIDRs = []string{
 	"87.240.128.0/18",  // VK
 	"87.240.192.0/19",  // VK
@@ -22,6 +22,60 @@ var vkExcludeCIDRs = []string{
 	"185.16.28.0/22",   // VK
 	"194.67.64.0/18",   // VK
 	"195.82.146.0/23",  // VK
+}
+
+var (
+	vkRouteMu         sync.Mutex
+	wgGateway         string
+	vkExcludeInstalled bool
+)
+
+// rememberWGGateway сохраняет шлюз для переключения маршрутов VK.
+func rememberWGGateway(gw string) {
+	vkRouteMu.Lock()
+	wgGateway = gw
+	vkRouteMu.Unlock()
+}
+
+func clearWGRouteState() {
+	resetVKExcludeRouteTracking()
+	vkRouteMu.Lock()
+	wgGateway = ""
+	vkExcludeInstalled = false
+	vkRouteMu.Unlock()
+}
+
+// SetVKThroughTunnel — true: VK через VPN-туннель; false: VK напрямую (по умолчанию).
+func SetVKThroughTunnel(through bool) error {
+	vkRouteMu.Lock()
+	gw := wgGateway
+	installed := vkExcludeInstalled
+	vkRouteMu.Unlock()
+	if gw == "" {
+		return nil
+	}
+	if through {
+		if !installed {
+			return nil
+		}
+		if err := uninstallVKExcludeRoutes(); err != nil {
+			return err
+		}
+		vkRouteMu.Lock()
+		vkExcludeInstalled = false
+		vkRouteMu.Unlock()
+		return nil
+	}
+	if installed {
+		return nil
+	}
+	if err := installVKExcludeRoutes(gw); err != nil {
+		return err
+	}
+	vkRouteMu.Lock()
+	vkExcludeInstalled = true
+	vkRouteMu.Unlock()
+	return nil
 }
 
 // wg-quick-only fields that wg setconf doesn't understand

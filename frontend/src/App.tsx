@@ -57,6 +57,9 @@ function useWailsEvents() {
         // тост снизу — это дублировало одно и то же сообщение об ошибке.
         connectionErrorStore.show(s);
       }),
+      EventsOn('workers_lost', (msg: unknown) => {
+        connectionErrorStore.showDegraded(String(msg ?? 'Нет активных воркеров'));
+      }),
       EventsOn('state_changed', (status: unknown) => {
         const s = String(status ?? '');
         if (s === 'running') {

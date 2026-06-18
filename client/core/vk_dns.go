@@ -26,7 +26,12 @@ var vkStaticHostIPs = map[string][]string{
 		"87.240.190.70", "87.240.190.75", "87.240.137.130", "87.240.137.208", "93.186.225.205",
 	},
 	"login.vk.ru": {"93.186.237.1", "95.213.56.1"},
-	"id.vk.ru":    {"93.186.237.1", "95.213.56.1"},
+	"login.vk.com": {"93.186.237.1", "95.213.56.1", "87.240.137.130", "95.213.0.1"},
+	"id.vk.ru":      {"93.186.237.1", "95.213.56.1"},
+	"id.vk.com":     {"93.186.237.1", "95.213.56.1"},
+	"vk.com":        {"87.240.137.130", "87.240.139.193", "93.186.225.205", "87.240.190.75"},
+	"m.vk.com":      {"87.240.137.130", "87.240.139.193"},
+	"oauth.vk.com":  {"87.240.137.130", "87.240.139.193"},
 }
 
 var vkRuntimeHostIPs sync.Map // host -> []string, filled by resolveVKHostsOnce
@@ -91,6 +96,21 @@ func resolveVKHostsOnce() {
 }
 
 func newVKHTTPClient(jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
+	return newVKHTTPClientOpts(false, jar...)
+}
+
+// NewVKHTTPClient — Chrome TLS + VK-aware dialer (OS DNS + static IP fallback).
+func NewVKHTTPClient(jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
+	return newVKHTTPClientOpts(false, jar...)
+}
+
+// NewVKHTTPClientForProxy — для VK login proxy: без auto-redirect, длиннее timeout.
+func NewVKHTTPClientForProxy(jar fhttp.CookieJar) (tlsclient.HttpClient, error) {
+	c, err := newVKHTTPClientOpts(true, jar)
+	return c, err
+}
+
+func newVKHTTPClientOpts(proxyMode bool, jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
 	resolveVKHostsOnce()
 	dialer := &vkAwareDialer{
 		inner: net.Dialer{
@@ -99,12 +119,22 @@ func newVKHTTPClient(jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
 			Resolver:  &net.Resolver{PreferGo: false},
 		},
 	}
+	timeout := 20
+	if proxyMode {
+		timeout = 45
+	}
 	opts := []tlsclient.HttpClientOption{
-		tlsclient.WithTimeoutSeconds(20),
+		tlsclient.WithTimeoutSeconds(timeout),
 		tlsclient.WithClientProfile(profiles.Chrome_146),
 		tlsclient.WithProxyDialerFactory(func(_ string, _ time.Duration, _ *net.TCPAddr, _ fhttp.Header, _ tlsclient.Logger) (proxy.ContextDialer, error) {
 			return dialer, nil
 		}),
+	}
+	if proxyMode {
+		opts = append(opts, tlsclient.WithNotFollowRedirects())
+		opts = append(opts, tlsclient.WithTransportOptions(&tlsclient.TransportOptions{
+			DisableCompression: true,
+		}))
 	}
 	if len(jar) > 0 && jar[0] != nil {
 		opts = append(opts, tlsclient.WithCookieJar(jar[0]))

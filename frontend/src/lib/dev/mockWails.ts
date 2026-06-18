@@ -124,6 +124,13 @@ function installGoMock() {
           emitDevEvent('state_changed', 'stopped');
           emitDevEvent('log', 'INFO', '[dev] VPN отключён');
         },
+        Reconnect: async () => {
+          emitDevEvent('state_changed', 'connecting');
+          await new Promise(r => setTimeout(r, 600));
+          window.__pwdttDevConnected = true;
+          emitDevEvent('state_changed', 'running');
+          startDevTunnelStats();
+        },
         DeleteProfile: asyncVoid,
         FetchSubscriptionStats: async (rawURL: unknown) => {
           const url = String(rawURL ?? '');

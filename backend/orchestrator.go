@@ -227,10 +227,64 @@ type Orchestrator struct {
 	internetMu    sync.RWMutex
 	internetRTTMs float64
 	pingStop      chan struct{}
+	lastParams    ConnectParams
+	tunnelUp             bool
+	workersZeroAt        time.Time
+	workersLostAt        bool
+	suppressWorkersLost  bool
 }
+
+const workersLostGrace = 12 * time.Second
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
 	return &Orchestrator{appCtx: ctx, onTray: onTray}
+}
+
+func (o *Orchestrator) Reconnect() error {
+	o.mu.Lock()
+	params := o.lastParams
+	o.mu.Unlock()
+	if params.Profile == "" {
+		return fmt.Errorf("нет сохранённых параметров подключения")
+	}
+	if o.IsRunning() {
+		o.Stop()
+		o.waitSessionEnd(30 * time.Second)
+	}
+	o.resetWorkersLostState()
+	return o.Start(params)
+}
+
+func (o *Orchestrator) resetWorkersLostState() {
+	o.workersZeroAt = time.Time{}
+	o.workersLostAt = false
+}
+
+func (o *Orchestrator) emitWorkersLost(msg string) {
+	if o.workersLostAt {
+		return
+	}
+	o.workersLostAt = true
+	runtime.EventsEmit(o.appCtx, "workers_lost", msg)
+	runtime.EventsEmit(o.appCtx, "log", "WARN", msg)
+}
+
+func (o *Orchestrator) noteWorkerStats(workers int32) {
+	if !o.tunnelUp {
+		return
+	}
+	if workers > 0 {
+		o.workersZeroAt = time.Time{}
+		o.workersLostAt = false
+		return
+	}
+	if o.workersZeroAt.IsZero() {
+		o.workersZeroAt = time.Now()
+		return
+	}
+	if time.Since(o.workersZeroAt) >= workersLostGrace {
+		o.emitWorkersLost("Нет активных воркеров — интернет через VPN может не работать. Нажмите «Переподключить».")
+	}
 }
 
 func measureInternetRTT() float64 {
@@ -306,6 +360,10 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		o.mu.Unlock()
 		return fmt.Errorf("уже подключено")
 	}
+	o.lastParams = p
+	o.resetWorkersLostState()
+	o.tunnelUp = false
+	o.suppressWorkersLost = false
 	// Резервируем слот
 	placeholder := &coreSession{closed: make(chan struct{})}
 	o.sess = placeholder
@@ -389,6 +447,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 				o.onTray(false, 0, 0, 0)
 			}
 		case core.EventStats:
+			o.noteWorkerStats(ev.Workers)
 			if o.onTray != nil {
 				o.onTray(connected, ev.RxBytes, ev.TxBytes, ev.Workers)
 			}
@@ -424,6 +483,8 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 					runtime.EventsEmit(o.appCtx, "log", "ERROR", msg)
 				} else {
 					connected = true
+					o.tunnelUp = true
+					o.resetWorkersLostState()
 					o.startInternetPing()
 					runtime.EventsEmit(o.appCtx, "state_changed", "running", "")
 					runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Конфиг применён, туннель активен ✓")
@@ -436,6 +497,11 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		}
 	}
 	// Канал закрыт — core завершился
+	if o.tunnelUp && !o.suppressWorkersLost {
+		o.emitWorkersLost("Сессия VPN завершилась — нажмите «Переподключить»")
+	}
+	o.tunnelUp = false
+	o.suppressWorkersLost = false
 	teardownWG()
 	o.stopInternetPing()
 	runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
@@ -468,6 +534,9 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 
 func (o *Orchestrator) Stop() {
 	o.mu.Lock()
+	o.tunnelUp = false
+	o.suppressWorkersLost = true
+	o.resetWorkersLostState()
 	sess := o.sess
 	o.mu.Unlock()
 	if sess == nil || sess.c == nil {

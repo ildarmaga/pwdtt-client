@@ -69,14 +69,26 @@ func RunSession(
 	creds *Credentials,
 	deviceID, password string,
 	stats *Stats,
-) (bool, error) {
-	configDelivered := false
-
+) (configDelivered bool, err error) {
 	if len(creds.TurnURLs) == 0 {
 		return false, fmt.Errorf("нет TURN URL в учетных данных")
 	}
 	// Уводим воркеры с «дохлых» VK-relay на более стабильные (см. relay_health.go).
 	selectedURL := pickHealthyTurnURL(creds.TurnURLs, sessionID)
+	relayHost := relayHostKey(selectedURL)
+	sessStart := time.Now()
+	var becameReady bool
+	defer func() {
+		life := time.Since(sessStart).Seconds()
+		switch {
+		case err != nil:
+			log.Printf("[RELAY] воркер #%d host=%s life=%.1fs err=%v", sessionID, relayHost, life, err)
+		case becameReady:
+			log.Printf("[RELAY] воркер #%d host=%s life=%.1fs завершён", sessionID, relayHost, life)
+		default:
+			log.Printf("[RELAY] воркер #%d host=%s life=%.1fs (не дошёл до READY)", sessionID, relayHost, life)
+		}
+	}()
 
 	urlhost, urlport, err := net.SplitHostPort(selectedURL)
 	if err != nil {
@@ -155,7 +167,6 @@ func RunSession(
 
 	// Учёт «живучести» relay: измеряем полезную жизнь сессии от выхода в READY
 	// до завершения. becameReady=false → сессия умерла на хендшейке (плохой relay).
-	var becameReady bool
 	var readyAt time.Time
 	defer func() {
 		recordRelaySession(turnAddr, time.Since(readyAt), becameReady)
@@ -402,7 +413,7 @@ func RunSession(
 				_, writeErr := dtlsConn.Write(pkt)
 				putPktBuf(pkt)
 				if writeErr != nil {
-					log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
+					log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
 					return
 				}
 			}
@@ -425,7 +436,7 @@ func RunSession(
 				if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
 					continue
 				}
-				log.Printf("[ВОРКЕР #%d] Ошибка Reader: %v", sessionID, readErr)
+				log.Printf("[ВОРКЕР #%d] Ошибка Reader relay=%s: %v", sessionID, relayHost, readErr)
 				return
 			}
 
@@ -451,6 +462,5 @@ func RunSession(
 	sessionWg.Wait()
 	_ = pipeA.Close()
 	_ = pipeB.Close()
-	log.Printf("[СЕССИЯ #%d] Завершена", sessionID)
 	return configDelivered, nil
 }

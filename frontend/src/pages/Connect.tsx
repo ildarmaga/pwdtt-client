@@ -499,12 +499,12 @@ export default function Connect() {
         .status-server--locked { cursor: default; }
         .status-row-main { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
         .status-name { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-        .status-submeta { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; padding-left: 22px; font-size: 11px; color: var(--text-3); width: 100%; min-width: 0; }
+        .status-submeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-left: 22px; font-size: 11px; color: var(--text-3); width: 100%; min-width: 0; }
         .status-traffic { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 6px; padding: 1px 6px; color: var(--text); font-size: 11px; white-space: nowrap; overflow: hidden; line-height: 1.3; }
         .status-traffic-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width 0.45s ease, background 0.3s ease; opacity: 0.55; }
         .status-traffic-text { position: relative; z-index: 1; }
         .status-expire { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-        .status-announce { margin-top: 6px; padding: 8px 12px; font-size: 11px; color: var(--text-3); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 100%; min-width: 0; line-height: 1.4; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+        .status-announce { margin-top: 6px; padding: 8px 12px; font-size: 11px; color: var(--text-3); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 100%; min-width: 0; box-sizing: border-box; line-height: 1.4; text-align: center; overflow: hidden; word-break: break-word; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
         .status-support { background: none; border: none; cursor: pointer; color: var(--accent); display: flex; padding: 0; margin-left: auto; flex-shrink: 0; }
         .status-ping { display: flex; align-items: center; gap: 4px; font-size: 12px; flex-shrink: 0; }
         .ping-dot { width: 6px; height: 6px; border-radius: 50%; }
@@ -539,7 +539,8 @@ export default function Connect() {
           top: 52px;
           left: 50%;
           transform: translateX(-50%);
-          width: min(420px, calc(100vw - 32px));
+          width: min(620px, calc(100% - 24px));
+          max-height: none;
           display: flex;
           align-items: flex-start;
           gap: 10px;
@@ -554,7 +555,23 @@ export default function Connect() {
         .connect-error__icon { flex-shrink: 0; color: #f87171; margin-top: 1px; }
         .connect-error__body { min-width: 0; flex: 1; }
         .connect-error__title { font-size: 12px; font-weight: 600; color: #fca5a5; margin-bottom: 4px; letter-spacing: 0.02em; }
-        .connect-error__text { font-size: 13px; line-height: 1.45; color: var(--text); word-break: break-word; }
+        .connect-error__text { font-size: 13px; line-height: 1.45; color: var(--text); word-break: break-word; overflow-wrap: anywhere; }
+        .connect-error__reconnect {
+          margin-top: 10px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 7px 12px;
+          border-radius: 8px;
+          border: none;
+          font-size: 12px;
+          font-weight: 600;
+          font-family: 'Geist', sans-serif;
+          cursor: pointer;
+          background: var(--accent);
+          color: var(--accent-fg);
+        }
+        .connect-error__reconnect:disabled { opacity: 0.55; cursor: default; }
         .connect-error__close {
           position: absolute;
           top: 8px;

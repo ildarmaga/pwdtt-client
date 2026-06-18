@@ -5,13 +5,19 @@
   transform: translateX(-50%);
   background: var(--accent);
   color: #fff;
-  padding: 8px 18px;
-  border-radius: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
   font-size: 13px;
-  white-space: nowrap;
+  line-height: 1.45;
+  max-width: min(620px, calc(100vw - 40px));
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  text-align: center;
   z-index: 9999;
   pointer-events: none;
   animation: toast-in 0.2s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 @keyframes toast-in {

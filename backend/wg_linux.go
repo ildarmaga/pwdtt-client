@@ -66,6 +66,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 
 	var routes []string
 	gw := defaultGateway()
+	rememberWGGateway(gw)
 	if gw != "" {
 		for _, ip := range turnIPs {
 			cidr := ip + "/32"
@@ -73,10 +74,10 @@ func applyWGConfig(conf string, turnIPs []string) error {
 				routes = append(routes, cidr)
 			}
 		}
-		for _, cidr := range vkExcludeCIDRs {
-			if run("ip", "route", "add", cidr, "via", gw) == nil {
-				routes = append(routes, cidr)
-			}
+		if err := installVKExcludeRoutes(gw); err == nil {
+			vkRouteMu.Lock()
+			vkExcludeInstalled = true
+			vkRouteMu.Unlock()
 		}
 		for _, dns := range localDNSServers() {
 			cidr := dns + "/32"
@@ -112,6 +113,7 @@ func teardownWG() {
 		}
 	}
 	_ = run("ip", "link", "del", wgIface)
+	clearWGRouteState()
 }
 
 func run(name string, args ...string) error {

@@ -54,6 +54,7 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 
 func (a *App) Connect(p ConnectParams) error { return a.orch.Start(p) }
 func (a *App) Disconnect()                   { a.orch.Stop() }
+func (a *App) Reconnect() error              { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
 
 // CheckVPN returns names of active VPN interfaces (excluding our wg-turn).

@@ -296,7 +296,11 @@ func WorkerGroup(
 
 					if strings.Contains(errStr, "хеш мёртв") ||
 						strings.Contains(errStr, "FATAL_AUTH") {
-						log.Printf("[ВОРКЕР #%d] Фатальная ошибка: %s", wid, errStr)
+						relay := ""
+						if len(credsSnapshot.TurnURLs) > 0 {
+							relay = relayHostKey(credsSnapshot.TurnURLs[0])
+						}
+						log.Printf("[ВОРКЕР #%d] Фатальная ошибка relay=%s: %s", wid, relay, errStr)
 						return
 					}
 
@@ -322,7 +326,11 @@ func WorkerGroup(
 						strings.Contains(errStrLower, "cannot create socket")
 
 					if isStunDeath {
-						log.Printf("[ВОРКЕР #%d] Невосстановимая TURN/STUN ошибка, завершение: %s", wid, errStr)
+						relay := ""
+						if len(credsSnapshot.TurnURLs) > 0 {
+							relay = relayHostKey(credsSnapshot.TurnURLs[0])
+						}
+						log.Printf("[ВОРКЕР #%d] Невосстановимая TURN/STUN relay=%s: %s", wid, relay, errStr)
 						return
 					}
 				}
