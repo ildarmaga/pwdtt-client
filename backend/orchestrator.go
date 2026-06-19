@@ -99,7 +99,7 @@ func formatConnectionError(msg string) string {
 	case strings.Contains(low, "traffic_exceeded") || strings.Contains(low, "лимит трафика"):
 		return "Лимит трафика исчерпан"
 	case strings.Contains(low, "wrap_auth_timeout"):
-		return "Сервер не подтвердил пароль (таймаут DTLS)"
+		return "Мёртвый TURN relay (таймаут DTLS), повтор…"
 	case strings.Contains(low, "fatal_auth"):
 		if i := strings.Index(low, "fatal_auth:"); i >= 0 {
 			tail := strings.TrimSpace(msg[i+len("fatal_auth:"):])
@@ -265,6 +265,14 @@ const (
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
 	return &Orchestrator{appCtx: ctx, onTray: onTray}
+}
+
+// SetVKThroughTunnel переключает маршрут VK и сохраняет выбор для auto-reconnect.
+func (o *Orchestrator) SetVKThroughTunnel(through bool) error {
+	o.mu.Lock()
+	o.lastParams.VKThroughTunnel = through
+	o.mu.Unlock()
+	return SetVKThroughTunnel(through)
 }
 
 func (o *Orchestrator) Reconnect() error {

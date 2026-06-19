@@ -59,7 +59,7 @@ func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
 
 // SetVKThroughTunnel переключает маршрутизацию VK (веб/API) через туннель на лету.
 // Применяется немедленно, если туннель активен; иначе — при следующем подключении.
-func (a *App) SetVKThroughTunnel(through bool) error { return SetVKThroughTunnel(through) }
+func (a *App) SetVKThroughTunnel(through bool) error { return a.orch.SetVKThroughTunnel(through) }
 
 // GetVKThroughTunnel возвращает текущий режим маршрутизации VK.
 func (a *App) GetVKThroughTunnel() bool { return VKThroughTunnel() }

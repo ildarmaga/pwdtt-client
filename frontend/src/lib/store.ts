@@ -56,6 +56,9 @@ export const settingsStore = {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     settingsListeners.forEach(fn => fn(settings));
   },
+  patch: (partial: Partial<AppSettings>) => {
+    settingsStore.save({ ...settingsStore.get(), ...partial });
+  },
   subscribe: (fn: SettingsListener) => {
     settingsListeners.add(fn);
     fn(settingsStore.get());

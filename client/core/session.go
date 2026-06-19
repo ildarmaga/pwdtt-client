@@ -383,10 +383,13 @@ func RunSession(
 	})
 	defer stopDTLS()
 
-	// lastInbound — момент последней входящей активности по DTLS (данные или pong).
-	// Обновляется Reader'ом; используется consent-freshness проверкой ниже.
+	// lastInbound / lastOutbound — consent-freshness: путь мёртв только если
+	// нет ответа И нет успешных отправок (upload-only воркеры без pong не убиваются).
 	var lastInbound atomic.Int64
-	lastInbound.Store(time.Now().UnixNano())
+	var lastOutbound atomic.Int64
+	now := time.Now().UnixNano()
+	lastInbound.Store(now)
+	lastOutbound.Store(now)
 
 	// DTLS Keepalive + consent-freshness: шлём ping и проверяем, что путь жив.
 	go func() {
@@ -399,11 +402,12 @@ func RunSession(
 			case <-sessCtx.Done():
 				return
 			case <-t.C:
-				// Consent: нет ответа дольше consentTimeout → путь мёртв, убиваем воркер.
-				idle := time.Since(time.Unix(0, lastInbound.Load()))
-				if idle > consentTimeout {
+				inIdle := time.Since(time.Unix(0, lastInbound.Load()))
+				outIdle := time.Since(time.Unix(0, lastOutbound.Load()))
+				// Чёрная дыра: ни ответа, ни успешной отправки — убиваем воркер.
+				if inIdle > consentTimeout && outIdle > consentTimeout {
 					log.Printf("[ВОРКЕР #%d] [CONSENT] нет ответа %.0fs relay=%s — путь мёртв, пересоздание",
-						sessionID, idle.Seconds(), relayHost)
+						sessionID, inIdle.Seconds(), relayHost)
 					sessCancel()
 					return
 				}
@@ -411,6 +415,7 @@ func RunSession(
 				if _, err := dtlsConn.Write(ping); err != nil {
 					return
 				}
+				lastOutbound.Store(time.Now().UnixNano())
 			}
 		}
 	}()
@@ -434,6 +439,7 @@ func RunSession(
 					log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
 					return
 				}
+				lastOutbound.Store(time.Now().UnixNano())
 			}
 		}
 	}()
