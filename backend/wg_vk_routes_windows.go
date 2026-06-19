@@ -9,11 +9,16 @@ var (
 	vkExcludeRoutesMu     sync.Mutex
 )
 
-func installVKExcludeRoutes(gw string) error {
+func installVKExcludeRoutes(gw string) error { return addVKRoutes(gw, vkExcludeCIDRs) }
+
+func uninstallVKExcludeRoutes() error { return delVKRoutes(vkExcludeCIDRs) }
+
+// addVKRoutes ставит прямые маршруты для cidrs через шлюз gw.
+func addVKRoutes(gw string, cidrs []string) error {
 	vkExcludeRoutesMu.Lock()
 	defer vkExcludeRoutesMu.Unlock()
 	var added []string
-	for _, cidr := range vkExcludeCIDRs {
+	for _, cidr := range cidrs {
 		ip, mask, err := parseCIDR(cidr)
 		if err != nil {
 			continue
@@ -27,12 +32,16 @@ func installVKExcludeRoutes(gw string) error {
 	return nil
 }
 
-func uninstallVKExcludeRoutes() error {
+// delVKRoutes снимает прямые маршруты cidrs и убирает их из учёта.
+func delVKRoutes(cidrs []string) error {
+	drop := make(map[string]bool, len(cidrs))
+	for _, c := range cidrs {
+		drop[c] = true
+	}
 	vkExcludeRoutesMu.Lock()
-	routes := append([]string(nil), activeVKExcludeRoutes...)
-	activeVKExcludeRoutes = nil
+	activeVKExcludeRoutes = filterOutStrings(activeVKExcludeRoutes, drop)
 	vkExcludeRoutesMu.Unlock()
-	for _, cidr := range routes {
+	for _, cidr := range cidrs {
 		ip, _, _ := parseCIDR(cidr)
 		if ip != "" {
 			_ = run("route", "delete", ip)
@@ -40,7 +49,7 @@ func uninstallVKExcludeRoutes() error {
 	}
 	filtered := activeExcludeRoutes[:0]
 	for _, cidr := range activeExcludeRoutes {
-		if !isVKExcludeCIDR(cidr) {
+		if !drop[cidr] {
 			filtered = append(filtered, cidr)
 		}
 	}
@@ -48,13 +57,14 @@ func uninstallVKExcludeRoutes() error {
 	return nil
 }
 
-func isVKExcludeCIDR(cidr string) bool {
-	for _, v := range vkExcludeCIDRs {
-		if v == cidr {
-			return true
+func filterOutStrings(in []string, drop map[string]bool) []string {
+	out := in[:0]
+	for _, s := range in {
+		if !drop[s] {
+			out = append(out, s)
 		}
 	}
-	return false
+	return out
 }
 
 func resetVKExcludeRouteTracking() {

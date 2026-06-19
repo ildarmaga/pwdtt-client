@@ -191,11 +191,12 @@ type ProfileData struct {
 
 // ConnectParams — runtime параметры от UI.
 type ConnectParams struct {
-	Profile     string   `json:"profile"`
-	CaptchaMode string   `json:"captchaMode"`
-	Workers     int      `json:"workers,omitempty"`
-	MTU         int      `json:"mtu,omitempty"`
-	Hashes      []string `json:"hashes,omitempty"`
+	Profile         string   `json:"profile"`
+	CaptchaMode     string   `json:"captchaMode"`
+	Workers         int      `json:"workers,omitempty"`
+	MTU             int      `json:"mtu,omitempty"`
+	Hashes          []string `json:"hashes,omitempty"`
+	VKThroughTunnel bool     `json:"vkThroughTunnel,omitempty"`
 }
 
 func loadProfile(name string) (*ProfileData, error) {
@@ -232,9 +233,35 @@ type Orchestrator struct {
 	workersZeroAt        time.Time
 	workersLostAt        bool
 	suppressWorkersLost  bool
+	lastTrafficBytes     int64
+	lastTrafficAt        time.Time
+	trafficWasActive     bool
+	trafficActiveUntil   time.Time
+	autoReconnecting     bool
+	lastAutoReconnectAt  time.Time
+	trafficWatchStop     chan struct{}
+	internetProbeFails   int
+	lastWorkers          int32
+	preserveOnSessionEnd bool
+	sessionWatchUntil    time.Time
+	netWatchStop         chan struct{}
 }
 
-const workersLostGrace = 12 * time.Second
+const networkChangeDebounce = 1500 * time.Millisecond
+
+const workersLostGrace = 4 * time.Second
+
+const (
+	trafficStallThreshold   = 8 * time.Second  // залипание пути (игры не терпят 20–30 с)
+	trafficActiveMinBytes   = int64(512)       // мелкие игровые пакеты
+	trafficActiveWindow     = 3 * time.Minute
+	sessionWatchAfterConnect = 3 * time.Minute // после Connect всегда следим за залипанием
+	autoReconnectCooldown   = 10 * time.Second
+	autoReconnectProbeEvery = 1 * time.Second
+	internetProbeInterval   = 2 * time.Second
+	internetProbeTimeout    = 1500 * time.Millisecond
+	internetProbeFailNeed   = 2
+)
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
 	return &Orchestrator{appCtx: ctx, onTray: onTray}
@@ -248,10 +275,35 @@ func (o *Orchestrator) Reconnect() error {
 		return fmt.Errorf("нет сохранённых параметров подключения")
 	}
 	if o.IsRunning() {
-		o.Stop()
-		o.waitSessionEnd(30 * time.Second)
+		o.stopCoreSession(true)
 	}
 	o.resetWorkersLostState()
+	return o.Start(params)
+}
+
+// SoftReconnect — перезапуск TURN/core без сноса wg-turn (быстрое «оживление»).
+func (o *Orchestrator) SoftReconnect() error {
+	o.mu.Lock()
+	params := o.lastParams
+	canPreserve := o.tunnelUp && wgTunnelActive()
+	o.mu.Unlock()
+	if params.Profile == "" {
+		return fmt.Errorf("нет сохранённых параметров подключения")
+	}
+	if canPreserve {
+		SetSoftReconnectPreserve(true)
+		defer SetSoftReconnectPreserve(false)
+	}
+	if o.IsRunning() {
+		o.stopCoreSession(!canPreserve)
+		o.waitSessionEnd(15 * time.Second)
+	}
+	o.resetWorkersLostState()
+	o.mu.Lock()
+	o.lastTrafficBytes = 0
+	o.lastTrafficAt = time.Time{}
+	o.internetProbeFails = 0
+	o.mu.Unlock()
 	return o.Start(params)
 }
 
@@ -270,6 +322,9 @@ func (o *Orchestrator) emitWorkersLost(msg string) {
 }
 
 func (o *Orchestrator) noteWorkerStats(workers int32) {
+	o.mu.Lock()
+	o.lastWorkers = workers
+	o.mu.Unlock()
 	if !o.tunnelUp {
 		return
 	}
@@ -283,13 +338,155 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		return
 	}
 	if time.Since(o.workersZeroAt) >= workersLostGrace {
-		o.emitWorkersLost("Нет активных воркеров — интернет через VPN может не работать. Нажмите «Переподключить».")
+		o.triggerAutoReconnect("Нет активных воркеров — быстрое восстановление…")
 	}
+}
+
+func (o *Orchestrator) shouldWatchTraffic(now time.Time) bool {
+	if o.trafficWasActive && now.Before(o.trafficActiveUntil) {
+		return true
+	}
+	return !o.sessionWatchUntil.IsZero() && now.Before(o.sessionWatchUntil)
+}
+
+func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
+	if !o.tunnelUp {
+		return
+	}
+	total := rx + tx
+	now := time.Now()
+	if o.lastTrafficAt.IsZero() {
+		o.lastTrafficBytes = total
+		o.lastTrafficAt = now
+		return
+	}
+	if total > o.lastTrafficBytes {
+		delta := total - o.lastTrafficBytes
+		o.lastTrafficBytes = total
+		o.lastTrafficAt = now
+		o.internetProbeFails = 0
+		if delta >= trafficActiveMinBytes {
+			o.trafficWasActive = true
+			o.trafficActiveUntil = now.Add(trafficActiveWindow)
+		}
+		return
+	}
+	if o.trafficWasActive && now.After(o.trafficActiveUntil) {
+		o.trafficWasActive = false
+	}
+}
+
+func (o *Orchestrator) triggerAutoReconnect(msg string) { o.triggerReconnect(msg, false) }
+
+// triggerReconnect запускает авто-переподключение. forceFull=true гарантирует
+// полный reconnect (с пересборкой маршрутов) — нужен при смене сети, когда
+// сменился шлюз и прямые /32-маршруты к TURN устарели.
+func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
+	o.mu.Lock()
+	if !o.tunnelUp || o.autoReconnecting || o.suppressWorkersLost {
+		o.mu.Unlock()
+		return
+	}
+	if !o.lastAutoReconnectAt.IsZero() && time.Since(o.lastAutoReconnectAt) < autoReconnectCooldown {
+		o.mu.Unlock()
+		return
+	}
+	o.autoReconnecting = true
+	o.lastAutoReconnectAt = time.Now()
+	soft := !forceFull && o.tunnelUp && wgTunnelActive()
+	o.mu.Unlock()
+
+	runtime.EventsEmit(o.appCtx, "log", "WARN", msg)
+	runtime.EventsEmit(o.appCtx, "auto_reconnect", msg)
+
+	go func() {
+		defer func() {
+			o.mu.Lock()
+			o.autoReconnecting = false
+			o.mu.Unlock()
+		}()
+		var err error
+		if soft {
+			err = o.SoftReconnect()
+		} else {
+			err = o.Reconnect()
+		}
+		if err != nil {
+			runtime.EventsEmit(o.appCtx, "log", "ERROR", fmt.Sprintf("Авто-переподключение не удалось: %v", err))
+			o.emitWorkersLost("Связь потеряна — нажмите «Переподключить».")
+		}
+	}()
+}
+
+func (o *Orchestrator) startTrafficWatch() {
+	o.stopTrafficWatch()
+	stop := make(chan struct{})
+	o.trafficWatchStop = stop
+	go func() {
+		t := time.NewTicker(autoReconnectProbeEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				o.maybeAutoReconnectOnStall()
+			}
+		}
+	}()
+}
+
+func (o *Orchestrator) stopTrafficWatch() {
+	if o.trafficWatchStop != nil {
+		close(o.trafficWatchStop)
+		o.trafficWatchStop = nil
+	}
+	o.lastTrafficBytes = 0
+	o.lastTrafficAt = time.Time{}
+	o.trafficWasActive = false
+	o.trafficActiveUntil = time.Time{}
+	o.autoReconnecting = false
+	o.internetProbeFails = 0
+	o.sessionWatchUntil = time.Time{}
+}
+
+func (o *Orchestrator) maybeAutoReconnectOnStall() {
+	o.mu.Lock()
+	now := time.Now()
+	watch := o.shouldWatchTraffic(now)
+	var stallDur time.Duration
+	if !o.lastTrafficAt.IsZero() {
+		stallDur = now.Sub(o.lastTrafficAt)
+	}
+	o.mu.Unlock()
+
+	if watch && stallDur >= trafficStallThreshold {
+		o.triggerAutoReconnect(fmt.Sprintf("Трафик не движется %s — быстрое восстановление…", stallDur.Round(time.Second)))
+	}
+}
+
+func (o *Orchestrator) maybeAutoReconnectOnProbeFail() {
+	o.mu.Lock()
+	watch := o.shouldWatchTraffic(time.Now())
+	fails := o.internetProbeFails
+	workers := o.lastWorkers
+	o.mu.Unlock()
+	if !watch || fails < internetProbeFailNeed {
+		return
+	}
+	// 1.1.1.1:443 может не отвечать напрямую при живых TURN-воркерах — не рвём сессию.
+	if workers > 0 {
+		o.mu.Lock()
+		o.internetProbeFails = 0
+		o.mu.Unlock()
+		return
+	}
+	o.triggerAutoReconnect(fmt.Sprintf("Нет ответа от интернета (%d проверок) — быстрое восстановление…", fails))
 }
 
 func measureInternetRTT() float64 {
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", "1.1.1.1:443", 3*time.Second)
+	conn, err := net.DialTimeout("tcp", "1.1.1.1:443", internetProbeTimeout)
 	if err != nil {
 		return 0
 	}
@@ -302,21 +499,29 @@ func (o *Orchestrator) startInternetPing() {
 	stop := make(chan struct{})
 	o.pingStop = stop
 	go func() {
-		tick := 0
 		for {
 			select {
 			case <-stop:
 				return
-			case <-time.After(2 * time.Second):
-				tick++
-				if tick%5 != 0 {
-					continue
-				}
+			case <-time.After(internetProbeInterval):
 				ms := measureInternetRTT()
+				o.mu.Lock()
+				watch := o.shouldWatchTraffic(time.Now())
+				if ms > 0 {
+					o.internetProbeFails = 0
+				} else if watch {
+					o.internetProbeFails++
+				}
+				fails := o.internetProbeFails
+				o.mu.Unlock()
+
 				if ms > 0 {
 					o.internetMu.Lock()
 					o.internetRTTMs = ms
 					o.internetMu.Unlock()
+				}
+				if ms == 0 && fails >= internetProbeFailNeed {
+					o.maybeAutoReconnectOnProbeFail()
 				}
 			}
 		}
@@ -361,8 +566,11 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		return fmt.Errorf("уже подключено")
 	}
 	o.lastParams = p
+	vkThroughTunnel.Store(p.VKThroughTunnel)
 	o.resetWorkersLostState()
-	o.tunnelUp = false
+	if !SoftReconnectPreserve() {
+		o.tunnelUp = false
+	}
 	o.suppressWorkersLost = false
 	// Резервируем слот
 	placeholder := &coreSession{closed: make(chan struct{})}
@@ -447,6 +655,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 				o.onTray(false, 0, 0, 0)
 			}
 		case core.EventStats:
+			o.noteTrafficBytes(ev.RxBytes, ev.TxBytes)
 			o.noteWorkerStats(ev.Workers)
 			if o.onTray != nil {
 				o.onTray(connected, ev.RxBytes, ev.TxBytes, ev.Workers)
@@ -484,10 +693,30 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 				} else {
 					connected = true
 					o.tunnelUp = true
+					if err := applyVKRouting(); err != nil {
+						runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[WG] VK-маршрутизация: %v", err))
+					} else if VKThroughTunnel() {
+						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] VK идёт через туннель (веб/API), TURN-транспорт напрямую")
+					}
+					if o.sessionWatchUntil.IsZero() || time.Now().After(o.sessionWatchUntil) {
+						o.sessionWatchUntil = time.Now().Add(sessionWatchAfterConnect)
+					}
 					o.resetWorkersLostState()
-					o.startInternetPing()
+					if o.pingStop == nil {
+						o.startInternetPing()
+					}
+					if o.trafficWatchStop == nil {
+						o.startTrafficWatch()
+					}
+					if o.netWatchStop == nil {
+						o.startNetworkWatch()
+					}
 					runtime.EventsEmit(o.appCtx, "state_changed", "running", "")
-					runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Конфиг применён, туннель активен ✓")
+					if SoftReconnectPreserve() && wgTunnelActive() {
+						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Soft-reconnect: wg-turn сохранён, воркеры поднимаются")
+					} else {
+						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Конфиг применён, туннель активен ✓")
+					}
 					if o.onTray != nil {
 						o.onTray(true, 0, 0, 0)
 					}
@@ -497,14 +726,25 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		}
 	}
 	// Канал закрыт — core завершился
-	if o.tunnelUp && !o.suppressWorkersLost {
+	o.mu.Lock()
+	preserve := o.preserveOnSessionEnd
+	o.preserveOnSessionEnd = false
+	o.mu.Unlock()
+
+	if o.tunnelUp && !o.suppressWorkersLost && !preserve {
 		o.emitWorkersLost("Сессия VPN завершилась — нажмите «Переподключить»")
 	}
-	o.tunnelUp = false
-	o.suppressWorkersLost = false
-	teardownWG()
-	o.stopInternetPing()
-	runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
+	if !preserve {
+		o.tunnelUp = false
+		o.suppressWorkersLost = false
+		o.stopTrafficWatch()
+		o.stopNetworkWatch()
+		teardownWG()
+		o.stopInternetPing()
+		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
+	} else {
+		runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VPN-интерфейс сохранён, перезапуск TURN-воркеров…")
+	}
 	// Останавливаем буферизованный логгер и восстанавливаем оригинальный
 	if lw, ok := log.Writer().(*wailsLogWriter); ok {
 		select {
@@ -521,7 +761,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 	}
 	ts := time.Now().Format("15:04:05")
 	runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] Сессия завершена", ts))
-	if o.onTray != nil {
+	if o.onTray != nil && !preserve {
 		o.onTray(false, 0, 0, 0)
 	}
 	o.mu.Lock()
@@ -529,22 +769,41 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		o.sess = nil
 	}
 	o.mu.Unlock()
-	runtime.EventsEmit(o.appCtx, "state_changed", "disconnected", "")
+	if !preserve {
+		runtime.EventsEmit(o.appCtx, "state_changed", "disconnected", "")
+	}
 }
 
-func (o *Orchestrator) Stop() {
+func (o *Orchestrator) stopCoreSession(fullTeardown bool) {
 	o.mu.Lock()
-	o.tunnelUp = false
 	o.suppressWorkersLost = true
-	o.resetWorkersLostState()
+	if fullTeardown {
+		o.tunnelUp = false
+		o.preserveOnSessionEnd = false
+		o.resetWorkersLostState()
+		o.stopTrafficWatch()
+	} else {
+		o.preserveOnSessionEnd = o.tunnelUp && wgTunnelActive()
+	}
 	sess := o.sess
 	o.mu.Unlock()
 	if sess == nil || sess.c == nil {
-		o.waitSessionEnd(5 * time.Second)
 		return
 	}
 	sess.c.Stop()
-	o.waitSessionEnd(60 * time.Second)
+	if fullTeardown {
+		o.waitSessionEnd(60 * time.Second)
+	}
+}
+
+func (o *Orchestrator) Stop() {
+	o.stopCoreSession(true)
+	o.mu.Lock()
+	sess := o.sess
+	o.mu.Unlock()
+	if sess != nil {
+		o.waitSessionEnd(60 * time.Second)
+	}
 }
 
 func (o *Orchestrator) SendCaptchaResult(token string) {

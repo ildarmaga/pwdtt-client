@@ -29,6 +29,10 @@ var vkStaticHostIPs = map[string][]string{
 	"login.vk.com": {"93.186.237.1", "95.213.56.1", "87.240.137.130", "95.213.0.1"},
 	"id.vk.ru":      {"93.186.237.1", "95.213.56.1"},
 	"id.vk.com":     {"93.186.237.1", "95.213.56.1"},
+	"queuev4.vk.com": {"93.186.237.6", "93.186.237.7", "93.186.237.16", "95.213.56.3", "95.213.56.4"},
+	"queuev4.vk.ru":  {"93.186.237.6", "93.186.237.7", "95.213.56.3", "95.213.56.4"},
+	"eh.vk.com":      {"93.186.237.6", "93.186.237.7", "95.213.56.2", "95.213.56.3", "95.213.56.4"},
+	"st4-9.vk.com":   {"95.142.203.40"},
 	"vk.com":        {"87.240.137.130", "87.240.139.193", "93.186.225.205", "87.240.190.75"},
 	"m.vk.com":      {"87.240.137.130", "87.240.139.193"},
 	"oauth.vk.com":  {"87.240.137.130", "87.240.139.193"},
@@ -80,7 +84,10 @@ func vkDialIPs(host string) []string {
 }
 
 func resolveVKHostsOnce() {
-	hosts := []string{"api.vk.me", "api.vk.ru", "login.vk.ru", "calls.okcdn.ru", "vk.com"}
+	hosts := []string{
+		"api.vk.me", "api.vk.ru", "login.vk.ru", "login.vk.com", "id.vk.com",
+		"queuev4.vk.com", "queuev4.vk.ru", "eh.vk.com", "calls.okcdn.ru", "vk.com",
+	}
 	r := &net.Resolver{PreferGo: false} // OS DNS (router) — same path curl uses on Windows
 	for _, host := range hosts {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

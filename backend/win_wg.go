@@ -44,7 +44,13 @@ func extractWintun() error {
 	return os.WriteFile(dst, wintunDLL, 0644)
 }
 
+func wgTunnelActive() bool { return activeDevice != nil }
+
 func applyWGConfig(conf string, turnIPs []string) error {
+	if SoftReconnectPreserve() && wgTunnelActive() {
+		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		return nil
+	}
 	teardownWG()
 
 	if err := extractWintun(); err != nil {
@@ -112,9 +118,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 		}
 		activeExcludeRoutes = excludes
 		if err := installVKExcludeRoutes(gw); err == nil {
-			vkRouteMu.Lock()
-			vkExcludeInstalled = true
-			vkRouteMu.Unlock()
+			markVKExcludeInstalled()
 		}
 	}
 

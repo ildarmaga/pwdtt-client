@@ -22,7 +22,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
     const trimmed = raw.trim().split('?')[0];
     if (!trimmed) return;
     if (!isPanelSubUrl(trimmed) && !trimmed.startsWith('wdtt://')) {
-      toastStore.show('Вставьте ссылку подписки или wdtt:// с полем sub из панели WDTT', 4500);
+      toastStore.show('Вставьте ссылку подписки панели или wdtt:// ссылку', 4500);
       return;
     }
     void (async () => {
@@ -30,7 +30,13 @@ export default function AddServer({ onClose, onAdd }: Props) {
       try {
         const link = await resolveWdttImport(trimmed);
         if (!link) {
-          toastStore.show('Не удалось загрузить подписку — проверьте ссылку и доступ к панели', 4500);
+          const isWdtt = trimmed.startsWith('wdtt://');
+          toastStore.show(
+            isWdtt
+              ? 'Ссылка wdtt:// повреждена — нет ip/порта/пароля внутри'
+              : 'Не удалось загрузить подписку — проверьте ссылку и доступ к панели',
+            4500,
+          );
           return;
         }
         setParsed(link);
@@ -43,8 +49,8 @@ export default function AddServer({ onClose, onAdd }: Props) {
   const canAdd = Boolean(parsed && !loading);
 
   const handleAdd = async () => {
-    if (!parsed?.subUrl) {
-      toastStore.show('Сначала загрузите подписку из панели', 4000);
+    if (!parsed || !parsed.ip || !parsed.dtlsPort || !parsed.password) {
+      toastStore.show('Сначала вставьте корректную ссылку', 4000);
       return;
     }
     const host = `${parsed.ip}:${parsed.dtlsPort}`;
@@ -98,13 +104,13 @@ export default function AddServer({ onClose, onAdd }: Props) {
 
           <input
             className="as-input"
-            placeholder="https://…/subs/… или wdtt://… (с полем sub)"
+            placeholder="https://…/subs/… или wdtt://…"
             value={subUrl}
             onChange={e => applySubUrl(e.target.value)}
             onPaste={e => void handleControlledPaste(e, subUrl, applySubUrl)}
           />
           <p className="as-hint">
-            Скопируйте «Подписка» или «Ссылку» из панели WDTT. Если вставляете wdtt:// — внутри должен быть URL подписки (поле sub).
+            Вставьте «Подписку» или «Ссылку» из панели WDTT. Ссылка wdtt:// добавляется сразу, без интернета — все параметры внутри неё.
           </p>
 
           {loading && <p className="as-hint">Загрузка подписки…</p>}
@@ -113,7 +119,9 @@ export default function AddServer({ onClose, onAdd }: Props) {
             <div className="as-preview">
               <div><strong>{parsed.vpnName || parsed.name}</strong></div>
               <div>{parsed.ip}:{parsed.dtlsPort}</div>
-              <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{parsed.subUrl}</div>
+              <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
+                {parsed.subUrl || `Хешей: ${parsed.hashes?.length ?? 0} · офлайн-импорт`}
+              </div>
             </div>
           )}
 

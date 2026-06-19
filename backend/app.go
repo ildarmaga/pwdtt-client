@@ -57,6 +57,13 @@ func (a *App) Disconnect()                   { a.orch.Stop() }
 func (a *App) Reconnect() error              { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
 
+// SetVKThroughTunnel переключает маршрутизацию VK (веб/API) через туннель на лету.
+// Применяется немедленно, если туннель активен; иначе — при следующем подключении.
+func (a *App) SetVKThroughTunnel(through bool) error { return SetVKThroughTunnel(through) }
+
+// GetVKThroughTunnel возвращает текущий режим маршрутизации VK.
+func (a *App) GetVKThroughTunnel() bool { return VKThroughTunnel() }
+
 // CheckVPN returns names of active VPN interfaces (excluding our wg-turn).
 func (a *App) CheckVPN() []string {
 	ifaces, err := net.Interfaces()

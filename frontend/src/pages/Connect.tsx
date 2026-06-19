@@ -281,6 +281,7 @@ export default function Connect() {
         workers,
         mtu: s.mtu || 1280,
         hashes,
+        vkThroughTunnel: s.vkThroughTunnel,
       });
     } catch (e) {
       tunnelStore.set('idle');

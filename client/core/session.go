@@ -24,8 +24,13 @@ const (
 	readBufSize        = 1600
 	socketBufSize      = 625 * 1024
 	keepaliveByte      = 0xFF // DTLS-level keepalive marker
-	keepaliveInterval  = 15 * time.Second
+	keepaliveInterval  = 10 * time.Second
 	dtlsHandshakeWait  = 28 * time.Second // cap: не ждать 45s на мёртвом TURN relay
+	// consentTimeout — consent-freshness (идея из WebRTC): если по DTLS-пути нет
+	// НИКАКОЙ входящей активности (данные ИЛИ pong на keepalive) дольше этого срока,
+	// путь считается «чёрной дырой» и воркер убивается → пересоздаётся на здоровом
+	// relay (pickHealthyTurnURL). Без этого зомби-воркер жил бы до sessionReadTimeout.
+	consentTimeout = 30 * time.Second
 )
 
 // Handshake semaphore: limit concurrent DTLS handshakes (queue under load)
@@ -378,7 +383,12 @@ func RunSession(
 	})
 	defer stopDTLS()
 
-	// DTLS Keepalive: prevents TURN allocation timeout and DTLS idle disconnect
+	// lastInbound — момент последней входящей активности по DTLS (данные или pong).
+	// Обновляется Reader'ом; используется consent-freshness проверкой ниже.
+	var lastInbound atomic.Int64
+	lastInbound.Store(time.Now().UnixNano())
+
+	// DTLS Keepalive + consent-freshness: шлём ping и проверяем, что путь жив.
 	go func() {
 		defer proxyWg.Done()
 		t := time.NewTicker(keepaliveInterval)
@@ -389,6 +399,14 @@ func RunSession(
 			case <-sessCtx.Done():
 				return
 			case <-t.C:
+				// Consent: нет ответа дольше consentTimeout → путь мёртв, убиваем воркер.
+				idle := time.Since(time.Unix(0, lastInbound.Load()))
+				if idle > consentTimeout {
+					log.Printf("[ВОРКЕР #%d] [CONSENT] нет ответа %.0fs relay=%s — путь мёртв, пересоздание",
+						sessionID, idle.Seconds(), relayHost)
+					sessCancel()
+					return
+				}
 				_ = dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				if _, err := dtlsConn.Write(ping); err != nil {
 					return
@@ -439,6 +457,9 @@ func RunSession(
 				log.Printf("[ВОРКЕР #%d] Ошибка Reader relay=%s: %v", sessionID, relayHost, readErr)
 				return
 			}
+
+			// Любой входящий пакет (данные ИЛИ pong) = путь жив → consent-freshness.
+			lastInbound.Store(time.Now().UnixNano())
 
 			// Skip keepalive pong from server
 			if n == 1 && pkt[0] == keepaliveByte {

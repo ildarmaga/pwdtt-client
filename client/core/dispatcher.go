@@ -156,7 +156,6 @@ func (d *Dispatcher) readLoop() {
 		}
 
 		d.clientAddr.Store(&addr)
-		atomic.AddInt64(&d.stats.TotalBytesUp, int64(n))
 
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
@@ -204,6 +203,8 @@ func (d *Dispatcher) readLoop() {
 			d.rrIndex = (idx + 1) % nw
 			d.rrCount = 0
 			putPktBuf(pkt)
+		} else {
+			atomic.AddInt64(&d.stats.TotalBytesUp, int64(n))
 		}
 		d.mu.Unlock()
 	}

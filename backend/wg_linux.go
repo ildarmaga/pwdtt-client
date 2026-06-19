@@ -4,6 +4,7 @@ package backend
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -16,7 +17,15 @@ var (
 	activeRoutesMu sync.Mutex
 )
 
+func wgTunnelActive() bool {
+	return exec.Command("ip", "link", "show", wgIface).Run() == nil
+}
+
 func applyWGConfig(conf string, turnIPs []string) error {
+	if SoftReconnectPreserve() && wgTunnelActive() {
+		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		return nil
+	}
 	teardownWG()
 
 	addr, mtu, allowedIPs, wgConf := parseWGConfig(conf)
@@ -75,9 +84,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 			}
 		}
 		if err := installVKExcludeRoutes(gw); err == nil {
-			vkRouteMu.Lock()
-			vkExcludeInstalled = true
-			vkRouteMu.Unlock()
+			markVKExcludeInstalled()
 		}
 		for _, dns := range localDNSServers() {
 			cidr := dns + "/32"

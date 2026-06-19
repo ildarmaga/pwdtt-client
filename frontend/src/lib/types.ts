@@ -29,6 +29,8 @@ export interface AppSettings {
   useGlobalHashes: boolean;
   /** 0 = авто (каждые 5 сек) */
   metricsRefreshSec: number;
+  /** VK (веб/API) гнать через VPN-туннель; по умолчанию VK идёт напрямую */
+  vkThroughTunnel: boolean;
 }
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hashes: ['', '', '', ''],
   useGlobalHashes: false,
   metricsRefreshSec: 0,
+  vkThroughTunnel: false,
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [

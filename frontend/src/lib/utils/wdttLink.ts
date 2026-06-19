@@ -50,11 +50,18 @@ function extractSubFromWdtt(raw: string): string | null {
   return link.subUrl;
 }
 
+/** wdtt:// с полными параметрами подключения внутри base64 (ip+dtls+pass) — импорт без панели. */
+function isOfflineWdtt(raw: string): boolean {
+  const link = parseWdttFromSubBody(raw.trim());
+  return Boolean(link && link.ip && link.dtlsPort && link.password);
+}
+
 export function isImportableInput(raw: string): boolean {
   const s = raw.trim();
   if (!s) return false;
   if (isPanelSubUrl(s)) return true;
-  return extractSubFromWdtt(s) !== null;
+  if (!s.startsWith('wdtt://')) return false;
+  return isOfflineWdtt(s) || extractSubFromWdtt(s) !== null;
 }
 
 function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
@@ -109,15 +116,61 @@ export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | 
   }
 }
 
-/** Импорт: URL подписки панели или wdtt:// с полем sub внутри. */
+/**
+ * Импорт сервера:
+ *  - URL подписки панели → загрузка с панели (нужен интернет);
+ *  - wdtt:// с полным набором (ip+dtls+pass) → офлайн из base64, панель опционально для статистики;
+ *  - wdtt:// только с полем sub → загрузка с панели.
+ */
 export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
   const s = raw.trim();
   if (!s) return null;
-  const sub = extractSubFromWdtt(s) || (isPanelSubUrl(s) ? s.split('?')[0] : null);
+
+  // 1. Голый URL подписки панели — поведение как раньше.
+  if (isPanelSubUrl(s)) {
+    try {
+      return subResultToLink(await FetchSubscriptionURL(s.split('?')[0]));
+    } catch {
+      return null;
+    }
+  }
+
+  if (!s.startsWith('wdtt://')) return null;
+
+  const inline = parseWdttFromSubBody(s);
+  const hasOfflineParams = Boolean(inline && inline.ip && inline.dtlsPort && inline.password);
+
+  // 2. Полный wdtt:// — работаем офлайн из base64. Панель используем только для
+  //    подтягивания статистики (необязательно), ошибка сети не мешает импорту.
+  if (hasOfflineParams && inline) {
+    if (inline.subUrl && isPanelSubUrl(inline.subUrl)) {
+      try {
+        const r = await FetchSubscriptionURL(inline.subUrl);
+        const fromPanel = subResultToLink(r);
+        // Приоритет — данные из ссылки (они «офлайн-истина»), статистика/имя — с панели.
+        return {
+          ...fromPanel,
+          ip: inline.ip,
+          dtlsPort: inline.dtlsPort,
+          password: inline.password,
+          hashes: inline.hashes.length > 0 ? inline.hashes : fromPanel.hashes,
+          name: inline.name !== 'Server' ? inline.name : fromPanel.name,
+          vpnName: inline.vpnName || fromPanel.vpnName,
+          deviceId: inline.deviceId || fromPanel.deviceId,
+          subUrl: inline.subUrl,
+        };
+      } catch {
+        // Панель недоступна — отдаём то, что в ссылке.
+      }
+    }
+    return inline;
+  }
+
+  // 3. wdtt:// только с sub — старый путь через панель.
+  const sub = extractSubFromWdtt(s);
   if (!sub) return null;
   try {
-    const r = await FetchSubscriptionURL(sub);
-    return subResultToLink(r);
+    return subResultToLink(await FetchSubscriptionURL(sub));
   } catch {
     return null;
   }

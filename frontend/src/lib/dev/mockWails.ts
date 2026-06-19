@@ -150,6 +150,8 @@ function installGoMock() {
         SaveProfile: asyncVoid,
         SetAutoStart: asyncVoid,
         SetTrayEnabled: asyncVoid,
+        SetVKThroughTunnel: asyncVoid,
+        GetVKThroughTunnel: async () => false,
       },
     },
   };

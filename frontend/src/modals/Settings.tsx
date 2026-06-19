@@ -6,7 +6,7 @@ import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, SetVKThroughTunnel } from '../../wailsjs/go/backend/App';
 
 interface Props {
   onClose: () => void;
@@ -163,6 +163,15 @@ export default function Settings({ onClose }: Props) {
           <div className="st-row">
             <span>Глобальные хеши</span>
             <button className={`st-toggle st-toggle--${settings.useGlobalHashes ? 'on' : 'off'}`} onClick={() => update('useGlobalHashes', !settings.useGlobalHashes)} />
+          </div>
+
+          <div className="st-row">
+            <span>VK через туннель</span>
+            <button className={`st-toggle st-toggle--${settings.vkThroughTunnel ? 'on' : 'off'}`} onClick={() => {
+              const next = !settings.vkThroughTunnel;
+              update('vkThroughTunnel', next);
+              SetVKThroughTunnel(next).catch(() => {});
+            }} />
           </div>
 
           <div className="st-row">

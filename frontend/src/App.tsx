@@ -30,7 +30,7 @@ function useWdttPaste() {
       void (async () => {
         const link = await resolveWdttImport(trimmed);
         if (!link) {
-          toastStore.show('Нужна ссылка подписки или wdtt:// с полем sub из панели WDTT');
+          toastStore.show('Нужна ссылка подписки панели или wdtt:// ссылка');
           return;
         }
         wdttLinkStore.set(link);
@@ -59,6 +59,10 @@ function useWailsEvents() {
       }),
       EventsOn('workers_lost', (msg: unknown) => {
         connectionErrorStore.showDegraded(String(msg ?? 'Нет активных воркеров'));
+      }),
+      EventsOn('auto_reconnect', (msg: unknown) => {
+        tunnelStore.set('connecting');
+        connectionErrorStore.showDegraded(String(msg ?? 'Авто-переподключение…'));
       }),
       EventsOn('state_changed', (status: unknown) => {
         const s = String(status ?? '');
