@@ -68,8 +68,7 @@ func RunSession(
 	peer *net.UDPAddr,
 	d *Dispatcher,
 	localPort string,
-	getConfig bool,
-	configCh chan<- string,
+	configGate *wgConfigGate,
 	sessionID int,
 	creds *Credentials,
 	deviceID, password string,
@@ -339,26 +338,14 @@ func RunSession(
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	// Запрос конфига
-	if getConfig && configCh != nil {
-		conf, confErr := RequestConfig(dtlsConn, localPort, deviceID, password)
+	// Запрос конфига (любой воркер группы #1 может доставить wg_config)
+	if configGate != nil {
+		delivered, confErr := configGate.tryDeliver(sessionID, dtlsConn, localPort, deviceID, password)
 		if confErr != nil {
-			errStr := confErr.Error()
-			if strings.Contains(errStr, "FATAL_AUTH") {
-				return false, confErr
-			}
-			log.Printf("[ВОРКЕР #%d] Ошибка конфига: %v", sessionID, confErr)
-		} else if conf != "" {
-			select {
-			case configCh <- conf:
-				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] Конфиг получен", sessionID)
-			default:
-				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] Конфиг уже был доставлен другим воркером", sessionID)
-			}
-		} else {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал WireGuard-конфиг, повторим позже", sessionID)
+			return false, confErr
+		}
+		if delivered {
+			configDelivered = true
 		}
 	}
 

@@ -51,8 +51,12 @@ func WorkerGroup(
 	}
 
 	var configSent int32
+	cfgGate := newWGConfigGate(configCh)
 	if !getConfig {
 		configSent = 1
+		if cfgGate != nil {
+			cfgGate.sent.Store(1)
+		}
 	}
 
 	// Doze-mode пауза
@@ -111,12 +115,21 @@ func WorkerGroup(
 		onTurnURLs(creds.TurnURLs)
 	}
 
-	var configRequestInFlight int32
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
 	var refreshMu sync.Mutex
 	var lastCredRefresh atomic.Int64
 	var quotaBackoffUntil atomic.Int64
+	var signalOnce sync.Once
+	fireSignalReady := func() {
+		if signalReady == nil {
+			return
+		}
+		signalOnce.Do(func() {
+			close(signalReady)
+			log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
+		})
+	}
 
 	waitQuotaBackoff := func(wid int) bool {
 		until := quotaBackoffUntil.Load()
@@ -182,16 +195,26 @@ func WorkerGroup(
 		return true
 	}
 
-	// Сигнализируем следующей группе, что мы успешно запустились (креды получены + 2 сек форы)
+	// Следующая группа стартует после wg_config или через 500 ms (что раньше).
 	if signalReady != nil {
 		go func() {
-			select {
-			case <-time.After(2000 * time.Millisecond):
-				if ctx.Err() == nil {
-					close(signalReady)
-					log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			timer := time.NewTimer(500 * time.Millisecond)
+			defer timer.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+					fireSignalReady()
+					return
+				case <-ticker.C:
+					if cfgGate != nil && cfgGate.delivered() {
+						fireSignalReady()
+						return
+					}
 				}
-			case <-ctx.Done():
 			}
 		}()
 	}
@@ -199,8 +222,8 @@ func WorkerGroup(
 	for i, wid := range workerIDs {
 		wg.Add(1)
 
-		// Stagger: 1.2с между воркерами — меньше одновременных TURN Allocate
-		workerDelay := time.Duration(i) * 1200 * time.Millisecond
+		// Stagger: первые воркеры быстрее — трафик через wg-turn с первого READY.
+		workerDelay := time.Duration(i) * 450 * time.Millisecond
 
 		go func(wid int, delay time.Duration) {
 			defer wg.Done()
@@ -224,15 +247,6 @@ func WorkerGroup(
 					return
 				}
 
-				getConf := false
-				if shouldGetConfig && atomic.LoadInt32(&configSent) == 0 {
-					getConf = atomic.CompareAndSwapInt32(&configRequestInFlight, 0, 1)
-				}
-				var cc chan<- string
-				if getConf {
-					cc = configCh
-				}
-
 				credsMu.RLock()
 				credsSnapshot := *creds
 				credsSnapshot.TurnURLs = cloneStringSlice(creds.TurnURLs)
@@ -240,15 +254,11 @@ func WorkerGroup(
 
 				sessStart := time.Now()
 				configDelivered, sessErr := RunSession(ctx, tp, peer, d, localPort,
-					getConf, cc, wid, &credsSnapshot, deviceID, password, stats)
+					cfgGate, wid, &credsSnapshot, deviceID, password, stats)
 				sessLife := time.Since(sessStart)
 
-				if getConf {
-					if configDelivered {
-						atomic.StoreInt32(&configSent, 1)
-					} else {
-						atomic.StoreInt32(&configRequestInFlight, 0)
-					}
+				if shouldGetConfig && configDelivered {
+					atomic.StoreInt32(&configSent, 1)
 				}
 
 				if sessErr == nil {
