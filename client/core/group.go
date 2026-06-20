@@ -374,6 +374,13 @@ func WorkerGroup(
 						refreshCreds("TURN allocation error")
 					} else {
 						log.Printf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
+						// «all retransmissions failed» = VK-хост не отвечает на Allocate
+						// (мёртвый relay). relay-health уже уводит воркер на другой хост,
+						// но если в группе все URL мёртвые — после пары попыток обновляем
+						// креды, чтобы VK выдал свежий набор TURN-хостов.
+						if attempt >= 3 && strings.Contains(errStrLower, "retransmissions failed") {
+							refreshCreds("TURN Allocate: хост не отвечает")
+						}
 					}
 
 					// Если ошибка STUN (credentials invalid), воркер не сможет переподключиться. Завершаем.

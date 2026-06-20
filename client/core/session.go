@@ -84,8 +84,18 @@ func RunSession(
 	relayHost := relayHostKey(selectedURL)
 	sessStart := time.Now()
 	var becameReady bool
+	var readyAt time.Time
 	defer func() {
 		life := time.Since(sessStart).Seconds()
+		// Здоровье хоста фиксируем ВСЕГДА, включая провал Allocate/DTLS до READY.
+		// becameReady=false → хост получает штраф (sec=0, shortStreak++), и
+		// pickHealthyTurnURL уводит воркеров с мёртвого VK-relay, который не
+		// отвечает на Allocate («all retransmissions failed»).
+		readyLife := time.Duration(0)
+		if becameReady {
+			readyLife = time.Since(readyAt)
+		}
+		recordRelaySession(selectedURL, readyLife, becameReady)
 		switch {
 		case err != nil:
 			log.Printf("[RELAY] воркер #%d host=%s life=%.1fs err=%v", sessionID, relayHost, life, err)
@@ -170,13 +180,6 @@ func RunSession(
 		return false, fmt.Errorf("TURN Allocate: %w", err)
 	}
 	defer relay.Close()
-
-	// Учёт «живучести» relay: измеряем полезную жизнь сессии от выхода в READY
-	// до завершения. becameReady=false → сессия умерла на хендшейке (плохой relay).
-	var readyAt time.Time
-	defer func() {
-		recordRelaySession(turnAddr, time.Since(readyAt), becameReady)
-	}()
 
 	atomic.StoreInt64(&stats.TurnRTTNs, time.Since(allocStart).Nanoseconds())
 
