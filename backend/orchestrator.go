@@ -190,8 +190,11 @@ type ProfileData struct {
 }
 
 // ConnectParams — runtime параметры от UI.
+// Profile — уникальный ключ профиля (id сервера), по нему грузится ProfileData с диска.
+// Name — человекочитаемое имя сервера, используется только для имени лог-файла.
 type ConnectParams struct {
 	Profile         string   `json:"profile"`
+	Name            string   `json:"name,omitempty"`
 	CaptchaMode     string   `json:"captchaMode"`
 	Workers         int      `json:"workers,omitempty"`
 	MTU             int      `json:"mtu,omitempty"`
@@ -607,7 +610,11 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	if _, already := log.Writer().(*wailsLogWriter); !already {
 		o.prevLogWriter = log.Writer()
 	}
-	lw := &wailsLogWriter{ctx: o.appCtx, file: newSessionLogFile(p.Profile)}
+	logName := p.Name
+	if logName == "" {
+		logName = p.Profile
+	}
+	lw := &wailsLogWriter{ctx: o.appCtx, file: newSessionLogFile(logName)}
 	lw.start()
 	log.SetOutput(lw)
 

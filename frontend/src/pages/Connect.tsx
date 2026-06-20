@@ -66,7 +66,8 @@ import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, type TrafficStats } from '../lib/utils/wdttLink';
-import { SaveProfile } from '../../wailsjs/go/backend/App';
+import { DeleteProfile, GetProfile } from '../../wailsjs/go/backend/App';
+import { saveServerProfile } from '../lib/utils/profileSync';
 import type { Server, TunnelState } from '../lib/types';
 import { Connect as WailsConnect, Disconnect as WailsDisconnect } from '../../wailsjs/go/backend/App';
 
@@ -107,6 +108,28 @@ export default function Connect() {
   useEffect(() => {
     selectedServerStore.setId(selected?.id ?? null);
   }, [selected?.id]);
+
+  // Одноразовая миграция профилей: раньше ключ профиля = отображаемое имя,
+  // из-за чего серверы с одинаковым именем делили один файл и не переключались.
+  // Перезаписываем профили по уникальному id из данных serverStore (они верны
+  // для каждого сервера), сохраняя device_id из старого профиля по имени.
+  useEffect(() => {
+    const FLAG = 'wdtt_profiles_keyed_by_id';
+    if (localStorage.getItem(FLAG) === '1') return;
+    (async () => {
+      for (const s of serverStore.getAll()) {
+        try {
+          let deviceId = s.deviceId;
+          if (!deviceId) {
+            const old = await GetProfile(s.name).catch(() => null);
+            if (old?.device_id) deviceId = old.device_id;
+          }
+          await saveServerProfile({ ...s, deviceId });
+        } catch { /* пропускаем сбойный профиль */ }
+      }
+      try { localStorage.setItem(FLAG, '1'); } catch { /* ignore */ }
+    })();
+  }, []);
 
   // tunnelState из глобального store — переживает смену роута
   const [tunnelState, setTunnelState] = useState<TunnelState>(() => tunnelStore.get());
@@ -158,12 +181,6 @@ export default function Connect() {
       const applyLink = async () => {
         const h4 = consumed.hashes.slice(0, 4);
         const padded: [string,string,string,string] = [h4[0]??'', h4[1]??'', h4[2]??'', h4[3]??''];
-        await SaveProfile(name, {
-          peer: host,
-          password: consumed.password,
-          hashes: [],
-          turn: '', port: '', device_id: consumed.deviceId ?? '', listen: '',
-        });
         const existing = serverStore.getAll().find(s => s.host === host);
         let s: Server;
         if (existing) {
@@ -190,6 +207,7 @@ export default function Connect() {
             linkManaged: true,
           });
         }
+        await saveServerProfile(s).catch(() => {});
         if (consumed.stats && consumed.subUrl) {
           trafficStatsStore.set(consumed.subUrl, consumed.stats);
         }
@@ -276,7 +294,8 @@ export default function Connect() {
         ? (s.power || 9)
         : (selected!.power || Math.max(9, hashes.length * 9));
       await WailsConnect({
-        profile: selected!.name,
+        profile: selected!.id,
+        name: selected!.name,
         captchaMode: 'auto',
         workers,
         mtu: s.mtu || 1280,
@@ -310,9 +329,10 @@ export default function Connect() {
     }
   };
 
-  const handleAdd = (data: Omit<Server, 'id'>) => {
+  const handleAdd = async (data: Omit<Server, 'id'>) => {
     const s = serverStore.add(data);
     setServers(serverStore.getAll());
+    await saveServerProfile(s).catch(() => {});
     if (tunnelStore.get() === 'idle') {
       setSelected(s);
     } else {
@@ -333,6 +353,7 @@ export default function Connect() {
       return;
     }
     serverStore.remove(id);
+    DeleteProfile(id).catch(() => {});
     const all = serverStore.getAll();
     setServers(all);
     if (selected?.id === id) setSelected(all[0] ?? null);

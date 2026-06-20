@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { IconCircleHalf2 } from '@tabler/icons-react';
 import type { Server } from '../lib/types';
-import { SaveProfile } from '../../wailsjs/go/backend/App';
 import { resolveWdttImport, isPanelSubUrl } from '../lib/utils/wdttLink';
 import { handleControlledPaste } from '../lib/utils/inputPaste';
 import { toastStore } from '../lib/stores/toastStore';
@@ -58,13 +57,8 @@ export default function AddServer({ onClose, onAdd }: Props) {
     const hashes = parsed.hashes ?? [];
     const h4: [string, string, string, string] = [hashes[0] ?? '', hashes[1] ?? '', hashes[2] ?? '', hashes[3] ?? ''];
 
-    await SaveProfile(name, {
-      peer: host,
-      password: parsed.password,
-      hashes: [],
-      turn: '', port: '', device_id: parsed.deviceId ?? '', listen: '',
-    });
-
+    // Профиль сохраняется в Connect.handleAdd по уникальному id сервера
+    // (id известен только после serverStore.add).
     onAdd({
       name,
       vpnName: parsed.vpnName,

@@ -44,7 +44,7 @@ export default function Settings({ onClose }: Props) {
     const all = serverStore.getAll();
     const srv = all.find(s => s.id === selectedServerStore.getId()) ?? all[0];
     if (!srv) return;
-    GetProfile(srv.name)
+    GetProfile(srv.id)
       .then(p => { if (p?.device_id) setDeviceId(p.device_id); })
       .catch(() => {});
   }, []);

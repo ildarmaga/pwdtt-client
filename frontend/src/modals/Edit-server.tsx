@@ -8,7 +8,8 @@ import Hash from './Hash';
 import { handleControlledPaste } from '../lib/utils/inputPaste';
 import { isPanelSubUrl } from '../lib/utils/wdttLink';
 import { toastStore } from '../lib/stores/toastStore';
-import { SaveProfile, DeleteProfile } from '../../wailsjs/go/backend/App';
+import { DeleteProfile } from '../../wailsjs/go/backend/App';
+import { saveServerProfile } from '../lib/utils/profileSync';
 
 interface Props {
   server: Server;
@@ -63,21 +64,15 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
       hashes,
       power,
     };
-    if (server.name !== updated.name) {
-      await DeleteProfile(server.name).catch(() => {});
-    }
-    await SaveProfile(updated.name, {
-      peer: updated.host,
-      password: updated.password,
-      hashes,
-      turn: '', port: '', device_id: server.deviceId ?? '', listen: '',
-    });
+    // Профиль на диске ключуется по неизменному id сервера, поэтому при
+    // переименовании старый файл удалять не нужно — id остаётся прежним.
+    await saveServerProfile(updated);
     onSave(updated);
     onClose();
   };
 
   const handleDelete = async () => {
-    await DeleteProfile(server.name).catch(() => {});
+    await DeleteProfile(server.id).catch(() => {});
     onDelete(server.id);
     onClose();
   };
