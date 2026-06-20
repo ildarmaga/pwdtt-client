@@ -18,15 +18,30 @@ const workersPerGroup = 9
 const WorkersPerGroup = workersPerGroup
 
 // groupPhaseOffset — фазовый сдвиг старта между группами. VK гасит ВСЕ аллокации
-// под одним call-credential пачкой при его истечении (~50–60 c). Если обе группы
-// стартуют одновременно, их креды стареют синхронно и умирают вместе → активных
-// воркеров проседает до 1–3 (рывок/лаг в игре). Сдвигая старт каждой следующей
-// группы на ~полжизни креда, добиваемся, что пока одна группа пересоздаётся,
-// другая держит туннель — агрегат не проваливается.
-const groupPhaseOffset = 25 * time.Second
+// под одним call-credential пачкой при его истечении (~60–90 c). Сдвиг ~полжизни
+// креда между группами, чтобы пока одна пересоздаётся, другая держит туннель.
+const groupPhaseOffset = 35 * time.Second
+
+// credPoolSizeForWorkers — число независимых VK call-credential на группу.
+// Формула как в anton48/vk-turn-proxy-ios (poolSizeForNumConns): при 9 воркерах
+// → 4 слота (~2–3 воркера на кред). Когда один кред истекает, умирают не все 9
+// воркеров группы, а только его слот — агрегат остаётся стабильным.
+func credPoolSizeForWorkers(n int) int {
+	if n <= 0 {
+		return 2
+	}
+	size := (n*2 + 4) / 5
+	if size < 2 {
+		size = 2
+	}
+	if size > n {
+		size = n
+	}
+	return size
+}
 
 // WorkerGroup:
-// Запускает 9 потоков с одними кредами. Ротации нет — работает до смерти воркеров.
+// Запускает N потоков с пулом call-credential (несколько кредов на группу).
 func WorkerGroup(
 	ctx context.Context,
 	groupID int,
@@ -93,52 +108,85 @@ func WorkerGroup(
 	if len(shortHash) > 8 {
 		shortHash = shortHash[:8]
 	}
-	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s...)", groupID, shortHash)
 
-	credStreamID := groupID * 100
-	var creds *Credentials
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		credsCtx, credsCancel := context.WithTimeout(context.Background(), 120*time.Second)
-		go func() {
-			select {
-			case <-ctx.Done():
-				credsCancel()
-			case <-credsCtx.Done():
+	// Лимит воркеров снят: запускаем всё запрошенное число потоков.
+	activeWorkerIDs := workerIDs
+	poolSize := credPoolSizeForWorkers(len(activeWorkerIDs))
+
+	// Пул call-credential: несколько независимых VK-кредов на группу (как credPool
+	// в anton48/vk-turn-proxy-ios). Воркеры распределены по слотам — при истечении
+	// одного креда умирает только его слот, не вся группа разом.
+	fetchCredSlot := func(slot int) (*Credentials, error) {
+		streamID := groupID*100 + slot
+		for {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
-		}()
-		user, pass, turnURLs, err := GetCreds(credsCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
-		credsCancel()
-		if err == nil {
-			creds = &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: credStreamID}
-			break
-		}
-		log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
-		if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
-			return
-		}
-		wait := 15 * time.Second
-		if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
-			wait = 65 * time.Second
-		}
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return
+			credsCtx, credsCancel := context.WithTimeout(context.Background(), 120*time.Second)
+			go func() {
+				select {
+				case <-ctx.Done():
+					credsCancel()
+				case <-credsCtx.Done():
+				}
+			}()
+			user, pass, turnURLs, err := GetCreds(credsCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+			credsCancel()
+			if err == nil {
+				return &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: streamID}, nil
+			}
+			log.Printf("[ГРУППА #%d] Ошибка кредов (слот %d): %v", groupID, slot, err)
+			if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
+				return nil, err
+			}
+			wait := 15 * time.Second
+			if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
+				wait = 65 * time.Second
+			}
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 	}
 
-	log.Printf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
+	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s..., pool=%d слотов)", groupID, shortHash, poolSize)
+	credSlots := make([]*Credentials, poolSize)
+	for s := 0; s < poolSize; s++ {
+		if s > 0 {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+		c, err := fetchCredSlot(s)
+		if err != nil {
+			return
+		}
+		credSlots[s] = c
+	}
+
+	log.Printf("[ГРУППА #%d] Креды OK, pool=%d, TURN: %v, %d воркеров",
+		groupID, poolSize, credSlots[0].TurnURLs, len(activeWorkerIDs))
 
 	if onTurnURLs != nil {
-		onTurnURLs(creds.TurnURLs)
+		seen := make(map[string]struct{})
+		var all []string
+		for _, c := range credSlots {
+			if c == nil {
+				continue
+			}
+			for _, u := range c.TurnURLs {
+				if _, ok := seen[u]; !ok {
+					seen[u] = struct{}{}
+					all = append(all, u)
+				}
+			}
+		}
+		onTurnURLs(all)
 	}
-
-	// Лимит воркеров снят: запускаем всё запрошенное число потоков независимо
-	// от того, сколько relay-хостов выдал VK.
-	activeWorkerIDs := workerIDs
 
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
@@ -188,7 +236,7 @@ func WorkerGroup(
 		}
 	}
 
-	refreshCreds := func(reason string) bool {
+	refreshCredSlot := func(slot int, reason string) bool {
 		refreshMu.Lock()
 		defer refreshMu.Unlock()
 
@@ -199,24 +247,25 @@ func WorkerGroup(
 			minGap = 30
 		}
 		if last > 0 && now-last < minGap {
-			log.Printf("[TURN] Креды уже обновлялись %d сек назад, ждём следующий retry (%s)", now-last, reason)
+			log.Printf("[TURN] Слот %d: креды уже обновлялись %d сек назад, ждём (%s)", slot, now-last, reason)
 			return false
 		}
 
-		getStreamCache(credStreamID).invalidate(credStreamID)
+		streamID := groupID*100 + slot
+		getStreamCache(streamID).invalidate(streamID)
 		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer refreshCancel()
-		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
 		if refreshErr != nil {
-			log.Printf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
+			log.Printf("[TURN] Слот %d: не удалось обновить креды после %s: %v", slot, reason, refreshErr)
 			return false
 		}
 
 		credsMu.Lock()
-		creds = &Credentials{User: u, Pass: p, TurnURLs: urls, CacheStreamID: credStreamID}
+		credSlots[slot] = &Credentials{User: u, Pass: p, TurnURLs: urls, CacheStreamID: streamID}
 		credsMu.Unlock()
 		lastCredRefresh.Store(time.Now().Unix())
-		log.Printf("[TURN] Креды обновлены после %s, TURN urls=%d", reason, len(urls))
+		log.Printf("[TURN] Слот %d: креды обновлены после %s, TURN urls=%d", slot, reason, len(urls))
 		return true
 	}
 
@@ -249,11 +298,15 @@ func WorkerGroup(
 	for i, wid := range activeWorkerIDs {
 		wg.Add(1)
 
-		// Stagger 1.2 s между воркерами: меньше одновременных TURN Allocate,
-		// не упираемся в квоту VK. Трафик всё равно идёт с первого READY+wg_config.
+		// Stagger: первые 6 воркеров — 1.2s (как раньше), остальные — медленнее
+		// (как slowStagger в anton48), чтобы не штурмовать VK Allocate.
 		workerDelay := time.Duration(i) * 1200 * time.Millisecond
+		if i >= 6 {
+			workerDelay = 6*1200*time.Millisecond + time.Duration(i-5)*3*time.Second
+		}
+		credSlot := i % poolSize
 
-		go func(wid int, delay time.Duration) {
+		go func(wid int, slot int, delay time.Duration) {
 			defer wg.Done()
 
 			if delay > 0 {
@@ -279,8 +332,13 @@ func WorkerGroup(
 				}
 
 				credsMu.RLock()
-				credsSnapshot := *creds
-				credsSnapshot.TurnURLs = cloneStringSlice(creds.TurnURLs)
+				slotCreds := credSlots[slot]
+				if slotCreds == nil {
+					credsMu.RUnlock()
+					return
+				}
+				credsSnapshot := *slotCreds
+				credsSnapshot.TurnURLs = cloneStringSlice(slotCreds.TurnURLs)
 				credsMu.RUnlock()
 
 				sessStart := time.Now()
@@ -348,7 +406,7 @@ func WorkerGroup(
 					attempt++
 					if turnAllocAttrMissing {
 						log.Printf("[ВОРКЕР #%d] [TURN] Allocate вернул неполный ответ, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
-						refreshCreds("TURN Allocate attribute-not-found")
+						refreshCredSlot(slot, "TURN Allocate attribute-not-found")
 					} else if turnCredRefreshNeeded {
 						isQuota := strings.Contains(errStrLower, "turn квота") ||
 							strings.Contains(errStrLower, "quota") ||
@@ -357,15 +415,11 @@ func WorkerGroup(
 							setQuotaBackoff(60)
 						}
 						log.Printf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
-						refreshCreds("TURN allocation error")
+						refreshCredSlot(slot, "TURN allocation error")
 					} else {
 						log.Printf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
-						// «all retransmissions failed» = VK-хост не отвечает на Allocate
-						// (мёртвый relay). relay-health уже уводит воркер на другой хост,
-						// но если в группе все URL мёртвые — после пары попыток обновляем
-						// креды, чтобы VK выдал свежий набор TURN-хостов.
 						if attempt >= 3 && strings.Contains(errStrLower, "retransmissions failed") {
-							refreshCreds("TURN Allocate: хост не отвечает")
+							refreshCredSlot(slot, "TURN Allocate: хост не отвечает")
 						}
 					}
 
@@ -406,7 +460,7 @@ func WorkerGroup(
 					return
 				}
 			}
-		}(wid, workerDelay)
+		}(wid, credSlot, workerDelay)
 	}
 
 	wg.Wait()

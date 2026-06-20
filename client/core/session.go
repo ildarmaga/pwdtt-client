@@ -31,7 +31,7 @@ const (
 	// НИКАКОЙ входящей активности (данные ИЛИ pong на keepalive) дольше этого срока,
 	// путь считается «чёрной дырой» и воркер убивается → пересоздаётся на здоровом
 	// relay (pickHealthyTurnURL). Без этого зомби-воркер жил бы до sessionReadTimeout.
-	consentTimeout = 30 * time.Second
+	consentTimeout = 90 * time.Second
 )
 
 // Handshake semaphore: limit concurrent DTLS handshakes (queue under load)
