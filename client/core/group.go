@@ -17,6 +17,37 @@ const workersPerGroup = 9
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
 const WorkersPerGroup = workersPerGroup
 
+// distinctRelayHosts считает число различных relay-хостов среди TURN URL.
+func distinctRelayHosts(urls []string) int {
+	if len(urls) == 0 {
+		return 0
+	}
+	seen := make(map[string]struct{}, len(urls))
+	for _, u := range urls {
+		if u == "" {
+			continue
+		}
+		seen[relayHostKey(u)] = struct{}{}
+	}
+	return len(seen)
+}
+
+// clampWorkersToURLs ограничивает число воркеров в группе под количество relay-хостов,
+// которые выдал VK. Если эндпоинтов мало (1–2), много воркеров наваливаются на них,
+// VK упирается в квоту одновременных TURN-аллокаций (error 486) и начинает «жать»
+// relay через ~16 с → шторм переподключений. ~3 воркера на хост держатся под квотой.
+// При 0 (неизвестно) или ≥3 хостах не зажимаем.
+func clampWorkersToURLs(distinctHosts, requested int) int {
+	if distinctHosts <= 0 || distinctHosts >= 3 {
+		return requested
+	}
+	limit := distinctHosts * 3 // 1 хост → 3, 2 хоста → 6
+	if limit >= requested {
+		return requested
+	}
+	return limit
+}
+
 // WorkerGroup:
 // Запускает 9 потоков с одними кредами. Ротации нет — работает до смерти воркеров.
 func WorkerGroup(
@@ -113,6 +144,17 @@ func WorkerGroup(
 
 	if onTurnURLs != nil {
 		onTurnURLs(creds.TurnURLs)
+	}
+
+	// Адаптивный лимит: если VK выдал мало relay-эндпоинтов, зажимаем число
+	// воркеров в группе, чтобы не упереться в квоту одновременных TURN-аллокаций.
+	activeWorkerIDs := workerIDs
+	if hosts := distinctRelayHosts(creds.TurnURLs); hosts > 0 {
+		if eff := clampWorkersToURLs(hosts, len(workerIDs)); eff < len(workerIDs) {
+			log.Printf("[ГРУППА #%d] VK выдал relay-хостов: %d — ограничиваю воркеров %d→%d (защита от квоты TURN error 486)",
+				groupID, hosts, len(workerIDs), eff)
+			activeWorkerIDs = workerIDs[:eff]
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -221,7 +263,7 @@ func WorkerGroup(
 		}()
 	}
 
-	for i, wid := range workerIDs {
+	for i, wid := range activeWorkerIDs {
 		wg.Add(1)
 
 		// Stagger 1.2 s между воркерами: меньше одновременных TURN Allocate,
