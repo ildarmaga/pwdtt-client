@@ -17,6 +17,14 @@ const workersPerGroup = 9
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
 const WorkersPerGroup = workersPerGroup
 
+// groupPhaseOffset — фазовый сдвиг старта между группами. VK гасит ВСЕ аллокации
+// под одним call-credential пачкой при его истечении (~50–60 c). Если обе группы
+// стартуют одновременно, их креды стареют синхронно и умирают вместе → активных
+// воркеров проседает до 1–3 (рывок/лаг в игре). Сдвигая старт каждой следующей
+// группы на ~полжизни креда, добиваемся, что пока одна группа пересоздаётся,
+// другая держит туннель — агрегат не проваливается.
+const groupPhaseOffset = 25 * time.Second
+
 // distinctRelayHosts считает число различных relay-хостов среди TURN URL.
 func distinctRelayHosts(urls []string) int {
 	if len(urls) == 0 {
@@ -76,6 +84,19 @@ func WorkerGroup(
 		log.Printf("[ГРУППА #%d] Ожидание сигнала от предыдущей группы...", groupID)
 		select {
 		case <-waitReady:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Фазовый сдвиг: десинхронизируем жизнь кредов разных групп, чтобы они не
+	// умирали пачкой одновременно (см. groupPhaseOffset). Группа #1 стартует
+	// сразу и сразу несёт трафик; следующие — со сдвигом.
+	if groupID > 1 {
+		offset := time.Duration(groupID-1) * groupPhaseOffset
+		log.Printf("[ГРУППА #%d] Фазовый сдвиг старта %s (десинхрон жизни кредов с другими группами)", groupID, offset)
+		select {
+		case <-time.After(offset):
 		case <-ctx.Done():
 			return
 		}
@@ -283,6 +304,9 @@ func WorkerGroup(
 
 			shouldGetConfig := getConfig
 			attempt := 0
+			// Постоянная фаза воркера: разносит 16-секундные рециклы внутри группы,
+			// чтобы воркеры не пересоздавались синхронной волной.
+			workerPhase := time.Duration(rand.Intn(3500)) * time.Millisecond
 
 			for {
 				if ctx.Err() != nil {
@@ -315,7 +339,7 @@ func WorkerGroup(
 					if sessLife < 60*time.Second {
 						base = 6 * time.Second
 					}
-					delay := base + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
+					delay := base + workerPhase + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
 					select {
 					case <-time.After(delay):
 					case <-ctx.Done():
