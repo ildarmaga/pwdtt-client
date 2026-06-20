@@ -6,8 +6,7 @@ import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
-import { toastStore } from '../lib/stores/toastStore';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, SetVKThroughTunnel, GetVKThroughTunnel } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile } from '../../wailsjs/go/backend/App';
 
 interface Props {
   onClose: () => void;
@@ -26,17 +25,11 @@ export default function Settings({ onClose }: Props) {
   const [deviceId, setDeviceId] = useState('');
   const [idCopied, setIdCopied] = useState(false);
 
-  // Sync autoStart / vkThroughTunnel from backend on open
+  // Sync autoStart from backend on open
   useEffect(() => {
     GetAutoStart().then(v => {
       if (v !== settings.autoStart) update('autoStart', v);
     });
-    GetVKThroughTunnel().then(v => {
-      if (v !== settings.vkThroughTunnel) {
-        update('vkThroughTunnel', v);
-        settingsStore.patch({ vkThroughTunnel: v });
-      }
-    }).catch(() => {});
   }, []);
 
   // ID устройства привязан к профилю выбранного сервера — показываем его.
@@ -173,37 +166,6 @@ export default function Settings({ onClose }: Props) {
           <div className="st-row">
             <span>Глобальные хеши</span>
             <button className={`st-toggle st-toggle--${settings.useGlobalHashes ? 'on' : 'off'}`} onClick={() => update('useGlobalHashes', !settings.useGlobalHashes)} />
-          </div>
-
-          <div className="st-row st-row--stack">
-            <div className="st-row-head">
-              <span>VK через туннель</span>
-              <button
-                className={`st-toggle st-toggle--${settings.vkThroughTunnel ? 'on' : 'off'}`}
-                onClick={async () => {
-                  const prev = settings.vkThroughTunnel;
-                  const next = !prev;
-                  update('vkThroughTunnel', next);
-                  settingsStore.patch({ vkThroughTunnel: next });
-                  try {
-                    await SetVKThroughTunnel(next);
-                    if (tunnelState === 'connected') {
-                      toastStore.show(next ? 'VK (login, лента, API) через VPN' : 'VK снова напрямую', 2500);
-                    }
-                  } catch {
-                    update('vkThroughTunnel', prev);
-                    settingsStore.patch({ vkThroughTunnel: prev });
-                    toastStore.show('Не удалось переключить маршрут VK', 3000);
-                  }
-                }}
-              />
-            </div>
-            <div className="st-row-hint">
-              {settings.vkThroughTunnel
-                ? 'login.vk.com и лента идут через VPN-сервер. TURN-транспорт туннеля — всегда напрямую.'
-                : 'По умолчанию VK в браузере напрямую. Включите, если провайдер режет login.vk.com.'}
-              {tunnelState === 'connected' ? ' Применяется сразу.' : ' Вступит при подключении.'}
-            </div>
           </div>
 
           <div className="st-row">

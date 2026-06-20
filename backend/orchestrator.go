@@ -577,7 +577,8 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		return fmt.Errorf("уже подключено")
 	}
 	o.lastParams = p
-	vkThroughTunnel.Store(p.VKThroughTunnel)
+	// VK через туннель — всегда включено нативно (тумблер убран из настроек).
+	vkThroughTunnel.Store(true)
 	o.resetWorkersLostState()
 	if !SoftReconnectPreserve() {
 		o.tunnelUp = false

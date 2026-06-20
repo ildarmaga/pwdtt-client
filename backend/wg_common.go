@@ -48,8 +48,11 @@ var (
 	wgGateway          string
 	vkExcludeInstalled bool        // транспорт+веб установлены напрямую (на коннекте)
 	vkWebDirect        bool        // веб-подсети сейчас напрямую (true=VK direct, false=через туннель)
-	vkThroughTunnel    atomic.Bool // желаемый режим от UI: true = VK через туннель
+	vkThroughTunnel    atomic.Bool // true = VK веб/API через туннель (всегда вкл нативно)
 )
+
+// VK-веб через туннель включён нативно и не настраивается из UI.
+func init() { vkThroughTunnel.Store(true) }
 
 // rememberWGGateway сохраняет шлюз для переключения маршрутов VK.
 func rememberWGGateway(gw string) {

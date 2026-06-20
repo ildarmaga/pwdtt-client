@@ -44,7 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hashes: ['', '', '', ''],
   useGlobalHashes: false,
   metricsRefreshSec: 0,
-  vkThroughTunnel: false,
+  vkThroughTunnel: true,
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [
