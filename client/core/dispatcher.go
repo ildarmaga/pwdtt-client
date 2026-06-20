@@ -32,16 +32,14 @@ func putPktBuf(b []byte) {
 
 const (
 	returnChBuf = 384
-
-	chunkSizeMin     = 4
-	chunkSizeDefault = 8
-	chunkSizeMax     = 24
-	chunkRttSlowMs   = 120.0
+	// sendChBuf — глубина общей очереди отправки. Все воркеры читают из неё;
+	// при кратковременной просадке числа живых воркеров (рециклинг VK-relay)
+	// пакеты копятся здесь, а не дропаются, пока буфер не переполнен.
+	sendChBuf = 1024
 )
 
 type WorkerSlot struct {
-	ID     int
-	SendCh chan []byte
+	ID int
 }
 
 type Dispatcher struct {
@@ -49,19 +47,25 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
-	rrIndex    int
-	rrCount    int // сколько пакетов отправлено в текущий worker (0..chunkSize-1)
-	ReturnCh   chan []byte
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	stats      *Stats
+	// SendCh — ОБЩАЯ очередь отправки (app→туннель). Все воркеры читают из неё
+	// (work-stealing): кто свободен, тот забирает следующий пакет. Смерть одного
+	// воркера не теряет «полосу» — остальные продолжают качать из той же очереди,
+	// поэтому туннель не прерывается при рециклинге VK-relay. Модель эталонного
+	// vk-turn-proxy (один sendCh на все conn'ы) вместо прежнего пуша пачками в
+	// канал конкретного воркера (где смерть воркера = дроп его пакетов).
+	SendCh   chan []byte
+	ReturnCh chan []byte
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	stats    *Stats
 }
 
 func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
 	d := &Dispatcher{
 		localConn: localConn,
+		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
 		ctx:       dctx,
 		cancel:    dcancel,
@@ -72,30 +76,6 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) 
 	go d.readLoop()
 	go d.writeLoop()
 	return d
-}
-
-func (d *Dispatcher) effectiveChunkSize() int {
-	chunk := chunkSizeDefault
-	if d.stats == nil {
-		return chunk
-	}
-	turnMs := float64(atomic.LoadInt64(&d.stats.TurnRTTNs)) / 1e6
-	dtlsMs := float64(atomic.LoadInt64(&d.stats.DTLSHSNs)) / 1e6
-	pathMs := turnMs + dtlsMs
-	if pathMs >= chunkRttSlowMs {
-		chunk = chunkSizeDefault + int((pathMs-chunkRttSlowMs)/15)
-	}
-	active := atomic.LoadInt32(&d.stats.ActiveConnections)
-	if active > 0 && active <= 9 && chunk < 16 {
-		chunk = 16
-	}
-	if chunk > chunkSizeMax {
-		chunk = chunkSizeMax
-	}
-	if chunk < chunkSizeMin {
-		chunk = chunkSizeMin
-	}
-	return chunk
 }
 
 func (d *Dispatcher) Shutdown() {
@@ -120,23 +100,20 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 		}
 	}
 	remaining := len(d.workers)
-	// Подстраховка: если текущий rrIndex вылез за границу после удаления
-	if d.rrIndex >= remaining && remaining > 0 {
-		d.rrIndex = d.rrIndex % remaining
-	}
-	d.rrCount = 0
 	d.mu.Unlock()
 	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
-// readLoop читает WireGuard-пакеты и распределяет по workers chunk'ами.
+// readLoop читает WireGuard-пакеты и кладёт их в ОБЩУЮ очередь SendCh.
 //
-// Логика: отправляем chunkSize подряд пакетов в один worker, потом переходим
-// к следующему. Если текущий worker перегружен (канал полный) — немедленно
-// ищем свободный worker и начинаем новый chunk на нём. Это гарантирует:
-//   - В рамках chunk пакеты идут через один TURN relay → in-order delivery
-//   - Между chunks — разные relay → максимальная агрегатная скорость
-//   - Нет блокировки, нет буферизации, нет дополнительного latency
+// Все воркеры конкурентно читают из этой очереди (work-stealing): свободный
+// воркер забирает следующий пакет. Смерть одного воркера (рециклинг VK-relay)
+// не теряет «полосу» — остальные продолжают качать из той же очереди, поэтому
+// туннель не прерывается. Это модель эталонного vk-turn-proxy (один sendCh на
+// все conn'ы) вместо прежнего пуша пачками в канал конкретного воркера.
+//
+// Порядок пакетов между воркерами не гарантируется, но WireGuard устойчив к
+// переупорядочиванию (anti-replay window), поэтому это допустимо.
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
@@ -160,53 +137,16 @@ func (d *Dispatcher) readLoop() {
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
 
-		d.mu.Lock()
-		nw := len(d.workers)
-		if nw == 0 {
-			d.mu.Unlock()
-			putPktBuf(pkt)
-			continue
-		}
-
-		sent := false
-		idx := d.rrIndex % nw
-
-		// Пробуем текущий worker (chunk affinity)
-		w := d.workers[idx]
 		select {
-		case w.SendCh <- pkt:
-			sent = true
-			d.rrCount++
-			if d.rrCount >= d.effectiveChunkSize() {
-				d.rrIndex = (idx + 1) % nw
-				d.rrCount = 0
-			}
-		default:
-			// Текущий worker перегружен — ищем свободный, начинаем новый chunk
-			for i := 1; i < nw; i++ {
-				altIdx := (idx + i) % nw
-				select {
-				case d.workers[altIdx].SendCh <- pkt:
-					sent = true
-					d.rrIndex = altIdx
-					d.rrCount = 1 // первый пакет нового chunk'а уже отправлен
-				default:
-				}
-				if sent {
-					break
-				}
-			}
-		}
-
-		if !sent {
-			// Все workers перегружены — сдвигаем указатель, пакет дропается
-			d.rrIndex = (idx + 1) % nw
-			d.rrCount = 0
-			putPktBuf(pkt)
-		} else {
+		case d.SendCh <- pkt:
 			atomic.AddInt64(&d.stats.TotalBytesUp, int64(n))
+		case <-d.ctx.Done():
+			putPktBuf(pkt)
+			return
+		default:
+			// Очередь переполнена (все воркеры залипли/мертвы) — дроп.
+			putPktBuf(pkt)
 		}
-		d.mu.Unlock()
 	}
 }
 

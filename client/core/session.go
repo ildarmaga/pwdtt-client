@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	workerSendBuf      = 128
 	sessionReadTimeout = 30 * time.Minute // Increased from 60s to 30min
 	readBufSize        = 1600
 	socketBufSize      = 625 * 1024
@@ -358,11 +357,9 @@ func RunSession(
 	becameReady = true
 	readyAt = time.Now()
 
-	// Регистрация в диспетчере
-	slot := &WorkerSlot{
-		ID:     sessionID,
-		SendCh: make(chan []byte, workerSendBuf),
-	}
+	// Регистрация в диспетчере (только для учёта/логов — отправка идёт
+	// через общую очередь d.SendCh).
+	slot := &WorkerSlot{ID: sessionID}
 	d.Register(slot)
 	defer d.Unregister(slot)
 
@@ -412,7 +409,9 @@ func RunSession(
 		}
 	}()
 
-	// Writer: dispatcher → DTLS
+	// Writer: общая очередь диспетчера → DTLS. Все воркеры читают из одного
+	// d.SendCh (work-stealing): свободный воркер забирает следующий пакет, и
+	// смерть соседнего воркера не создаёт паузы в туннеле.
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
@@ -420,7 +419,7 @@ func RunSession(
 			select {
 			case <-sessCtx.Done():
 				return
-			case pkt, ok := <-slot.SendCh:
+			case pkt, ok := <-d.SendCh:
 				if !ok {
 					return
 				}
