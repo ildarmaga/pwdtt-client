@@ -7,7 +7,7 @@
 <p align="center">
   Десктопный VPN-клиент, который туннелирует трафик через TURN-серверы VK,<br>
   маскируя соединение под зашифрованный медиатрафик звонка.<br>
-  <sub>Форк <a href="https://github.com/amurcanov/proxy-turn-vk-android">proxy-turn-vk-android</a> — версия для ПК</sub>
+  <sub>Модифицированная версия <a href="https://github.com/luminescq/PWDTT">PWDTT</a> (Copyright © 2026 <a href="https://github.com/luminescq">luminescq</a>) — <a href="https://github.com/ildarmaga/pwdtt-client">WDTT Desktop Client</a></sub>
 </p>
 
 <p align="center">
@@ -49,7 +49,7 @@ sudo pacman -S wireguard-tools libayatana-appindicator
 your_user ALL=(ALL) NOPASSWD: /usr/bin/ip, /usr/bin/wg
 ```
 
-Скачайте бинарник из [Releases](https://github.com/luminescq/PWDTT/releases) и запустите:
+Скачайте бинарник из [Releases WDTT](https://github.com/ildarmaga/wdtt/releases/latest) (`pwdtt-client-*`) или из [Releases этого репозитория](https://github.com/ildarmaga/pwdtt-client/releases):
 ```bash
 chmod +x pwdtt-linux-amd64
 ./pwdtt-linux-amd64
@@ -57,7 +57,7 @@ chmod +x pwdtt-linux-amd64
 
 ### Windows
 
-Скачайте `pwdtt-windows-amd64.exe` из [Releases](https://github.com/luminescq/PWDTT/releases) и запустите. Драйвер WireGuard (wintun) встроен.
+Скачайте `pwdtt-client-windows-amd64.exe` из [Releases WDTT](https://github.com/ildarmaga/wdtt/releases/latest) или [Releases pwdtt-client](https://github.com/ildarmaga/pwdtt-client/releases) и запустите. Драйвер WireGuard (wintun) встроен.
 
 ---
 
@@ -102,8 +102,8 @@ wdtt://1.2.3.4:56000:56001:0:mypassword:AbCdEfGh,XyZ12345#Мой сервер
 sudo apt install libayatana-appindicator3-dev pkg-config gcc
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-git clone https://github.com/luminescq/PWDTT
-cd PWDTT
+git clone https://github.com/ildarmaga/pwdtt-client
+cd pwdtt-client
 wails build -platform linux/amd64 -o pwdtt-linux-amd64
 # → build/bin/pwdtt-linux-amd64
 ```
@@ -123,4 +123,8 @@ wails build -platform windows/amd64
 
 ## Лицензия
 
-Этот проект распространяется под лицензией GNU General Public License v3.0.
+Copyright © 2026 [luminescq](https://github.com/luminescq). Модифицированная версия — Copyright © 2026 [ildarmaga](https://github.com/ildarmaga).
+
+Этот проект распространяется под лицензией **GNU General Public License v3.0** — см. [LICENSE](LICENSE) и [CREDITS.md](CREDITS.md).
+
+Оригинальный проект: [luminescq/PWDTT](https://github.com/luminescq/PWDTT)
