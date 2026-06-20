@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -447,6 +449,14 @@ func RunSession(
 				if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
 					continue
 				}
+				// Чистый EOF после READY = VK штатно рециклит TURN-allocation
+				// (call-креды живут ~16 c). Это не сбой: воркер тут же
+				// переподключится на новый relay. Логируем спокойным INFO
+				// (без слова «Ошибка», чтобы не красить в ERROR).
+				if isRoutineRelayClose(readErr) {
+					log.Printf("[ВОРКЕР #%d] relay=%s переподключение (VK обновил relay)", sessionID, relayHost)
+					return
+				}
 				log.Printf("[ВОРКЕР #%d] Ошибка Reader relay=%s: %v", sessionID, relayHost, readErr)
 				return
 			}
@@ -477,4 +487,17 @@ func RunSession(
 	_ = pipeA.Close()
 	_ = pipeB.Close()
 	return configDelivered, nil
+}
+
+// isRoutineRelayClose — штатное закрытие relay удалённой стороной (VK рециклит
+// TURN-allocation). Не сбой: воркер переподключается на свежий relay.
+func isRoutineRelayClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "eof") || strings.Contains(low, "use of closed")
 }
