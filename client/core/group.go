@@ -195,12 +195,14 @@ func WorkerGroup(
 		return true
 	}
 
-	// Следующая группа стартует после wg_config или через 500 ms (что раньше).
+	// Следующая группа стартует после wg_config или через 2 s (как раньше).
+	// Не раньше — иначе обе группы шлют TURN Allocate одновременно и упираются
+	// в квоту VK (error 486), из-за чего relay убиваются за ~16 s.
 	if signalReady != nil {
 		go func() {
-			ticker := time.NewTicker(50 * time.Millisecond)
+			ticker := time.NewTicker(100 * time.Millisecond)
 			defer ticker.Stop()
-			timer := time.NewTimer(500 * time.Millisecond)
+			timer := time.NewTimer(2000 * time.Millisecond)
 			defer timer.Stop()
 			for {
 				select {
@@ -222,8 +224,9 @@ func WorkerGroup(
 	for i, wid := range workerIDs {
 		wg.Add(1)
 
-		// Stagger: первые воркеры быстрее — трафик через wg-turn с первого READY.
-		workerDelay := time.Duration(i) * 450 * time.Millisecond
+		// Stagger 1.2 s между воркерами: меньше одновременных TURN Allocate,
+		// не упираемся в квоту VK. Трафик всё равно идёт с первого READY+wg_config.
+		workerDelay := time.Duration(i) * 1200 * time.Millisecond
 
 		go func(wid int, delay time.Duration) {
 			defer wg.Done()
