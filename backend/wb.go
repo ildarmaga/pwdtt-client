@@ -100,7 +100,9 @@ func (m *WBManager) Connect(room string) error {
 		"--socks-host", "127.0.0.1",
 		"--socks-port", strconv.Itoa(m.socksPort),
 		"--name", "WDTT",
+		"--tun",
 	)
+	hideConsoleWindow(cmd) // прячем окно консоли подпроцесса (Windows)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -157,6 +159,9 @@ func (m *WBManager) readOutput(r io.Reader) {
 			strings.Contains(line, "STATUS:TUNNEL_CONNECTED"):
 			runtime.EventsEmit(m.ctx, "state_changed", "running")
 			m.emitLog("STATUS", fmt.Sprintf("WB туннель активен · SOCKS5 %s", m.SocksAddr()))
+		case strings.Contains(line, "TUN ACTIVE"),
+			strings.Contains(line, "STATUS:TUN_ACTIVE"):
+			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
 		default:
 			m.emitLog("GO", line)
 		}
