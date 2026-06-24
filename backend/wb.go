@@ -90,6 +90,11 @@ func (m *WBManager) Connect(room string) error {
 	if err != nil {
 		return err
 	}
+	// Кладём wintun.dll рядом с joiner-ом, иначе tun2socks не поднимет TUN
+	// (на Windows). На других ОС — no-op.
+	if err := placeWintunNextTo(filepath.Dir(bin)); err != nil {
+		m.emitLog("WARN", fmt.Sprintf("wintun.dll не распакован (TUN может не подняться): %v", err))
+	}
 
 	m.emitLog("INFO", "Подключение WB Stream…")
 	m.emitLog("GO", fmt.Sprintf("wb: room %s · socks 127.0.0.1:%d", maskRoom(room), m.socksPort))
@@ -155,13 +160,14 @@ func (m *WBManager) readOutput(r io.Reader) {
 		switch {
 		case strings.HasPrefix(line, "STATS "):
 			m.handleStats(line)
-		case strings.Contains(line, "TUNNEL CONNECTED"),
-			strings.Contains(line, "STATUS:TUNNEL_CONNECTED"):
+		case strings.Contains(line, "STATUS:TUNNEL_CONNECTED"):
 			runtime.EventsEmit(m.ctx, "state_changed", "running")
 			m.emitLog("STATUS", fmt.Sprintf("WB туннель активен · SOCKS5 %s", m.SocksAddr()))
 		case strings.Contains(line, "TUN ACTIVE"),
 			strings.Contains(line, "STATUS:TUN_ACTIVE"):
 			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
+		case strings.Contains(line, "STATUS:TUN_UNAVAILABLE"):
+			m.emitLog("WARN", "TUN недоступен — работает только SOCKS5 (проверьте права администратора)")
 		default:
 			m.emitLog("GO", line)
 		}

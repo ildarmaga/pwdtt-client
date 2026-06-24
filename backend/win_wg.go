@@ -44,6 +44,19 @@ func extractWintun() error {
 	return os.WriteFile(dst, wintunDLL, 0644)
 }
 
+// placeWintunNextTo writes the embedded wintun.dll into dir so a child process
+// (the wbt-joiner) running from that directory can load it via LoadLibrary.
+func placeWintunNextTo(dir string) error {
+	if len(wintunDLL) == 0 {
+		return fmt.Errorf("wintun.dll не встроен")
+	}
+	dst := filepath.Join(dir, "wintun.dll")
+	if fi, err := os.Stat(dst); err == nil && fi.Size() == int64(len(wintunDLL)) {
+		return nil
+	}
+	return os.WriteFile(dst, wintunDLL, 0644)
+}
+
 func wgTunnelActive() bool { return activeDevice != nil }
 
 func applyWGConfig(conf string, turnIPs []string) error {

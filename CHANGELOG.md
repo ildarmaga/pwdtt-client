@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.49] — 2026-06-24
+
+### WB Stream — фикс регресса TUN (wintun.dll) + защита от падения
+- **Исправлено падение WB на Windows.** В 0.3.48 при включённом TUN `wbt-joiner` падал с `wintun.dll could not be found` (tun2socks `engine.Start` делает `fatal` → процесс умирал, WB отваливался целиком). Теперь `wintun.dll` распаковывается рядом с joiner-ом (тот же DLL, что и для VK WireGuard).
+- **Fail-safe для TUN.** Перед поднятием TUN joiner проверяет доступность (Windows: загрузка `wintun.dll`; Linux: root). Если недоступно — **остаётся рабочий SOCKS5**, процесс больше не падает. В логах: «TUN недоступен — работает только SOCKS5».
+- Убрано двойное событие статуса «Туннель активен» (обрабатываем только машинную строку `STATUS:`).
+
 ## [0.3.48] — 2026-06-24
 
 ### WB Stream — полный VPN (TUN), без отдельного окна
