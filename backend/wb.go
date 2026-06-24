@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"pwdtt-desktop/backend/wbjoiner"
@@ -22,10 +23,12 @@ import (
 // подпроцессом, поднимает локальный SOCKS5 и транслирует его вывод в
 // Wails-события (log / state_changed / tunnel_stats), как VK-оркестратор.
 type WBManager struct {
-	ctx  context.Context
-	mu   sync.Mutex
-	cmd  *exec.Cmd
-	stop bool
+	ctx   context.Context
+	mu    sync.Mutex
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	done  chan struct{}
+	stop  bool
 
 	socksPort int
 }
@@ -112,22 +115,33 @@ func (m *WBManager) Connect(room string) error {
 	if err != nil {
 		return err
 	}
+	// stdin используется для graceful-shutdown: закрытие пайпа просит joiner
+	// корректно снять TUN/маршруты (на Windows SIGTERM недоступен).
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
 		runtime.EventsEmit(m.ctx, "state_changed", "error")
 		return fmt.Errorf("не удалось запустить WB-joiner: %w", err)
 	}
 
+	done := make(chan struct{})
 	m.mu.Lock()
 	m.cmd = cmd
+	m.stdin = stdin
+	m.done = done
 	m.mu.Unlock()
 
 	go m.readOutput(stdout)
 	go func() {
 		_ = cmd.Wait()
+		close(done)
 		m.mu.Lock()
 		stopped := m.stop
 		m.cmd = nil
+		m.stdin = nil
 		m.mu.Unlock()
 		if !stopped {
 			m.emitLog("WARN", "WB туннель завершился")
@@ -138,13 +152,32 @@ func (m *WBManager) Connect(room string) error {
 	return nil
 }
 
-// Disconnect останавливает WBT-joiner.
+// Disconnect останавливает WBT-joiner. Сначала просит его корректно
+// завершиться (закрываем stdin → joiner снимает TUN/маршруты), и только
+// если он не успел — убиваем принудительно. Это критично на Windows:
+// жёсткий Kill оставил бы wintun-адаптер и default-маршруты, и интернет
+// остался бы сломанным после отключения.
 func (m *WBManager) Disconnect() {
 	m.mu.Lock()
 	m.stop = true
 	cmd := m.cmd
+	stdin := m.stdin
+	done := m.done
 	m.mu.Unlock()
-	if cmd != nil && cmd.Process != nil {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	if stdin != nil {
+		_, _ = io.WriteString(stdin, "stop\n")
+		_ = stdin.Close()
+	}
+	if done == nil {
+		_ = cmd.Process.Kill()
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
 		_ = cmd.Process.Kill()
 	}
 }
@@ -168,6 +201,9 @@ func (m *WBManager) readOutput(r io.Reader) {
 			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
 		case strings.Contains(line, "STATUS:TUN_UNAVAILABLE"):
 			m.emitLog("WARN", "TUN недоступен — работает только SOCKS5 (проверьте права администратора)")
+		case strings.Contains(line, "STATUS:SOCKS_BIND_FAILED"):
+			m.emitLog("ERROR", fmt.Sprintf("Порт SOCKS5 %s занят — отключитесь и подключитесь заново", m.SocksAddr()))
+			runtime.EventsEmit(m.ctx, "state_changed", "error")
 		default:
 			m.emitLog("GO", line)
 		}
