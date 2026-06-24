@@ -201,12 +201,36 @@ func (m *WBManager) readOutput(r io.Reader) {
 			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
 		case strings.Contains(line, "STATUS:TUN_UNAVAILABLE"):
 			m.emitLog("WARN", "TUN недоступен — работает только SOCKS5 (проверьте права администратора)")
+		case strings.Contains(line, "STATUS:SOCKS_PORT:"):
+			m.handleSocksPort(line)
 		case strings.Contains(line, "STATUS:SOCKS_BIND_FAILED"):
 			m.emitLog("ERROR", fmt.Sprintf("Порт SOCKS5 %s занят — отключитесь и подключитесь заново", m.SocksAddr()))
 			runtime.EventsEmit(m.ctx, "state_changed", "error")
 		default:
 			m.emitLog("GO", line)
 		}
+	}
+}
+
+// handleSocksPort обновляет фактический порт SOCKS5, который joiner выбрал
+// (при занятом порте он берёт свободный сам). Порт внутренний — его использует
+// tun2socks внутри joiner-а, — поэтому достаточно отразить его в UI/логах.
+func (m *WBManager) handleSocksPort(line string) {
+	idx := strings.LastIndex(line, "STATUS:SOCKS_PORT:")
+	if idx < 0 {
+		return
+	}
+	portStr := strings.TrimSpace(line[idx+len("STATUS:SOCKS_PORT:"):])
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 {
+		return
+	}
+	m.mu.Lock()
+	changed := port != m.socksPort
+	m.socksPort = port
+	m.mu.Unlock()
+	if changed {
+		m.emitLog("INFO", fmt.Sprintf("SOCKS5 порт занят — joiner использует свободный %d", port))
 	}
 }
 
