@@ -240,6 +240,22 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, capt
 
 // isRetryableVKCallsError — transient VK Calls failures (error 10, network blips).
 // Legacy fallback uses login.vk.ru which is blocked on many whitelisted ISPs.
+func isVKParticipantFlood(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "participant.check.flood")
+}
+
+func isVKBrokenToken(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "Access token is broken") ||
+		strings.Contains(s, "anonym_token.not_found")
+}
+
 func isRetryableVKCallsError(err error) bool {
 	if err == nil {
 		return false
@@ -270,6 +286,12 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 				return user, pass, addrs, nil
 			}
 			log.Printf("[STREAM %d] [VK Auth] Cookie path failed: %v", streamID, err)
+			if isVKParticipantFlood(err) {
+				return "", "", nil, fmt.Errorf("VK flood: слишком много join к этому звонку — создайте новый hash и подождите 15–30 мин (%w)", err)
+			}
+			if isVKBrokenToken(err) || strings.Contains(err.Error(), "cookies expired") || strings.Contains(err.Error(), "empty access_token") {
+				return "", "", nil, err
+			}
 		}
 	} else {
 		log.Printf("[STREAM %d] [VK Auth] Cookies disabled — anonymous path", streamID)
@@ -299,6 +321,9 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 		if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
 			return "", "", nil, err
 		}
+		if isVKBrokenToken(err) {
+			return "", "", nil, fmt.Errorf("VK okcdn отклонил anonymous token — включите cookies (remixsid) или создайте новый звонок: %w", err)
+		}
 		if isRetryableVKCallsError(err) && attempt+1 < vkCallsRetryLimit {
 			log.Printf("[STREAM %d] [VK Auth] VK Calls retryable error: %v", streamID, err)
 			continue
@@ -307,6 +332,10 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 	}
 
 	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v", streamID, vkCallsErr)
+
+	if isVKBrokenToken(vkCallsErr) {
+		return "", "", nil, fmt.Errorf("VK anonymous join закрыт на okcdn — нужны cookies (remixsid): %w", vkCallsErr)
+	}
 
 	log.Printf("[STREAM %d] [VK Auth] falling back to legacy (login.vk.ru)...", streamID)
 

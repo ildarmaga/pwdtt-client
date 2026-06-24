@@ -15,7 +15,7 @@ type vkCookieEntry struct {
 	Value string `json:"value"`
 }
 
-func vkCookiesPath() string {
+var vkCookiesPath = func() string {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base = os.Getenv("HOME")
@@ -85,7 +85,11 @@ func SaveVKCookiesJSON(raw []byte) error {
 		return err
 	}
 	invalidateVKCookieStatusCache()
-	return os.WriteFile(vkCookiesPath(), raw, 0600)
+	if err := os.WriteFile(vkCookiesPath(), raw, 0600); err != nil {
+		return err
+	}
+	// Saving cookies implies cookie auth (v0.3.41 behavior).
+	return SetVKUseCookies(true)
 }
 
 // ClearVKCookies removes stored VK cookies.
@@ -101,7 +105,10 @@ func ClearVKCookies() error {
 // VKCookiesStatus reports whether remixsid is configured and still valid.
 func VKCookiesStatus() (ok bool, hint string) {
 	if !VKUseCookies() {
-		return false, "Cookies выключены — используется анонимный вход в VK."
+		if header, err := LoadVKCookieHeader(); err == nil && header != "" && vkSettingsExplicit.Load() && !vkUseCookies.Load() {
+			return false, "Cookies выключены в настройках — анонимный вход в VK не работает."
+		}
+		return false, "Cookies не заданы — анонимный вход в VK может не работать."
 	}
 	header, err := LoadVKCookieHeader()
 	if err != nil || header == "" {

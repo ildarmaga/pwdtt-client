@@ -11,7 +11,10 @@ type vkAuthSettings struct {
 	UseCookies bool `json:"use_cookies"`
 }
 
-var vkUseCookies atomic.Bool
+var (
+	vkUseCookies       atomic.Bool
+	vkSettingsExplicit atomic.Bool
+)
 
 var vkSettingsPath = func() string {
 	base, err := os.UserConfigDir()
@@ -30,7 +33,18 @@ func loadVKAuthSettings() {
 	if json.Unmarshal(raw, &s) != nil {
 		return
 	}
+	vkSettingsExplicit.Store(true)
 	vkUseCookies.Store(s.UseCookies)
+}
+
+func initVKAuthDefaults() {
+	if vkSettingsExplicit.Load() {
+		return
+	}
+	// v0.3.41 compat: cookies on disk → cookie auth by default (anonymous join dead at okcdn).
+	if header, err := LoadVKCookieHeader(); err == nil && header != "" {
+		vkUseCookies.Store(true)
+	}
 }
 
 func saveVKAuthSettings(useCookies bool) error {
@@ -47,15 +61,36 @@ func saveVKAuthSettings(useCookies bool) error {
 
 func init() {
 	loadVKAuthSettings()
+	initVKAuthDefaults()
 }
 
-// VKUseCookies reports whether remixsid cookie auth is preferred over anonymous join.
+// VKUseCookies reports whether remixsid cookie auth is enabled (explicit or default).
 func VKUseCookies() bool {
+	return vkUseCookiesEffective()
+}
+
+func vkUseCookiesEffective() bool {
+	header, err := LoadVKCookieHeader()
+	if err != nil || header == "" {
+		return false
+	}
+	if !vkSettingsExplicit.Load() {
+		return true
+	}
 	return vkUseCookies.Load()
 }
 
-// SetVKUseCookies toggles cookie-based VK auth (when false, anonymous paths are used).
+// VKUseCookiesExplicit returns the stored toggle (false when user never saved settings).
+func VKUseCookiesExplicit() bool {
+	if !vkSettingsExplicit.Load() {
+		return false
+	}
+	return vkUseCookies.Load()
+}
+
+// SetVKUseCookies toggles cookie-based VK auth.
 func SetVKUseCookies(v bool) error {
 	vkUseCookies.Store(v)
+	vkSettingsExplicit.Store(true)
 	return saveVKAuthSettings(v)
 }

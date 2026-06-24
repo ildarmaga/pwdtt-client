@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.43] — 2026-06-24
+
+### Исправлено
+- **VK auth регрессия v0.3.42:** если `cookies-vk.json` есть, cookie-путь снова включён по умолчанию (как v0.3.41). Toggle «VK cookies» только для явного opt-out.
+- **Fail-fast:** при `participant.check.flood` и `Access token is broken` клиент больше не гоняет anonymous/legacy/captcha — сразу понятная ошибка (новый hash + пауза / нужны cookies).
+- Сохранение cookies автоматически включает cookie-auth.
+
 ## [0.3.42] — 2026-06-24
 
 ### VK auth
