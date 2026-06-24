@@ -99,7 +99,6 @@ func getVKCredsViaVKCallsPath(ctx context.Context, linkID string, streamID int) 
 		return "", "", nil, fmt.Errorf("step2 parse secret: %w", err)
 	}
 	log.Printf("[STREAM %d] [VK Calls] step2 OK user_id=%s", streamID, userIDStr)
-	okJoinLink := vkOKJoinLink(linkID, resp2)
 
 	step3URL := fmt.Sprintf(
 		"https://%s/method/messages.getAnonymCallToken?v=%s&anonymous_token=%s&device_id=%s&link=%s&name=%s&user_id=%s&secret=%s&lang=en",
@@ -116,21 +115,11 @@ func getVKCredsViaVKCallsPath(ctx context.Context, linkID string, streamID int) 
 	if err != nil {
 		return "", "", nil, fmt.Errorf("step3 parse: %w (resp=%v)", err, truncResp(resp3))
 	}
-	if jl := vkOKJoinLink(linkID, resp3); jl != linkID {
-		okJoinLink = jl
-	}
 	log.Printf("[STREAM %d] [VK Calls] step3 OK", streamID)
 
-	joinLink := okJoinLink
-	if joinLink == "" {
-		joinLink = linkID
-	}
-	if joinLink != linkID {
-		log.Printf("[STREAM %d] [VK Calls] ok_join_link=%s (raw link id=%s)", streamID, joinLink, linkID)
-	}
-
+	okDeviceID := uuid.New().String()
 	step4URL := "https://calls.okcdn.ru/fb.do?session_data=" +
-		neturl.QueryEscape(fmt.Sprintf(`{"version":3,"device_id":"%s","client_version":"1.0.1","client_type":"SDK_JS","auth_token":%q}`, deviceID, okAnonymToken)) +
+		neturl.QueryEscape(fmt.Sprintf(`{"version":2,"device_id":"%s","client_version":"1.0.1"}`, okDeviceID)) +
 		"&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA"
 	resp4, err := doRequest(step4URL)
 	if err != nil {
@@ -143,15 +132,12 @@ func getVKCredsViaVKCallsPath(ctx context.Context, linkID string, streamID int) 
 	log.Printf("[STREAM %d] [VK Calls] step4 OK", streamID)
 
 	step5URL := fmt.Sprintf(
-		"https://calls.okcdn.ru/fb.do?joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s",
-		neturl.QueryEscape(joinLink), neturl.QueryEscape(okAnonymToken), neturl.QueryEscape(sessionKey),
+		"https://calls.okcdn.ru/fb.do?joinLink=%s&isVideo=false&protocolVersion=5&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s",
+		linkID, okAnonymToken, sessionKey,
 	)
 	resp5, err := doRequest(step5URL)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("step5 vchat.joinConversationByLink: %w", err)
-	}
-	if okErr := vkOKCDNError(resp5); okErr != "" {
-		return "", "", nil, fmt.Errorf("step5 vchat.joinConversationByLink: %s", okErr)
 	}
 
 	user, err := extractStrFromResp(resp5, "turn_server", "username")

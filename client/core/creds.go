@@ -282,7 +282,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 		if err != nil || cookieHeader == "" {
 			return "", "", nil, fmt.Errorf("VK cookies включены, но remixsid не найден — сохраните cookies в настройках")
 		}
-		log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid)...", streamID)
+		log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid, cookies-only)...", streamID)
 		user, pass, addrs, err := getVKCredsViaCookies(ctx, link, streamID, cookieHeader)
 		if err == nil {
 			log.Printf("[STREAM %d] [VK Auth] Cookie path succeeded", streamID)
@@ -294,9 +294,8 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 		}
 		return "", "", nil, fmt.Errorf("VK cookies: %w", err)
 	}
-	log.Printf("[STREAM %d] [VK Auth] Cookies disabled — anonymous path", streamID)
 
-	// Prefer VK Calls path via api.vk.me (works when login.vk.ru is blocked).
+	// v0.3.40 anonymous flow: VK Calls first, then legacy login.vk.ru.
 	var vkCallsErr error
 	for attempt := 0; attempt < vkCallsRetryLimit; attempt++ {
 		if attempt > 0 {
@@ -328,6 +327,9 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 	}
 
 	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v", streamID, vkCallsErr)
+	if isRetryableVKCallsError(vkCallsErr) {
+		return "", "", nil, fmt.Errorf("VK Calls path exhausted retries: %w", vkCallsErr)
+	}
 
 	log.Printf("[STREAM %d] [VK Auth] falling back to legacy (login.vk.ru)...", streamID)
 
@@ -367,6 +369,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 			}
 		}
 	}
+
 
 	return "", "", nil, fmt.Errorf("all VK credentials failed: %w", lastErr)
 }
@@ -450,11 +453,10 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 
 	// Step 2: getCallPreview (mimics real VK client behavior)
 	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&fields=photo_200&access_token=%s", link, token1)
-	previewResp, err := doRequest(data, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id="+creds.ClientID)
+	_, err = doRequest(data, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id="+creds.ClientID)
 	if err != nil {
 		log.Printf("[STREAM %d] [VK Auth] Warning: getCallPreview failed: %v", streamID, err)
 	}
-	okJoinLink := vkOKJoinLink(link, previewResp)
 
 	vkDelayRandom(200, 400)
 
@@ -508,25 +510,13 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		if !okLoop {
 			return "", "", nil, fmt.Errorf("missing token in response: %v", resp)
 		}
-		if jl := vkOKJoinLink(link, resp); jl != link {
-			okJoinLink = jl
-		}
 		break
-	}
-
-	joinLink := okJoinLink
-	if joinLink == "" {
-		joinLink = link
-	}
-	if joinLink != link {
-		log.Printf("[STREAM %d] [VK Auth] ok_join_link=%s (raw link id=%s)", streamID, joinLink, link)
 	}
 
 	vkDelayRandom(100, 150)
 
-	// Step 4: OK.ru anonymLogin — bind session to anonym call token (SDK v3).
-	deviceID := uuid.New().String()
-	sessionData := fmt.Sprintf(`{"version":3,"device_id":"%s","client_version":1.1,"client_type":"SDK_JS","auth_token":%q}`, deviceID, token2)
+	// Step 4: OK.ru anonymLogin
+	sessionData := fmt.Sprintf(`{"version":2,"device_id":"%s","client_version":1.1,"client_type":"SDK_JS"}`, uuid.New())
 	data = fmt.Sprintf("session_data=%s&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA", neturl.QueryEscape(sessionData))
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
 	if err != nil {
@@ -540,13 +530,10 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	vkDelayRandom(100, 150)
 
 	// Step 5: joinConversationByLink → TURN creds
-	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", joinLink, token2, token3)
+	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", link, token2, token3)
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
 	if err != nil {
 		return "", "", nil, err
-	}
-	if okErr := vkOKCDNError(resp); okErr != "" {
-		return "", "", nil, fmt.Errorf("joinConversationByLink: %s", okErr)
 	}
 
 	tsRaw, ok := resp["turn_server"].(map[string]interface{})

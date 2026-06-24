@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.45] — 2026-06-24
+
+### Исправлено
+- **VK auth регрессия v0.3.41–v0.3.44:** откат `auth.anonymLogin` на okcdn к **v0.3.40** (`session_data` version **2**, без `auth_token`). v0.3.41 ломала step4 ошибкой `Access token is broken`.
+- **Toggle OFF:** сразу VK Calls → legacy (как v0.3.40), cookies с диска не подхватываются автоматически.
+- **Toggle ON:** только cookie-path (opt-in).
+- Live gate: `scripts/test-live-vk.sh` + `go test -tags=live -run TestLiveVKCreds`.
+
 ## [0.3.44] — 2026-06-24
 
 ### Исправлено

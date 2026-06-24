@@ -88,8 +88,7 @@ func SaveVKCookiesJSON(raw []byte) error {
 	if err := os.WriteFile(vkCookiesPath(), raw, 0600); err != nil {
 		return err
 	}
-	// Saving cookies implies cookie auth (v0.3.41 behavior).
-	return SetVKUseCookies(true)
+	return nil
 }
 
 // ClearVKCookies removes stored VK cookies.
@@ -104,17 +103,24 @@ func ClearVKCookies() error {
 
 // VKCookiesStatus reports whether remixsid is configured and still valid.
 func VKCookiesStatus() (ok bool, hint string) {
-	if !VKUseCookies() {
-		return false, "Анонимный вход. Если VK блокирует — включите «VK cookies»."
-	}
 	header, err := LoadVKCookieHeader()
-	if err != nil || header == "" {
+	hasCookies := err == nil && header != ""
+	if !VKUseCookies() {
+		if hasCookies {
+			if err := vkCookiesLiveValid(header); err != nil {
+				return false, vkCookieExpiredHint
+			}
+			return true, "Cookies сохранены. Анонимный вход (v0.3.40). Включите тумблер для только-cookies."
+		}
+		return false, "Анонимный вход (VK Calls). Включите «VK cookies» если нужен вход по remixsid."
+	}
+	if !hasCookies {
 		return false, "VK cookies включены — вставьте remixsid ниже."
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
 		return false, vkCookieExpiredHint
 	}
-	return true, "VK cookies действительны."
+	return true, "VK cookies действительны (только cookie-path)."
 }
 
 // VKCookiesPathForUI returns the path shown in settings.
