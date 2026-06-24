@@ -9,6 +9,8 @@ export interface Server {
   hashes?: [string, string, string, string];
   power?: number;
   subUrl?: string;
+  /** WB Stream room / join link из подписки */
+  wbRoom?: string;
   /** Название VPN из ссылки (vpn) или Profile-Title */
   vpnName?: string;
   /** Сервер добавлен по ссылке подписки панели — поля подключения не редактируются */
@@ -18,6 +20,9 @@ export interface Server {
 export function isLinkManagedServer(s: Server): boolean {
   return s.linkManaged === true;
 }
+
+/** Протокол туннеля на экране подключения. VK — TURN/VK Calls; WB — WB Stream WebRTC. */
+export type TunnelProtocol = 'vk' | 'wb';
 
 export interface AppSettings {
   bypassMode: 'РУЧ' | 'АВТ';
@@ -31,6 +36,17 @@ export interface AppSettings {
   metricsRefreshSec: number;
   /** VK (веб/API) гнать через VPN-туннель; по умолчанию VK идёт напрямую */
   vkThroughTunnel: boolean;
+  /** Выбранный протокол на главном экране */
+  tunnelProtocol: TunnelProtocol;
+  /** WB Stream: dual-track (экран + камера) */
+  wbDualTrack: boolean;
+  /** WB Stream: показывать вкладку логов */
+  wbShowLogs: boolean;
+  wbFps: number;
+  wbBatch: number;
+  wbProxyAuth: 'auto' | 'manual';
+  wbProxyUser: string;
+  wbProxyPass: string;
 }
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
@@ -45,6 +61,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   useGlobalHashes: false,
   metricsRefreshSec: 0,
   vkThroughTunnel: true,
+  tunnelProtocol: 'vk',
+  wbDualTrack: true,
+  wbShowLogs: true,
+  wbFps: 24,
+  wbBatch: 30,
+  wbProxyAuth: 'auto',
+  wbProxyUser: '',
+  wbProxyPass: '',
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [

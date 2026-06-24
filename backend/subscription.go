@@ -31,6 +31,7 @@ type SubImportResult struct {
 	Hashes   []string         `json:"hashes"`
 	SubURL   string           `json:"subUrl"`
 	DeviceID string           `json:"deviceId,omitempty"`
+	WbRoom   string           `json:"wbRoom,omitempty"`
 	Stats    *SubTrafficStats `json:"stats,omitempty"`
 }
 
@@ -82,6 +83,7 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		Hashes:   parsed.Hashes,
 		SubURL:   strings.Split(rawURL, "?")[0],
 		DeviceID: parsed.DeviceID,
+		WbRoom:   parsed.WbRoom,
 		Stats:    stats,
 	}, nil
 }
@@ -221,6 +223,7 @@ type wdttLinkParsed struct {
 	Hashes   []string
 	SubURL   string
 	DeviceID string
+	WbRoom   string
 }
 
 func decodeSubBody(body string) string {
@@ -336,6 +339,7 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 		}
 	}
 	deviceID := firstStr(raw, "did", "device_id")
+	wbRoom := firstStr(raw, "wb_room", "wbRoom", "room")
 	return wdttLinkParsed{
 		IP:       ip,
 		DtlsPort: strconv.FormatInt(dtls, 10),
@@ -345,6 +349,7 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 		Hashes:   hashes,
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
 		DeviceID: deviceID,
+		WbRoom:   wbRoom,
 	}, nil
 }
 

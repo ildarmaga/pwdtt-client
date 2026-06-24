@@ -50,6 +50,18 @@ export const settingsStore = {
     if (typeof merged.metricsRefreshSec !== 'number' || merged.metricsRefreshSec < 0) {
       merged.metricsRefreshSec = DEFAULT_SETTINGS.metricsRefreshSec;
     }
+    if (merged.tunnelProtocol !== 'vk' && merged.tunnelProtocol !== 'wb') {
+      merged.tunnelProtocol = DEFAULT_SETTINGS.tunnelProtocol;
+    }
+    if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 60) {
+      merged.wbFps = DEFAULT_SETTINGS.wbFps;
+    }
+    if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 200) {
+      merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
+    }
+    if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
+      merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;
+    }
     return merged;
   },
   save: (settings: AppSettings) => {

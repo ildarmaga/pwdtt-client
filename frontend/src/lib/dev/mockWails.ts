@@ -2,6 +2,7 @@
 
 import { parseWdttFromSubBody } from '../utils/wdttLink';
 import { DEFAULT_SETTINGS } from '../types';
+import { settingsStore } from '../store';
 import {
   devFetchSubscriptionStats,
   devFetchSubscriptionURL,
@@ -92,11 +93,26 @@ function seedDevSettings() {
       localStorage.setItem(key, JSON.stringify({
         ...DEFAULT_SETTINGS,
         ...saved,
-        useGlobalHashes: true,
-        hashes: ['demo_vk_hash', '', '', ''],
+        useGlobalHashes: false,
+        hashes: ['', '', '', ''],
       }));
     }
   } catch { /* ignore */ }
+}
+
+const VK_USE_COOKIES_KEY = 'pwdtt_vk_use_cookies';
+const VK_COOKIES_RAW_KEY = 'pwdtt_vk_cookies_raw';
+
+function readVkUseCookies(): boolean {
+  try { return localStorage.getItem(VK_USE_COOKIES_KEY) === '1'; } catch { return false; }
+}
+
+function readVkCookiesRaw(): string {
+  try { return localStorage.getItem(VK_COOKIES_RAW_KEY) || ''; } catch { return ''; }
+}
+
+function vkCookiesHasRemix(raw: string): boolean {
+  return /remixsid/i.test(raw);
 }
 
 function installGoMock() {
@@ -109,20 +125,35 @@ function installGoMock() {
       App: {
         CheckVPN: async () => '',
         Connect: async () => {
+          const proto = settingsStore.get().tunnelProtocol;
+          emitDevEvent('log', 'INFO', proto === 'vk' ? 'Подключение VK…' : 'Подключение WB Stream…');
           emitDevEvent('state_changed', 'connecting');
           await new Promise(r => setTimeout(r, 900));
           window.__pwdttDevConnected = true;
           emitDevEvent('state_changed', 'running');
-          emitDevEvent('log', 'INFO', '[dev] VPN подключён — опрос sub активен');
+          if (proto === 'vk') {
+            emitDevEvent('log', 'GO', '[dev] turn: allocate OK');
+            emitDevEvent('log', 'GO', '[dev] dtls: handshake OK');
+            emitDevEvent('log', 'STATUS', 'TUNNEL_CONNECTED');
+            emitDevEvent('log', 'INFO', '✓ VK туннель активен');
+          } else {
+            emitDevEvent('log', 'GO', '[dev] wbt: dial OK');
+            emitDevEvent('log', 'GO', '[dev] webrtc: offer/answer OK');
+            emitDevEvent('log', 'STATUS', 'WB_TUNNEL_CONNECTED');
+            emitDevEvent('log', 'INFO', '✓ WB Stream активен');
+          }
           startDevTunnelStats();
         },
         Disconnect: async () => {
+          const proto = settingsStore.get().tunnelProtocol;
           stopDevTunnelStats();
           emitDevEvent('state_changed', 'disconnecting');
+          emitDevEvent('log', 'INFO', proto === 'vk' ? 'Отключение VK…' : 'Отключение WB…');
           await new Promise(r => setTimeout(r, 400));
           window.__pwdttDevConnected = false;
           emitDevEvent('state_changed', 'stopped');
-          emitDevEvent('log', 'INFO', '[dev] VPN отключён');
+          emitDevEvent('log', 'STATUS', 'DISCONNECTED');
+          emitDevEvent('log', 'INFO', '— Отключено');
         },
         Reconnect: async () => {
           emitDevEvent('state_changed', 'connecting');
@@ -152,11 +183,51 @@ function installGoMock() {
         SetTrayEnabled: asyncVoid,
         SetVKThroughTunnel: asyncVoid,
         GetVKThroughTunnel: async () => false,
-        GetVKCookiesStatus: async () => ({ ok: false, expired: false, useCookies: false, hint: 'dev mock — anonymous', path: '~/.config/pwdtt/secrets/cookies-vk.json' }),
-        GetVKUseCookies: async () => false,
-        SetVKUseCookies: asyncVoid,
-        SaveVKCookies: asyncVoid,
-        ClearVKCookies: asyncVoid,
+        GetVKCookiesStatus: async () => {
+          const useCookies = readVkUseCookies();
+          const raw = readVkCookiesRaw();
+          const hasCookies = !!raw.trim();
+          if (!hasCookies) {
+            return {
+              ok: false,
+              expired: false,
+              useCookies,
+              hint: 'Cookies не сохранены',
+              path: '',
+            };
+          }
+          if (useCookies) {
+            const ok = vkCookiesHasRemix(raw);
+            return {
+              ok,
+              expired: !ok,
+              useCookies,
+              hint: ok
+                ? 'VK cookies действительны (dev mock, только cookie-path).'
+                : 'remixsid не найден — проверьте формат cookies',
+              path: 'localStorage · pwdtt_vk_cookies_raw',
+            };
+          }
+          return {
+            ok: false,
+            expired: false,
+            useCookies,
+            hint: 'Анонимный вход. Cookies на диске не используются, пока тумблер выключен.',
+            path: 'localStorage · pwdtt_vk_cookies_raw',
+          };
+        },
+        GetVKUseCookies: async () => readVkUseCookies(),
+        SetVKUseCookies: async (v: unknown) => {
+          localStorage.setItem(VK_USE_COOKIES_KEY, v ? '1' : '0');
+        },
+        SaveVKCookies: async (raw: unknown) => {
+          const s = String(raw ?? '').trim();
+          if (!s) throw new Error('пустые cookies');
+          localStorage.setItem(VK_COOKIES_RAW_KEY, s);
+        },
+        ClearVKCookies: async () => {
+          localStorage.removeItem(VK_COOKIES_RAW_KEY);
+        },
       },
     },
   };

@@ -177,6 +177,7 @@ export async function devFetchSubscriptionURL(rawURL: string) {
       name: link.name,
       vpnName: link.vpnName,
       hashes: link.hashes,
+      wbRoom: link.wbRoom,
       subUrl,
       stats,
     };
@@ -191,6 +192,7 @@ export async function devFetchSubscriptionURL(rawURL: string) {
         name: link.name,
         vpnName: link.vpnName,
         hashes: link.hashes,
+        wbRoom: link.wbRoom,
         subUrl,
         stats,
       };

@@ -2,13 +2,15 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { IconSearch, IconTrashX, IconCopy } from '@tabler/icons-react';
 import { logStore, type LogEntry, type LogLevel } from '../lib/stores/logStore';
 
-type Filter = 'ALL' | 'INFO' | 'ERROR';
+type Filter = 'ALL' | 'INFO' | 'GO' | 'STATUS' | 'WARN' | 'ERROR';
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   INFO:  'var(--text)',
   WARN:  '#f59e0b',
   ERROR: '#ef4444',
   DEBUG: 'var(--text-3)',
+  GO:    '#a78bfa',
+  STATUS:'#34d399',
 };
 
 export default function Logs() {
@@ -89,7 +91,7 @@ export default function Logs() {
             </div>
             <div className="logs-toolbar-right">
               <div className="filter-group">
-                {(['ALL', 'INFO', 'ERROR'] as Filter[]).map(f => (
+                {(['ALL', 'INFO', 'GO', 'STATUS', 'WARN', 'ERROR'] as Filter[]).map(f => (
                   <button key={f} className={`filter-btn${filter === f ? ' filter-btn--active' : ''}`} onClick={() => setFilter(f)}>{f}</button>
                 ))}
               </div>

@@ -65,10 +65,13 @@ import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
-import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, type TrafficStats } from '../lib/utils/wdttLink';
+import ProtocolSelector from '../components/ProtocolSelector';
+import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
 import { DeleteProfile, GetProfile } from '../../wailsjs/go/backend/App';
 import { saveServerProfile } from '../lib/utils/profileSync';
-import type { Server, TunnelState } from '../lib/types';
+import type { Server, TunnelState, TunnelProtocol } from '../lib/types';
+import { resolveConnectHashes } from '../lib/resolveConnectHashes';
+import { logStore } from '../lib/stores/logStore';
 import { Connect as WailsConnect, Disconnect as WailsDisconnect } from '../../wailsjs/go/backend/App';
 
 const PING_COLORS: Record<string, string> = {
@@ -166,7 +169,11 @@ export default function Connect() {
   const [traffic, setTraffic] = useState<TrafficStats | null>(() => trafficStatsStore.get(selected?.subUrl));
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
-  useEffect(() => settingsStore.subscribe(s => setMetricsRefreshSec(s.metricsRefreshSec)), []);
+  const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
+  useEffect(() => settingsStore.subscribe(s => {
+    setMetricsRefreshSec(s.metricsRefreshSec);
+    setTunnelProtocol(s.tunnelProtocol);
+  }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
 
   useEffect(() => {
@@ -192,6 +199,7 @@ export default function Connect() {
             subUrl: consumed.subUrl ?? existing.subUrl,
             deviceId: consumed.deviceId ?? existing.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : existing.hashes,
+            wbRoom: consumed.wbRoom ?? existing.wbRoom,
             linkManaged: true,
           };
           serverStore.update(s);
@@ -204,6 +212,7 @@ export default function Connect() {
             subUrl: consumed.subUrl,
             deviceId: consumed.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : undefined,
+            wbRoom: consumed.wbRoom,
             linkManaged: true,
           });
         }
@@ -263,6 +272,21 @@ export default function Connect() {
   }, [displayServer?.subUrl, displayServer?.id, metricsRefreshSec, tunnelState]);
 
   useEffect(() => {
+    if (tunnelProtocol !== 'wb' || tunnelState !== 'idle') return;
+    const srv = displayServer;
+    if (!srv?.subUrl || srv.wbRoom) return;
+    let cancelled = false;
+    void syncServerFromSubscription(srv).then(async (updated) => {
+      if (cancelled || !updated.wbRoom) return;
+      serverStore.update(updated);
+      await saveServerProfile(updated).catch(() => {});
+      setSelected(updated);
+      setServers(serverStore.getAll());
+    });
+    return () => { cancelled = true; };
+  }, [displayServer?.id, displayServer?.subUrl, displayServer?.wbRoom, tunnelProtocol, tunnelState]);
+
+  useEffect(() => {
     if (tunnelState !== 'connected' || !displayServer?.subUrl) return;
     let cancelled = false;
     fetchTrafficStats(displayServer.subUrl).then((stats) => {
@@ -276,19 +300,26 @@ export default function Connect() {
 
   const doConnect = async () => {
     const s = settingsStore.get();
-    const hashes = (s.useGlobalHashes
-      ? s.hashes
-      : (selected!.hashes ?? s.hashes)
-    ).filter(h => h.trim());
+    if (s.tunnelProtocol === 'wb') {
+      logStore.push('INFO', 'WB Stream — подключение в следующей версии');
+      toastStore.show('WB Stream — подключение в следующей версии', 3500);
+      return;
+    }
+    const hashes = resolveConnectHashes(s, selected!);
     if (hashes.length === 0) {
-      toastStore.show(s.useGlobalHashes
-        ? 'Добавьте хеши в Настройках'
-        : 'Добавьте хеши профиля или включите глобальные в Настройках'
+      toastStore.show(
+        selected!.linkManaged
+          ? 'В подписке нет VK-хешей — обновите подписку на панели'
+          : s.useGlobalHashes
+            ? 'Добавьте хеши в Настройках'
+            : 'Добавьте хеши профиля или включите глобальные в Настройках',
       );
       return;
     }
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
+    logStore.push('INFO', 'Подключение VK…');
+    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))}`);
     try {
       const workers = s.useGlobalHashes
         ? (s.power || 9)
@@ -315,6 +346,11 @@ export default function Connect() {
   const handleTunnel = async () => {
     if (!selected) return;
     if (tunnelState === 'idle') {
+      if (tunnelProtocol === 'wb') {
+        logStore.push('INFO', 'WB Stream — подключение в следующей версии');
+        toastStore.show('WB Stream — подключение в следующей версии', 3500);
+        return;
+      }
       if (Date.now() < reconnectAt) {
         const secs = Math.ceil((reconnectAt - Date.now()) / 1000);
         toastStore.show(`Подождите ${secs} сек.`, 2000);
@@ -394,6 +430,18 @@ export default function Connect() {
   const turnDisplay = statsLive ? formatMs(sessionStats!.turnRttMs) : '—';
   const dtlsDisplay = statsLive ? formatMs(sessionStats!.dtlsHsMs) : '—';
   const netDisplay = statsLive ? formatMs(sessionStats!.internetRttMs) : '—';
+  const isVkProtocol = tunnelProtocol === 'vk';
+  const latencyRows = isVkProtocol
+    ? [
+        { label: 'TURN', value: turnDisplay, title: 'TURN Allocate RTT' },
+        { label: 'DTLS', value: dtlsDisplay, title: 'DTLS Handshake' },
+        { label: 'Интернет', value: netDisplay, title: 'TCP до 1.1.1.1' },
+      ]
+    : [
+        { label: 'WBT', value: turnDisplay, title: 'WB Tunnel RTT' },
+        { label: 'VP8', value: dtlsDisplay, title: 'WebRTC handshake' },
+        { label: 'RTT', value: netDisplay, title: 'End-to-end RTT' },
+      ];
 
   // Блок кнопки+метрик держится на фиксированном расстоянии над панелью сервера.
   // При длинном объявлении панель растёт вверх — поднимаем блок ровно на её высоту.
@@ -432,7 +480,56 @@ export default function Connect() {
           width: min(340px, calc(100vw - 32px));
         }
         .connect-stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        .btn-add { position: absolute; top: 16px; right: 20px; background: none; border: none; cursor: pointer; color: var(--text); }
+        .btn-add { position: absolute; top: 16px; right: 20px; background: none; border: none; cursor: pointer; color: var(--text); z-index: 5; }
+        .protocol-bar {
+          position: absolute;
+          top: 12px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 4;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          width: min(280px, calc(100vw - 80px));
+        }
+        .protocol-bar--locked { opacity: 0.92; pointer-events: none; }
+        .protocol-seg {
+          display: flex;
+          width: 100%;
+          background: var(--bg-3);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 3px;
+          gap: 3px;
+        }
+        .protocol-seg-btn {
+          flex: 1;
+          border: none;
+          border-radius: 7px;
+          padding: 7px 0;
+          font-size: 13px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          background: transparent;
+          color: var(--text-3);
+          cursor: pointer;
+          transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+        }
+        .protocol-seg-btn:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--bg-2) 80%, transparent); }
+        .protocol-seg-btn--active {
+          background: var(--proto-accent, var(--accent));
+          color: #fff;
+          box-shadow: 0 2px 10px color-mix(in srgb, var(--proto-accent, var(--accent)) 35%, transparent);
+        }
+        .protocol-seg-btn:disabled { cursor: default; }
+        .protocol-hint {
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          opacity: 0.9;
+        }
         .connect-btn {
           position: relative;
           width: 140px;
@@ -614,6 +711,15 @@ export default function Connect() {
 
       `}</style>
       <main className="main">
+        <ProtocolSelector
+          value={tunnelProtocol}
+          locked={selectionLocked}
+          onChange={p => {
+            settingsStore.patch({ tunnelProtocol: p });
+            logStore.push('INFO', 'Протокол: ' + (p === 'vk' ? 'VK · TURN' : 'WB · WebRTC'));
+          }}
+        />
+
         <button className="btn-add" onClick={() => setAddServerOpen(true)}>
           <IconPlus stroke={2} size={22} />
         </button>
@@ -651,18 +757,12 @@ export default function Connect() {
             </div>
           </div>
           <div className="session-latency">
-            <span title="TURN Allocate RTT">
-              TURN
-              <strong>{turnDisplay}</strong>
-            </span>
-            <span title="DTLS Handshake">
-              DTLS
-              <strong>{dtlsDisplay}</strong>
-            </span>
-            <span title="TCP до 1.1.1.1">
-              Интернет
-              <strong>{netDisplay}</strong>
-            </span>
+            {latencyRows.map(row => (
+              <span key={row.label} title={row.title}>
+                {row.label}
+                <strong>{row.value}</strong>
+              </span>
+            ))}
           </div>
         </div>
         </div>

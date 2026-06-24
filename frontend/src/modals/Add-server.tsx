@@ -4,6 +4,7 @@ import type { Server } from '../lib/types';
 import { resolveWdttImport, isPanelSubUrl } from '../lib/utils/wdttLink';
 import { handleControlledPaste } from '../lib/utils/inputPaste';
 import { toastStore } from '../lib/stores/toastStore';
+import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 
 interface Props {
   onClose: () => void;
@@ -11,6 +12,9 @@ interface Props {
 }
 
 export default function AddServer({ onClose, onAdd }: Props) {
+  const protocol = useTunnelProtocol();
+  const isVk = isVkProtocol(protocol);
+
   const [subUrl, setSubUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [parsed, setParsed] = useState<Awaited<ReturnType<typeof resolveWdttImport>> | null>(null);
@@ -52,20 +56,23 @@ export default function AddServer({ onClose, onAdd }: Props) {
       toastStore.show('Сначала вставьте корректную ссылку', 4000);
       return;
     }
+    if (!isVk && !parsed.wbRoom) {
+      toastStore.show('В подписке нет WB room — выберите VK или обновите подписку', 4500);
+      return;
+    }
     const host = `${parsed.ip}:${parsed.dtlsPort}`;
     const name = parsed.name !== 'Server' ? parsed.name : parsed.ip;
     const hashes = parsed.hashes ?? [];
     const h4: [string, string, string, string] = [hashes[0] ?? '', hashes[1] ?? '', hashes[2] ?? '', hashes[3] ?? ''];
 
-    // Профиль сохраняется в Connect.handleAdd по уникальному id сервера
-    // (id известен только после serverStore.add).
     onAdd({
       name,
       vpnName: parsed.vpnName,
       host,
       password: parsed.password,
       deviceId: parsed.deviceId,
-      hashes: h4,
+      hashes: isVk ? h4 : undefined,
+      wbRoom: parsed.wbRoom,
       subUrl: parsed.subUrl,
       linkManaged: true,
     });
@@ -79,6 +86,12 @@ export default function AddServer({ onClose, onAdd }: Props) {
         .as-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: 440px; max-width: calc(100vw - 24px); box-shadow: var(--shadow); border: 1px solid var(--border); overflow: visible; flex-shrink: 0; animation: modal-in 0.3s ease-out; }
         .as-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .as-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }
+        .as-protocol-badge {
+          font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+          padding: 3px 8px; border-radius: 6px;
+          color: var(--proto-color); border: 1px solid color-mix(in srgb, var(--proto-color) 35%, transparent);
+          background: color-mix(in srgb, var(--proto-color) 14%, transparent);
+        }
         .as-close { background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text); line-height: 1; padding: 0; }
         .as-input { width: 100%; padding: 11px 14px; border: 1.5px solid var(--input-border); border-radius: 10px; font-size: 14px; font-family: 'Geist', sans-serif; outline: none; margin-bottom: 10px; box-sizing: border-box; color: var(--text); background: var(--input-bg); }
         .as-input::placeholder { color: var(--text-4); }
@@ -92,7 +105,13 @@ export default function AddServer({ onClose, onAdd }: Props) {
         <div className="as-modal" onClick={e => e.stopPropagation()}>
           <div className="as-header">
             <IconCircleHalf2 stroke={2} size={22} />
-            <span className="as-title">Добавление сервера</span>
+            <span className="as-title">{isVk ? 'Добавление VK профиля' : 'Добавление WB профиля'}</span>
+            <span
+              className="as-protocol-badge"
+              style={{ '--proto-color': isVk ? '#2787f5' : '#6d6aac' } as React.CSSProperties}
+            >
+              {isVk ? 'VK' : 'WB'}
+            </span>
             <button className="as-close" onClick={onClose}>✕</button>
           </div>
 
@@ -104,7 +123,9 @@ export default function AddServer({ onClose, onAdd }: Props) {
             onPaste={e => void handleControlledPaste(e, subUrl, applySubUrl)}
           />
           <p className="as-hint">
-            Вставьте «Подписку» или «Ссылку» из панели WDTT. Ссылка wdtt:// добавляется сразу, без интернета — все параметры внутри неё.
+            {isVk
+              ? 'Подписка WDTT: ip, пароль и VK-хеши подтянутся автоматически.'
+              : 'Подписка WDTT: room WB Stream и трафик подтянутся автоматически.'}
           </p>
 
           {loading && <p className="as-hint">Загрузка подписки…</p>}
@@ -112,15 +133,23 @@ export default function AddServer({ onClose, onAdd }: Props) {
           {parsed && (
             <div className="as-preview">
               <div><strong>{parsed.vpnName || parsed.name}</strong></div>
-              <div>{parsed.ip}:{parsed.dtlsPort}</div>
-              <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
-                {parsed.subUrl || `Хешей: ${parsed.hashes?.length ?? 0} · офлайн-импорт`}
-              </div>
+              {isVk ? (
+                <>
+                  <div>{parsed.ip}:{parsed.dtlsPort}</div>
+                  <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
+                    VK хешей: {parsed.hashes?.length ?? 0}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, marginTop: 4 }}>
+                  Room: {parsed.wbRoom || '— не найден в подписке'}
+                </div>
+              )}
             </div>
           )}
 
           <button className="as-btn" onClick={handleAdd} disabled={!canAdd}>
-            {loading ? 'Загрузка…' : 'Добавить сервер'}
+            {loading ? 'Загрузка…' : 'Добавить профиль'}
           </button>
         </div>
       </div>

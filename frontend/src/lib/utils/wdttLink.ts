@@ -25,6 +25,7 @@ export interface WdttLink {
   vpnName?: string;
   subUrl?: string;
   deviceId?: string;
+  wbRoom?: string;
   stats?: TrafficStats;
 }
 
@@ -90,6 +91,7 @@ function subResultToLink(r: backend.SubImportResult): WdttLink {
     hashes: r.hashes ?? [],
     subUrl: r.subUrl || undefined,
     deviceId: r.deviceId || undefined,
+    wbRoom: (r as backend.SubImportResult & { wbRoom?: string }).wbRoom || undefined,
     stats,
   };
 }
@@ -158,6 +160,7 @@ export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
           vpnName: inline.vpnName || fromPanel.vpnName,
           deviceId: inline.deviceId || fromPanel.deviceId,
           subUrl: inline.subUrl,
+          wbRoom: inline.wbRoom ?? fromPanel.wbRoom,
         };
       } catch {
         // Панель недоступна — отдаём то, что в ссылке.
@@ -173,6 +176,30 @@ export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
     return subResultToLink(await FetchSubscriptionURL(sub));
   } catch {
     return null;
+  }
+}
+
+function padHashes(hashes: string[]): [string, string, string, string] {
+  const h4 = hashes.slice(0, 4);
+  return [h4[0] ?? '', h4[1] ?? '', h4[2] ?? '', h4[3] ?? ''];
+}
+
+/** Подтянуть wb_room, хеши и метаданные из актуальной подписки. */
+export async function syncServerFromSubscription(server: Server): Promise<Server> {
+  if (!server.subUrl || !isPanelSubUrl(server.subUrl)) return server;
+  try {
+    const link = subResultToLink(await FetchSubscriptionURL(server.subUrl.trim()));
+    const hashes = link.hashes.length > 0 ? padHashes(link.hashes) : server.hashes;
+    return {
+      ...server,
+      name: link.name !== 'Server' ? link.name : server.name,
+      vpnName: link.vpnName ?? server.vpnName,
+      wbRoom: link.wbRoom ?? server.wbRoom,
+      hashes: hashes ?? server.hashes,
+      deviceId: link.deviceId ?? server.deviceId,
+    };
+  } catch {
+    return server;
   }
 }
 
@@ -291,8 +318,9 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const deviceId = String(json.did ?? json.device_id ?? '').trim() || undefined;
     const subRaw = String(json.sub ?? json.subUrl ?? json.sub_url ?? '').trim();
     const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
+    const wbRoom = String(json.wb_room ?? json.wbRoom ?? json.room ?? '').trim() || undefined;
     if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl };
+    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl, wbRoom };
   } catch {
     return null;
   }

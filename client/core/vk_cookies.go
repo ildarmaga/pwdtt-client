@@ -110,7 +110,7 @@ func VKCookiesStatus() (ok bool, hint string) {
 			if err := vkCookiesLiveValid(header); err != nil {
 				return false, vkCookieExpiredHint
 			}
-			return true, "Cookies сохранены. Анонимный вход (v0.3.40). Включите тумблер для только-cookies."
+			return true, "Cookies сохранены. Анонимный вход. Включите тумблер для только-cookies."
 		}
 		return false, "Анонимный вход (VK Calls). Включите «VK cookies» если нужен вход по remixsid."
 	}
