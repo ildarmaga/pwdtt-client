@@ -72,7 +72,7 @@ import { saveServerProfile } from '../lib/utils/profileSync';
 import type { Server, TunnelState, TunnelProtocol } from '../lib/types';
 import { resolveConnectHashes } from '../lib/resolveConnectHashes';
 import { logStore } from '../lib/stores/logStore';
-import { Connect as WailsConnect, Disconnect as WailsDisconnect } from '../../wailsjs/go/backend/App';
+import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB } from '../../wailsjs/go/backend/App';
 
 const PING_COLORS: Record<string, string> = {
   good: '#22c55e',
@@ -298,11 +298,30 @@ export default function Connect() {
     return () => { cancelled = true; };
   }, [tunnelState, displayServer?.subUrl, displayServer?.id]);
 
+  const doConnectWB = async () => {
+    const room = (selected?.wbRoom ?? '').trim();
+    if (!room) {
+      toastStore.show('В подписке нет WB-комнаты (wb_room) — обновите подписку', 4000);
+      return;
+    }
+    tunnelStore.set('connecting');
+    activeServerStore.setId(selected!.id);
+    logStore.push('INFO', 'Подключение WB Stream…');
+    logStore.push('GO', `wb: ${selected!.name} · room ${room}`);
+    try {
+      await WailsConnectWB(room);
+    } catch (e) {
+      tunnelStore.set('idle');
+      activeServerStore.setId(null);
+      const msg = e instanceof Error ? e.message : String(e ?? '');
+      toastStore.show(msg || 'Не удалось подключиться к WB', 4000);
+    }
+  };
+
   const doConnect = async () => {
     const s = settingsStore.get();
     if (s.tunnelProtocol === 'wb') {
-      logStore.push('INFO', 'WB Stream — подключение в следующей версии');
-      toastStore.show('WB Stream — подключение в следующей версии', 3500);
+      await doConnectWB();
       return;
     }
     const hashes = resolveConnectHashes(s, selected!);
@@ -347,8 +366,7 @@ export default function Connect() {
     if (!selected) return;
     if (tunnelState === 'idle') {
       if (tunnelProtocol === 'wb') {
-        logStore.push('INFO', 'WB Stream — подключение в следующей версии');
-        toastStore.show('WB Stream — подключение в следующей версии', 3500);
+        await doConnectWB();
         return;
       }
       if (Date.now() < reconnectAt) {
@@ -360,7 +378,11 @@ export default function Connect() {
       await doConnect();
     } else if (tunnelState === 'connected' || tunnelState === 'connecting') {
       tunnelStore.set('disconnecting');
-      await WailsDisconnect();
+      if (tunnelProtocol === 'wb') {
+        await WailsDisconnectWB();
+      } else {
+        await WailsDisconnect();
+      }
       setReconnectAt(Date.now() + 2000);
     }
   };
@@ -431,6 +453,8 @@ export default function Connect() {
   const dtlsDisplay = statsLive ? formatMs(sessionStats!.dtlsHsMs) : '—';
   const netDisplay = statsLive ? formatMs(sessionStats!.internetRttMs) : '—';
   const isVkProtocol = tunnelProtocol === 'vk';
+  // Для WB VP8-строка показывает кадры/с (бэкенд кладёт fps в dtlsHsMs).
+  const vp8Display = statsLive && sessionStats!.dtlsHsMs > 0 ? `${sessionStats!.dtlsHsMs} fps` : '—';
   const latencyRows = isVkProtocol
     ? [
         { label: 'TURN', value: turnDisplay, title: 'TURN Allocate RTT' },
@@ -439,7 +463,7 @@ export default function Connect() {
       ]
     : [
         { label: 'WBT', value: turnDisplay, title: 'WB Tunnel RTT' },
-        { label: 'VP8', value: dtlsDisplay, title: 'WebRTC handshake' },
+        { label: 'VP8', value: vp8Display, title: 'VP8 кадров/с' },
         { label: 'RTT', value: netDisplay, title: 'End-to-end RTT' },
       ];
 

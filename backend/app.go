@@ -16,6 +16,7 @@ import (
 type App struct {
 	ctx         context.Context
 	orch        *Orchestrator
+	wb          *WBManager
 	trayEnabled atomic.Bool
 	quitting    atomic.Bool
 	trayIcon    []byte
@@ -26,16 +27,18 @@ func NewApp(trayIcon []byte) *App { return &App{trayIcon: trayIcon} }
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.orch = NewOrchestrator(ctx, a.updateTray)
+	a.wb = NewWBManager(ctx)
 	startTray(a.trayIcon,
 		func() { runtime.WindowShow(ctx) },
 		func() {
-			if a.orch.IsRunning() {
+			if a.orch.IsRunning() || a.wb.IsRunning() {
 				a.orch.Stop()
+				a.wb.Disconnect()
 			} else {
 				runtime.WindowShow(ctx)
 			}
 		},
-		func() { a.quitting.Store(true); a.orch.Stop(); os.Exit(0) },
+		func() { a.quitting.Store(true); a.orch.Stop(); a.wb.Disconnect(); os.Exit(0) },
 	)
 }
 
@@ -56,6 +59,15 @@ func (a *App) Connect(p ConnectParams) error { return a.orch.Start(p) }
 func (a *App) Disconnect()                   { a.orch.Stop() }
 func (a *App) Reconnect() error              { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
+
+// ConnectWB поднимает WB Stream туннель (KCP+smux поверх VP8) и локальный SOCKS5.
+func (a *App) ConnectWB(room string) error { return a.wb.Connect(room) }
+
+// DisconnectWB останавливает WB Stream туннель.
+func (a *App) DisconnectWB() { a.wb.Disconnect() }
+
+// WBSocksAddr — адрес локального SOCKS5, поднятого WB-туннелем.
+func (a *App) WBSocksAddr() string { return a.wb.SocksAddr() }
 
 // SetVKThroughTunnel переключает маршрутизацию VK (веб/API) через туннель на лету.
 // Применяется немедленно, если туннель активен; иначе — при следующем подключении.

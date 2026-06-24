@@ -2,24 +2,30 @@ import { useState, useEffect } from 'react';
 import { isBrowserDev } from './dev/mockWails';
 import { devWindowSizeStore } from './dev/devWindowSize';
 
-/** Ширина «телефонного» превью (420 / 480 px). */
-const MOBILE_WIDTH_MAX = 520;
+/** Узкое окно: мобильное превью (420 / 480 px) или маленький Wails. */
+const NARROW_WIDTH_MAX = 560;
 
-function computeMobileUI(): boolean {
-  if (!isBrowserDev) return false;
-  return devWindowSizeStore.get().width <= MOBILE_WIDTH_MAX;
+function computeNarrow(): boolean {
+  if (isBrowserDev) {
+    return devWindowSizeStore.get().width <= NARROW_WIDTH_MAX;
+  }
+  return typeof window !== 'undefined' && window.innerWidth <= NARROW_WIDTH_MAX;
 }
 
-/** true в мобильном превью / узком окне — без трея и автозапуска. */
+/** true в узком окне — компактный UI, без трея и автозапуска. */
 export function useMobileUI(): boolean {
-  const [mobile, setMobile] = useState(computeMobileUI);
+  const [narrow, setNarrow] = useState(computeNarrow);
 
   useEffect(() => {
-    if (!isBrowserDev) return;
-    return devWindowSizeStore.subscribe(size => {
-      setMobile(size.width <= MOBILE_WIDTH_MAX);
-    });
+    if (isBrowserDev) {
+      return devWindowSizeStore.subscribe(size => {
+        setNarrow(size.width <= NARROW_WIDTH_MAX);
+      });
+    }
+    const onResize = () => setNarrow(window.innerWidth <= NARROW_WIDTH_MAX);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  return mobile;
+  return narrow;
 }
