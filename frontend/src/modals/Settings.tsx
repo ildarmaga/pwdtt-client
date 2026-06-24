@@ -31,17 +31,11 @@ export default function Settings({ onClose }: Props) {
   const [vkUseCookies, setVkUseCookies] = useState(false);
 
   const refreshVkStatus = () => {
-    GetVKCookiesStatus().then(s => {
-      setVkStatus(s);
-      setVkUseCookies(!!s?.useCookies);
-    }).catch(() => setVkStatus(null));
+    GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
+    GetVKUseCookies().then(setVkUseCookies).catch(() => setVkUseCookies(false));
   };
 
   useEffect(() => { refreshVkStatus(); }, []);
-
-  useEffect(() => {
-    GetVKUseCookies().then(setVkUseCookies).catch(() => {});
-  }, []);
 
   // Sync autoStart from backend on open
   useEffect(() => {

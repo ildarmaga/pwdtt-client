@@ -105,14 +105,11 @@ func ClearVKCookies() error {
 // VKCookiesStatus reports whether remixsid is configured and still valid.
 func VKCookiesStatus() (ok bool, hint string) {
 	if !VKUseCookies() {
-		if header, err := LoadVKCookieHeader(); err == nil && header != "" && vkSettingsExplicit.Load() && !vkUseCookies.Load() {
-			return false, "Cookies выключены в настройках — анонимный вход в VK не работает."
-		}
-		return false, "Cookies не заданы — анонимный вход в VK может не работать."
+		return false, "Анонимный вход. Если VK блокирует — включите «VK cookies»."
 	}
 	header, err := LoadVKCookieHeader()
 	if err != nil || header == "" {
-		return false, "Включите cookies и вставьте remixsid (анонимный вход может не работать)."
+		return false, "VK cookies включены — вставьте remixsid ниже."
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
 		return false, vkCookieExpiredHint

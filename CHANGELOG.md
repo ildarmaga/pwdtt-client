@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.44] — 2026-06-24
+
+### Исправлено
+- **VK auth:** по умолчанию снова **анонимный вход** (как v0.3.41 без cookies). Тумблер «VK cookies» — явный opt-in: включил → только cookie-path, выключил → anonymous (VK Calls + legacy), файл cookies на диске не подхватывается сам.
+- **Тумблер в UI:** исправлен race — состояние берётся из `GetVKUseCookies`, не перезатирается статусом cookies.
+- Убран fail-fast «Access token is broken» на anonymous — снова fallback на legacy как в v0.3.41.
+
 ## [0.3.43] — 2026-06-24
 
 ### Исправлено

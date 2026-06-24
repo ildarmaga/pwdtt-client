@@ -7,7 +7,11 @@ import (
 	"testing"
 )
 
-func TestVKUseCookiesDefaultWhenCookiesFileExists(t *testing.T) {
+func resetVKAuthSettings() {
+	vkUseCookies.Store(false)
+}
+
+func TestVKUseCookiesDefaultOff(t *testing.T) {
 	dir := t.TempDir()
 	oldSettings := vkSettingsPath
 	oldCookies := vkCookiesPath
@@ -16,8 +20,7 @@ func TestVKUseCookiesDefaultWhenCookiesFileExists(t *testing.T) {
 	defer func() {
 		vkSettingsPath = oldSettings
 		vkCookiesPath = oldCookies
-		vkSettingsExplicit.Store(false)
-		vkUseCookies.Store(false)
+		resetVKAuthSettings()
 	}()
 
 	if err := os.MkdirAll(filepath.Dir(vkCookiesPath()), 0700); err != nil {
@@ -27,61 +30,60 @@ func TestVKUseCookiesDefaultWhenCookiesFileExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vkSettingsExplicit.Store(false)
-	vkUseCookies.Store(false)
-	initVKAuthDefaults()
+	resetVKAuthSettings()
+	loadVKAuthSettings()
 
-	if !VKUseCookies() {
-		t.Fatal("expected cookies auth default true when cookies file exists and no settings")
+	if VKUseCookies() {
+		t.Fatal("expected anonymous by default even when cookies file exists")
 	}
 }
 
-func TestVKUseCookiesExplicitOptOut(t *testing.T) {
+func TestVKUseCookiesToggleOnUsesCookiesOnly(t *testing.T) {
 	dir := t.TempDir()
 	oldSettings := vkSettingsPath
-	oldCookies := vkCookiesPath
-	vkSettingsPath = func() string { return filepath.Join(dir, "settings", "vk-auth.json") }
-	vkCookiesPath = func() string { return filepath.Join(dir, "secrets", "cookies-vk.json") }
+	vkSettingsPath = func() string { return filepath.Join(dir, "vk-auth.json") }
 	defer func() {
 		vkSettingsPath = oldSettings
-		vkCookiesPath = oldCookies
-		vkSettingsExplicit.Store(false)
-		vkUseCookies.Store(false)
+		resetVKAuthSettings()
 	}()
 
-	if err := os.MkdirAll(filepath.Dir(vkCookiesPath()), 0700); err != nil {
+	if err := SetVKUseCookies(true); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(vkCookiesPath(), []byte("remixsid=test123"), 0600); err != nil {
+	if !VKUseCookies() {
+		t.Fatal("expected true after SetVKUseCookies(true)")
+	}
+	loadVKAuthSettings()
+	if !VKUseCookies() {
+		t.Fatal("expected persisted true")
+	}
+}
+
+func TestVKUseCookiesToggleOffAfterOn(t *testing.T) {
+	dir := t.TempDir()
+	oldSettings := vkSettingsPath
+	vkSettingsPath = func() string { return filepath.Join(dir, "vk-auth.json") }
+	defer func() {
+		vkSettingsPath = oldSettings
+		resetVKAuthSettings()
+	}()
+
+	if err := SetVKUseCookies(true); err != nil {
 		t.Fatal(err)
 	}
 	if err := SetVKUseCookies(false); err != nil {
 		t.Fatal(err)
 	}
 	if VKUseCookies() {
-		t.Fatal("expected explicit opt-out to disable cookies auth")
+		t.Fatal("expected false after explicit toggle off")
 	}
 }
 
-func TestVKUseCookiesTogglePersist(t *testing.T) {
-	dir := t.TempDir()
-	old := vkSettingsPath
-	vkSettingsPath = func() string { return filepath.Join(dir, "vk-auth.json") }
-	defer func() {
-		vkSettingsPath = old
-		vkSettingsExplicit.Store(false)
-		_ = SetVKUseCookies(false)
-	}()
-
-	if err := SetVKUseCookies(true); err != nil {
-		t.Fatal(err)
-	}
-	if !VKUseCookiesExplicit() {
-		t.Fatal("expected explicit true")
-	}
-	loadVKAuthSettings()
-	if !VKUseCookiesExplicit() {
-		t.Fatal("expected persisted true")
+func TestVKCookiesStatusAnonymousHint(t *testing.T) {
+	resetVKAuthSettings()
+	_, hint := VKCookiesStatus()
+	if hint == "" {
+		t.Fatal("expected hint")
 	}
 }
 

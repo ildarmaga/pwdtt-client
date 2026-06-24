@@ -278,24 +278,23 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 	}
 
 	if VKUseCookies() {
-		if cookieHeader, err := LoadVKCookieHeader(); err == nil && cookieHeader != "" {
-			log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid)...", streamID)
-			user, pass, addrs, err := getVKCredsViaCookies(ctx, link, streamID, cookieHeader)
-			if err == nil {
-				log.Printf("[STREAM %d] [VK Auth] Cookie path succeeded", streamID)
-				return user, pass, addrs, nil
-			}
-			log.Printf("[STREAM %d] [VK Auth] Cookie path failed: %v", streamID, err)
-			if isVKParticipantFlood(err) {
-				return "", "", nil, fmt.Errorf("VK flood: слишком много join к этому звонку — создайте новый hash и подождите 15–30 мин (%w)", err)
-			}
-			if isVKBrokenToken(err) || strings.Contains(err.Error(), "cookies expired") || strings.Contains(err.Error(), "empty access_token") {
-				return "", "", nil, err
-			}
+		cookieHeader, err := LoadVKCookieHeader()
+		if err != nil || cookieHeader == "" {
+			return "", "", nil, fmt.Errorf("VK cookies включены, но remixsid не найден — сохраните cookies в настройках")
 		}
-	} else {
-		log.Printf("[STREAM %d] [VK Auth] Cookies disabled — anonymous path", streamID)
+		log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid)...", streamID)
+		user, pass, addrs, err := getVKCredsViaCookies(ctx, link, streamID, cookieHeader)
+		if err == nil {
+			log.Printf("[STREAM %d] [VK Auth] Cookie path succeeded", streamID)
+			return user, pass, addrs, nil
+		}
+		log.Printf("[STREAM %d] [VK Auth] Cookie path failed: %v", streamID, err)
+		if isVKParticipantFlood(err) {
+			return "", "", nil, fmt.Errorf("VK flood: слишком много join к этому звонку — создайте новый hash и подождите 15–30 мин (%w)", err)
+		}
+		return "", "", nil, fmt.Errorf("VK cookies: %w", err)
 	}
+	log.Printf("[STREAM %d] [VK Auth] Cookies disabled — anonymous path", streamID)
 
 	// Prefer VK Calls path via api.vk.me (works when login.vk.ru is blocked).
 	var vkCallsErr error
@@ -321,9 +320,6 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 		if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
 			return "", "", nil, err
 		}
-		if isVKBrokenToken(err) {
-			return "", "", nil, fmt.Errorf("VK okcdn отклонил anonymous token — включите cookies (remixsid) или создайте новый звонок: %w", err)
-		}
 		if isRetryableVKCallsError(err) && attempt+1 < vkCallsRetryLimit {
 			log.Printf("[STREAM %d] [VK Auth] VK Calls retryable error: %v", streamID, err)
 			continue
@@ -332,10 +328,6 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 	}
 
 	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v", streamID, vkCallsErr)
-
-	if isVKBrokenToken(vkCallsErr) {
-		return "", "", nil, fmt.Errorf("VK anonymous join закрыт на okcdn — нужны cookies (remixsid): %w", vkCallsErr)
-	}
 
 	log.Printf("[STREAM %d] [VK Auth] falling back to legacy (login.vk.ru)...", streamID)
 
