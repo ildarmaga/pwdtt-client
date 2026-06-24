@@ -6,7 +6,8 @@ import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies } from '../../wailsjs/go/backend/App';
+import type { backend } from '../../wailsjs/go/models';
 
 interface Props {
   onClose: () => void;
@@ -24,6 +25,15 @@ export default function Settings({ onClose }: Props) {
   const [advancedConfirm, setAdvancedConfirm] = useState(false);
   const [deviceId, setDeviceId] = useState('');
   const [idCopied, setIdCopied] = useState(false);
+  const [vkCookies, setVkCookies] = useState('');
+  const [vkStatus, setVkStatus] = useState<backend.VKCookiesStatus | null>(null);
+  const [vkSaveMsg, setVkSaveMsg] = useState('');
+
+  const refreshVkStatus = () => {
+    GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
+  };
+
+  useEffect(() => { refreshVkStatus(); }, []);
 
   // Sync autoStart from backend on open
   useEffect(() => {
@@ -117,6 +127,16 @@ export default function Settings({ onClose }: Props) {
         .st-confirm-btn { padding: 8px 18px; border-radius: 8px; border: none; font-size: 13px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; }
         .st-confirm-btn--cancel { background: var(--seg-bg); color: var(--text); }
         .st-confirm-btn--ok { background: var(--accent); color: var(--accent-fg); }
+        .st-vk-block { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-2); }
+        .st-vk-hint { font-size: 11px; color: var(--text-3); line-height: 1.45; margin-bottom: 8px; }
+        .st-vk-status { font-size: 12px; margin-bottom: 8px; color: var(--text-2); }
+        .st-vk-status--ok { color: #22c55e; }
+        .st-vk-status--bad { color: #ef4444; }
+        .st-vk-textarea { width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 11px; font-family: 'Geist Mono', ui-monospace, monospace; background: var(--input-bg); color: var(--text); box-sizing: border-box; }
+        .st-vk-actions { display: flex; gap: 8px; margin-top: 8px; }
+        .st-vk-btn { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
+        .st-vk-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+        .st-vk-msg { font-size: 11px; color: var(--text-3); margin-top: 6px; min-height: 16px; }
       `}</style>
       <div className="st-overlay" onClick={handleClose}>
         <div className="st-modal" onClick={e => e.stopPropagation()}>
@@ -190,6 +210,52 @@ export default function Settings({ onClose }: Props) {
               </button>
             </div>
           )}
+
+          <div className={`st-vk-block${locked ? ' st-locked' : ''}`}>
+            <div className="st-vk-hint">
+              VK закрыла анонимный вход в звонки. Вставьте cookies с remixsid (Export Cookies из creator-app или JSON из панели WDTT).
+            </div>
+            <div className={`st-vk-status${vkStatus?.ok ? ' st-vk-status--ok' : vkStatus?.expired ? ' st-vk-status--bad' : ''}`}>
+              {vkStatus?.hint ?? 'Проверка cookies…'}
+            </div>
+            {vkStatus?.path && (
+              <div className="st-vk-hint" style={{ marginBottom: 6 }}>{vkStatus.path}</div>
+            )}
+            <textarea
+              className="st-vk-textarea"
+              placeholder={'[{"name":"remixsid","value":"..."}] или remixsid=...; remixlang=0'}
+              value={vkCookies}
+              onChange={e => setVkCookies(e.target.value)}
+            />
+            <div className="st-vk-actions">
+              <button
+                className="st-vk-btn st-vk-btn--primary"
+                onClick={async () => {
+                  try {
+                    await SaveVKCookies(vkCookies.trim());
+                    setVkSaveMsg('Cookies сохранены');
+                    refreshVkStatus();
+                  } catch (e) {
+                    setVkSaveMsg(String(e));
+                  }
+                }}
+              >
+                Сохранить cookies
+              </button>
+              <button
+                className="st-vk-btn"
+                onClick={async () => {
+                  await ClearVKCookies();
+                  setVkCookies('');
+                  setVkSaveMsg('Cookies удалены');
+                  refreshVkStatus();
+                }}
+              >
+                Очистить
+              </button>
+            </div>
+            <div className="st-vk-msg">{vkSaveMsg}</div>
+          </div>
 
           <button
             className="st-hash-btn"

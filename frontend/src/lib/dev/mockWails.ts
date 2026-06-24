@@ -152,6 +152,9 @@ function installGoMock() {
         SetTrayEnabled: asyncVoid,
         SetVKThroughTunnel: asyncVoid,
         GetVKThroughTunnel: async () => false,
+        GetVKCookiesStatus: async () => ({ ok: false, expired: false, hint: 'dev mock — no cookies', path: '~/.config/pwdtt/secrets/cookies-vk.json' }),
+        SaveVKCookies: asyncVoid,
+        ClearVKCookies: asyncVoid,
       },
     },
   };

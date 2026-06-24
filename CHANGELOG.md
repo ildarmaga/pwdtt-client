@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.41] — 2026-06-24
+
+### VK (анонимный вход закрыт)
+- **Вход через cookies (remixsid).** VK больше не принимает анонимный join (`error.webrtc.auth.anonym_token.not_found`). Клиент пробует cookie-путь первым: `web_token` → `getCallToken` → join без anonymToken.
+- **Настройки → VK cookies** — вставка JSON/`remixsid=...`, сохранение в `~/.config/pwdtt/secrets/cookies-vk.json`.
+- **Проверка срока cookies** — статус показывает «устарели», если `remixsid` есть, но `web_token` не выдаёт токен.
+- **Fallback на legacy/VK Calls** сохранён, если cookies не заданы.
+
 ## [0.3.40] — 2026-06-20
 
 ### Стабильность (cred pool как в anton48/vk-turn-proxy-ios)
