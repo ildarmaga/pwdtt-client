@@ -6,7 +6,7 @@ import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
 
 interface Props {
@@ -28,12 +28,20 @@ export default function Settings({ onClose }: Props) {
   const [vkCookies, setVkCookies] = useState('');
   const [vkStatus, setVkStatus] = useState<backend.VKCookiesStatus | null>(null);
   const [vkSaveMsg, setVkSaveMsg] = useState('');
+  const [vkUseCookies, setVkUseCookies] = useState(false);
 
   const refreshVkStatus = () => {
-    GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
+    GetVKCookiesStatus().then(s => {
+      setVkStatus(s);
+      setVkUseCookies(!!s?.useCookies);
+    }).catch(() => setVkStatus(null));
   };
 
   useEffect(() => { refreshVkStatus(); }, []);
+
+  useEffect(() => {
+    GetVKUseCookies().then(setVkUseCookies).catch(() => {});
+  }, []);
 
   // Sync autoStart from backend on open
   useEffect(() => {
@@ -212,48 +220,73 @@ export default function Settings({ onClose }: Props) {
           )}
 
           <div className={`st-vk-block${locked ? ' st-locked' : ''}`}>
-            <div className="st-vk-hint">
-              VK закрыла анонимный вход в звонки. Вставьте cookies с remixsid (Export Cookies из creator-app или JSON из панели WDTT).
-            </div>
-            <div className={`st-vk-status${vkStatus?.ok ? ' st-vk-status--ok' : vkStatus?.expired ? ' st-vk-status--bad' : ''}`}>
-              {vkStatus?.hint ?? 'Проверка cookies…'}
-            </div>
-            {vkStatus?.path && (
-              <div className="st-vk-hint" style={{ marginBottom: 6 }}>{vkStatus.path}</div>
-            )}
-            <textarea
-              className="st-vk-textarea"
-              placeholder={'[{"name":"remixsid","value":"..."}] или remixsid=...; remixlang=0'}
-              value={vkCookies}
-              onChange={e => setVkCookies(e.target.value)}
-            />
-            <div className="st-vk-actions">
+            <div className="st-row" style={{ marginBottom: 10 }}>
+              <div>
+                <span>VK cookies (remixsid)</span>
+                <div className="st-vk-hint" style={{ marginTop: 4 }}>
+                  {vkUseCookies
+                    ? 'Вход через cookies. Если не работает — выключите и попробуйте анонимно.'
+                    : 'Анонимный вход (как раньше). Если VK блокирует — включите cookies.'}
+                </div>
+              </div>
               <button
-                className="st-vk-btn st-vk-btn--primary"
+                className={`st-toggle st-toggle--${vkUseCookies ? 'on' : 'off'}`}
+                disabled={locked}
                 onClick={async () => {
+                  const next = !vkUseCookies;
                   try {
-                    await SaveVKCookies(vkCookies.trim());
-                    setVkSaveMsg('Cookies сохранены');
+                    await SetVKUseCookies(next);
+                    setVkUseCookies(next);
                     refreshVkStatus();
                   } catch (e) {
                     setVkSaveMsg(String(e));
                   }
                 }}
-              >
-                Сохранить cookies
-              </button>
-              <button
-                className="st-vk-btn"
-                onClick={async () => {
-                  await ClearVKCookies();
-                  setVkCookies('');
-                  setVkSaveMsg('Cookies удалены');
-                  refreshVkStatus();
-                }}
-              >
-                Очистить
-              </button>
+              />
             </div>
+            <div className={`st-vk-status${vkStatus?.ok ? ' st-vk-status--ok' : vkStatus?.expired ? ' st-vk-status--bad' : ''}`}>
+              {vkStatus?.hint ?? 'Проверка…'}
+            </div>
+            {vkUseCookies && (
+              <>
+                {vkStatus?.path && (
+                  <div className="st-vk-hint" style={{ marginBottom: 6 }}>{vkStatus.path}</div>
+                )}
+                <textarea
+                  className="st-vk-textarea"
+                  placeholder={'[{"name":"remixsid","value":"..."}] или remixsid=...; remixlang=0'}
+                  value={vkCookies}
+                  onChange={e => setVkCookies(e.target.value)}
+                />
+                <div className="st-vk-actions">
+                  <button
+                    className="st-vk-btn st-vk-btn--primary"
+                    onClick={async () => {
+                      try {
+                        await SaveVKCookies(vkCookies.trim());
+                        setVkSaveMsg('Cookies сохранены');
+                        refreshVkStatus();
+                      } catch (e) {
+                        setVkSaveMsg(String(e));
+                      }
+                    }}
+                  >
+                    Сохранить cookies
+                  </button>
+                  <button
+                    className="st-vk-btn"
+                    onClick={async () => {
+                      await ClearVKCookies();
+                      setVkCookies('');
+                      setVkSaveMsg('Cookies удалены');
+                      refreshVkStatus();
+                    }}
+                  >
+                    Очистить
+                  </button>
+                </div>
+              </>
+            )}
             <div className="st-vk-msg">{vkSaveMsg}</div>
           </div>
 

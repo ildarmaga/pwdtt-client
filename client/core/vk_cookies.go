@@ -100,9 +100,12 @@ func ClearVKCookies() error {
 
 // VKCookiesStatus reports whether remixsid is configured and still valid.
 func VKCookiesStatus() (ok bool, hint string) {
+	if !VKUseCookies() {
+		return false, "Cookies выключены — используется анонимный вход в VK."
+	}
 	header, err := LoadVKCookieHeader()
 	if err != nil || header == "" {
-		return false, "Загрузите cookies VK (remixsid) — анонимный вход в звонки закрыт."
+		return false, "Включите cookies и вставьте remixsid (анонимный вход может не работать)."
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
 		return false, vkCookieExpiredHint

@@ -261,14 +261,18 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 		return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
 	}
 
-	if cookieHeader, err := LoadVKCookieHeader(); err == nil && cookieHeader != "" {
-		log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid)...", streamID)
-		user, pass, addrs, err := getVKCredsViaCookies(ctx, link, streamID, cookieHeader)
-		if err == nil {
-			log.Printf("[STREAM %d] [VK Auth] Cookie path succeeded", streamID)
-			return user, pass, addrs, nil
+	if VKUseCookies() {
+		if cookieHeader, err := LoadVKCookieHeader(); err == nil && cookieHeader != "" {
+			log.Printf("[STREAM %d] [VK Auth] Trying cookie path (remixsid)...", streamID)
+			user, pass, addrs, err := getVKCredsViaCookies(ctx, link, streamID, cookieHeader)
+			if err == nil {
+				log.Printf("[STREAM %d] [VK Auth] Cookie path succeeded", streamID)
+				return user, pass, addrs, nil
+			}
+			log.Printf("[STREAM %d] [VK Auth] Cookie path failed: %v", streamID, err)
 		}
-		log.Printf("[STREAM %d] [VK Auth] Cookie path failed: %v", streamID, err)
+	} else {
+		log.Printf("[STREAM %d] [VK Auth] Cookies disabled — anonymous path", streamID)
 	}
 
 	// Prefer VK Calls path via api.vk.me (works when login.vk.ru is blocked).

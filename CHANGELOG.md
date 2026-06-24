@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.42] — 2026-06-24
+
+### VK auth
+- **Переключатель «VK cookies»** в настройках: выключено — анонимный вход (VK Calls + legacy, как раньше); включено — сначала remixsid из cookies, затем fallback на анонимные пути.
+- Настройка сохраняется в `~/.config/pwdtt/settings/vk-auth.json`.
+
 ## [0.3.41] — 2026-06-24
 
 ### VK (анонимный вход закрыт)
