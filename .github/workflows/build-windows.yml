@@ -1,0 +1,65 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build Windows app
+        shell: bash
+        run: |
+          wails build -platform windows/amd64 -clean -ldflags "-s -w"
+          ls -la build/bin
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=win-build-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdtt-windows-amd64
+          path: build/bin/wdtt.exe
+          retention-days: 90
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: WDTT Windows ${{ steps.tag.outputs.tag }}
+          make_latest: true
+          body: |
+            **WDTT Desktop (Windows x64)** — `wdtt.exe`
+
+            - commit: ${{ github.sha }}
+            - run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          files: |
+            build/bin/wdtt.exe
+          fail_on_unmatched_files: true
