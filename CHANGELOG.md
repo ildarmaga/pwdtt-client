@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.53] — 2026-06-25
+
+### WB Stream — DNS/UDP через TUN, быстрее «оживает» интернет
+- **SOCKS5 UDP ASSOCIATE.** tun2socks гонял DNS (1.1.1.1:53, 8.8.8.8:53) через SOCKS, а joiner принимал только TCP CONNECT — отсюда сотни `UDP ASSOCIATE: command not supported` и задержка, пока приложения не перейдут на TCP/кэш DNS. Теперь UDP (DNS и прочее) туннелируется через WBT на creator.
+- После `TUNNEL CONNECTED` интернет через полный VPN должен подниматься заметно быстрее; TCP как и раньше работал, тормозил именно UDP/DNS.
+
 ## [0.3.52] — 2026-06-25
 
 ### Сборка и релиз — готовый `.exe` через CI
