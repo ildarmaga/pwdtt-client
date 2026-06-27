@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.55] — 2026-06-28
+
+### WB Stream — фикс обрыва TUN через ~5 с (routing loop)
+- **TURN/STUN больше не уходит в свой же туннель.** После поднятия wintun WebRTC-трафик к `wb-stream-turn-1.wb.ru` (185.62.200.94:3478/5349) и SFU-реле шёл через SOCKS→WBT вместо физического NIC — ICE деградировал, сервер слал `PARTICIPANT_REMOVED`, WebRTC закрывался и начинался цикл переподключений.
+- Добавлен bypass для TURN (`wb-stream-turn-1.wb.ru`), RTC-хоста из сессии и всех ICE-server hostname из join-ответа; SFU-кандидаты из SDP парсятся построчно.
+- **Host-кандидат с IP туннеля (10.99.0.x) больше не публикуется** — Pion фильтрует адреса подсети wintun.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.54] — 2026-06-28
 
 ### WB Stream — фикс «обрывистости» (рывки при сёрфинге)
