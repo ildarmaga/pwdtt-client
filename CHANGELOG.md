@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.56] — 2026-06-28
+
+### WB Stream — DNS/UDP без шторма smux-стримов
+- **Пул UDP поверх WBT.** Раньше каждый DNS-запрос (и любой UDP datagram) открывал новый smux stream → лавина `SOCKS UDP ASSOCIATE` и лишний VP8 трафик. Теперь joiner держит **один smux stream на пару host:port** (1.1.1.1:53, 8.8.8.8:53) и шлёт последующие datagram'ы по нему; creator мультиплексирует ответы в том же stream.
+- Idle-потоки закрываются через 45 с без запросов.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.55] — 2026-06-28
 
 ### WB Stream — фикс обрыва TUN через ~5 с (routing loop)
