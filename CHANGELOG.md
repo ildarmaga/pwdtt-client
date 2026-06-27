@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.57] — 2026-06-28
+
+### WB Stream — один shared SOCKS UDP relay
+- **Убран шторм `SOCKS UDP ASSOCIATE`.** tun2socks открывает ASSOCIATE на каждый UDP-поток; joiner раньше поднимал отдельный `ListenUDP` на каждый — сотни строк в логе. Теперь **один shared relay** на `127.0.0.1` для всех ASSOCIATE; smux-пул (v0.3.56) продолжает держать 1 stream на `host:port`.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.56] — 2026-06-28
 
 ### WB Stream — DNS/UDP без шторма smux-стримов
