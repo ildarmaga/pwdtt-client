@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.62] — 2026-06-28
+
+### WB Stream — фикс зависания «Подключение…» / 2 ГБ RAM / SOCKS убран в TUN
+- **Deadlock в `desktoptun.Start()`**: метод держал `t.mu` на всё время netsh/route и вызывал `AddBypassIP` (повторный lock) — TUN никогда доходил до `STATUS:TUN_ACTIVE`, UI застревал на «Подключение…». WebRTC bypass в это время тоже блокировался на mutex.
+- **Broadcast/multicast UDP** (`10.99.0.255:137`, `10.99.0.255:27036` и т.д.) отбрасываются в диалере — каждый пакет раньше поднимал отдельный PacketConn + горутины → раздувание памяти до ~2 ГБ.
+- **SOCKS loopback отключён в TUN+inproc** (по умолчанию): joiner не биндит `127.0.0.1:1080` и не пишет `wbt: SOCKS5 on …`; warmup идёт напрямую через netstack dialer (`warmupTunnel`). SOCKS остаётся только для фолбэка (`-tun-inproc=false` или TUN недоступен).
+- **Тихие логи tun2socks**: уровень `silent` после `CreateStack` — нет флуда `[TCP]/[UDP]` на каждый флоу.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux) + Wails дистрибутивы.
+
 ## [0.3.61] — 2026-06-28
 
 ### WB Stream — LAN (RFC1918) больше не заходит в туннель + тихие логи netstack

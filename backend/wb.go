@@ -100,7 +100,7 @@ func (m *WBManager) Connect(room string) error {
 	}
 
 	m.emitLog("INFO", "Подключение WB Stream…")
-	m.emitLog("GO", fmt.Sprintf("wb: room %s · socks 127.0.0.1:%d", maskRoom(room), m.socksPort))
+	m.emitLog("GO", fmt.Sprintf("wb: room %s · tun netstack", maskRoom(room)))
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	cmd := exec.Command(bin,
@@ -194,7 +194,7 @@ func (m *WBManager) readOutput(r io.Reader) {
 		case strings.HasPrefix(line, "STATS "):
 			m.handleStats(line)
 		case strings.Contains(line, "STATUS:TUNNEL_CONNECTED"):
-			m.emitLog("STATUS", fmt.Sprintf("WB туннель · SOCKS5 %s, поднимаю VPN…", m.SocksAddr()))
+			m.emitLog("STATUS", "WB туннель готов · поднимаю VPN…")
 		case strings.Contains(line, "STATUS:TRAFFIC_READY"):
 			m.emitLog("STATUS", "Трафик через туннель проверен")
 		case strings.Contains(line, "TUN ACTIVE"),
