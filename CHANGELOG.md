@@ -1,6 +1,40 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.67] — 2026-06-28
+
+### WB Stream — фикс «туннель активен, трафик не идёт» после reconnect
+- **relay/creator**: `SwapTunnel` пересоздаёт smux-server после reset KCP (раньше smux оставался на мёртвой сессии).
+- **relay**: rebind на sub offer + sub ICE (reconnect без смены ICE state).
+- **joiner**: peer epoch restart пересоздаёт KCP+smux.
+- **UI**: «Подключено» только после `TRAFFIC_READY` (warmup ipify), не при поднятии TUN.
+- Сервер + клиент пересобраны.
+
+## [0.3.66] — 2026-06-28
+
+### WB Stream — логи как VK + быстрее загрузка страниц
+- **Логи**: фильтр `classifyWBLog` — убраны тысячи `[GO]` vp8/lk-video/signal/ping; только `[WB]` INFO/WARN/ERROR.
+- **relay**: убраны per-frame логи в `vp8tunnel` и `session.readVP8Track`.
+- **Скорость TUN**: VP8 fps/batch 30/48 (было 20/32) — ~2× полоса для HTTP, меньше «думает перед загрузкой».
+- **UI**: строка подключения WB — INFO вместо GO.
+- Пересобран `wdtt-windows-amd64.exe`.
+
+## [0.3.65] — 2026-06-28
+
+### WB Stream — in-process (как VK), без отдельного wbt-joiner
+- **WDTT**: WB туннель работает внутри `wdtt-app` через `wbjrunner` — в Task Manager не появляется отдельный `wbt-joiner.exe`.
+- **relay**: логика joiner вынесена в `wbjrunner` (CLI `wbt-joiner` — тонкая обёртка для E2E).
+- Пересобран `wdtt-windows-amd64.exe`.
+
+## [0.3.64] — 2026-06-28
+
+### WB Stream — фикс утечки памяти (8 ГБ) + счётчики трафика + VK-style relay
+- **Память**: убрана goroutine на каждый UDP-пакет; лимит 256 smux-потоков / 128 UDP-handler'ов; smux-буферы 4 МБ / 512 КБ.
+- **VK-style netstack**: вместо глобального `tunnel.T()` + SOCKS — прямой relay wintun → smux (`directHandler`), как `vkwg` → `tnet.DialContext`.
+- **VP8 в TUN-режиме**: fps capped 20, batch 32 — меньше CPU/RAM на полном VPN.
+- **UI stats**: rx/tx в netstack-пути.
+- Пересобран joiner (Win/Linux) + `wdtt-windows-amd64.exe`.
+
 ## [0.3.63] — 2026-06-28
 
 ### WB Stream — SOCKS полностью убран (netstack VPN как VK/WG)

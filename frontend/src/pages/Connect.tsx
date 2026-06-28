@@ -95,6 +95,11 @@ const TUNNEL_LABEL: Record<TunnelState, string> = {
   disconnecting: 'Отключение...',
 };
 
+function maskRoomPreview(room: string) {
+  const id = room.includes('/') ? room.split('/').pop()! : room;
+  return id.length <= 8 ? id : id.slice(0, 8) + '…';
+}
+
 export default function Connect() {
   const [servers, setServers] = useState<Server[]>(() => serverStore.getAll());
   const [selected, setSelected] = useState<Server | null>(() => {
@@ -307,7 +312,7 @@ export default function Connect() {
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
     logStore.push('INFO', 'Подключение WB Stream…');
-    logStore.push('GO', `wb: ${selected!.name} · room ${room}`);
+    logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       await WailsConnectWB(room);
     } catch (e) {
