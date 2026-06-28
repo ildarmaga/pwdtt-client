@@ -20,8 +20,7 @@ import (
 )
 
 // WBManager управляет WB Stream туннелем: запускает встроенный wbt-joiner
-// подпроцессом, поднимает локальный SOCKS5 и транслирует его вывод в
-// Wails-события (log / state_changed / tunnel_stats), как VK-оркестратор.
+// (netstack VPN, без локального SOCKS) и транслирует вывод в Wails-события.
 type WBManager struct {
 	ctx   context.Context
 	mu    sync.Mutex
@@ -29,21 +28,12 @@ type WBManager struct {
 	stdin io.WriteCloser
 	done  chan struct{}
 	stop  bool
-
-	socksPort int
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
-	return &WBManager{ctx: ctx, socksPort: 1080}
+	return &WBManager{ctx: ctx}
 }
 
-// SocksAddr — адрес локального SOCKS5, который поднимает joiner.
-func (m *WBManager) SocksAddr() string {
-	return fmt.Sprintf("127.0.0.1:%d", m.socksPort)
-}
-
-// extractBinary распаковывает встроенный бинарь во временную папку и делает
-// его исполняемым. Имя содержит хеш, чтобы переустанавливать при обновлении.
 func extractWBJoiner() (string, error) {
 	data := wbjoiner.Binary()
 	if len(data) == 0 {
@@ -75,7 +65,6 @@ func (m *WBManager) IsRunning() bool {
 	return m.cmd != nil
 }
 
-// Connect запускает WBT-joiner для указанной комнаты (wbstream://<id>).
 func (m *WBManager) Connect(room string) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
@@ -93,30 +82,24 @@ func (m *WBManager) Connect(room string) error {
 	if err != nil {
 		return err
 	}
-	// Кладём wintun.dll рядом с joiner-ом, иначе tun2socks не поднимет TUN
-	// (на Windows). На других ОС — no-op.
 	if err := placeWintunNextTo(filepath.Dir(bin)); err != nil {
 		m.emitLog("WARN", fmt.Sprintf("wintun.dll не распакован (TUN может не подняться): %v", err))
 	}
 
 	m.emitLog("INFO", "Подключение WB Stream…")
-	m.emitLog("GO", fmt.Sprintf("wb: room %s · tun netstack", maskRoom(room)))
+	m.emitLog("GO", fmt.Sprintf("wb: room %s · netstack VPN", maskRoom(room)))
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	cmd := exec.Command(bin,
 		"--room", room,
-		"--socks-host", "127.0.0.1",
-		"--socks-port", strconv.Itoa(m.socksPort),
 		"--name", "WDTT",
 		"--tun",
 	)
-	hideConsoleWindow(cmd) // прячем окно консоли подпроцесса (Windows)
+	hideConsoleWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	// stdin используется для graceful-shutdown: закрытие пайпа просит joiner
-	// корректно снять TUN/маршруты (на Windows SIGTERM недоступен).
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -152,11 +135,6 @@ func (m *WBManager) Connect(room string) error {
 	return nil
 }
 
-// Disconnect останавливает WBT-joiner. Сначала просит его корректно
-// завершиться (закрываем stdin → joiner снимает TUN/маршруты), и только
-// если он не успел — убиваем принудительно. Это критично на Windows:
-// жёсткий Kill оставил бы wintun-адаптер и default-маршруты, и интернет
-// остался бы сломанным после отключения.
 func (m *WBManager) Disconnect() {
 	m.mu.Lock()
 	m.stop = true
@@ -202,38 +180,11 @@ func (m *WBManager) readOutput(r io.Reader) {
 			runtime.EventsEmit(m.ctx, "state_changed", "running")
 			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
 		case strings.Contains(line, "STATUS:TUN_UNAVAILABLE"):
-			runtime.EventsEmit(m.ctx, "state_changed", "running")
-			m.emitLog("WARN", "TUN недоступен — работает только SOCKS5 (проверьте права администратора)")
-		case strings.Contains(line, "STATUS:SOCKS_PORT:"):
-			m.handleSocksPort(line)
-		case strings.Contains(line, "STATUS:SOCKS_BIND_FAILED"):
-			m.emitLog("ERROR", fmt.Sprintf("Порт SOCKS5 %s занят — отключитесь и подключитесь заново", m.SocksAddr()))
 			runtime.EventsEmit(m.ctx, "state_changed", "error")
+			m.emitLog("ERROR", "TUN недоступен — запустите WDTT от администратора")
 		default:
 			m.emitLog("GO", line)
 		}
-	}
-}
-
-// handleSocksPort обновляет фактический порт SOCKS5, который joiner выбрал
-// (при занятом порте он берёт свободный сам). Порт внутренний — его использует
-// tun2socks внутри joiner-а, — поэтому достаточно отразить его в UI/логах.
-func (m *WBManager) handleSocksPort(line string) {
-	idx := strings.LastIndex(line, "STATUS:SOCKS_PORT:")
-	if idx < 0 {
-		return
-	}
-	portStr := strings.TrimSpace(line[idx+len("STATUS:SOCKS_PORT:"):])
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 {
-		return
-	}
-	m.mu.Lock()
-	changed := port != m.socksPort
-	m.socksPort = port
-	m.mu.Unlock()
-	if changed {
-		m.emitLog("INFO", fmt.Sprintf("SOCKS5 порт занят — joiner использует свободный %d", port))
 	}
 }
 
@@ -256,8 +207,6 @@ func (m *WBManager) handleStats(line string) {
 			fps = v
 		}
 	}
-	// Совпадает с обработчиком VK tunnel_stats: rx, tx, workers, turnRtt, dtlsHs, internetRtt.
-	// Для WB: WBT = rtt, VP8 = fps (фронт рендерит как «N fps»), RTT = rtt.
 	runtime.EventsEmit(m.ctx, "tunnel_stats", rx, tx, 1, rtt, fps, rtt)
 }
 

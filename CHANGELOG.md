@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.63] — 2026-06-28
+
+### WB Stream — SOCKS полностью убран (netstack VPN как VK/WG)
+- **Клиент**: `wbt-joiner` больше не поднимает локальный SOCKS5 (`127.0.0.1:1080`). Только `--tun` + in-process netstack → smux-туннель (аналог wireguard-go netstack у VK). Флаги `--socks-*` и `-tun-inproc` удалены.
+- **PWDTT**: `WBManager` не передаёт socks-параметры; убраны `WBSocksAddr` и UI-строки про SOCKS5.
+- **E2E**: `test-wbt-joiner-e2e.sh` проверяет `--tun` + `STATUS:TRAFFIC_READY` + рост STATS (без curl через SOCKS).
+- Пересобран joiner (Win/Linux) + `wdtt-windows-amd64.exe`.
+
 ## [0.3.62] — 2026-06-28
 
 ### WB Stream — фикс зависания «Подключение…» / 2 ГБ RAM / SOCKS убран в TUN
