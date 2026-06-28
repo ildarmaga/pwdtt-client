@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.61] — 2026-06-28
+
+### WB Stream — LAN (RFC1918) больше не заходит в туннель + тихие логи netstack
+- **Корень проблемы «у VK тихо, у WB шторм».** Оба фронтенда захватывают весь трафик устройства одинаковыми split-default маршрутами (`0.0.0.0/1` + `128.0.0.0/1`). Но VK (wireguard-go) инкапсулирует всё в **один** UDP-поток, а WB (tun2socks netstack) поднимает **отдельный обработчик/диалер на каждый 5-tuple**. Приложение в LAN, долбящее, например, `10.54.217.44:161` (SNMP-сканер/монитор), превращалось в тысячи netstack-флоу/сек — хотя диалер в итоге дозванивался локально (`IsNonRoutableHost`), пакет уже зашёл в wintun.
+- **Фикс: LAN (RFC1918) исключён из туннеля на уровне маршрутов** (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) — bypass через оригинальный шлюз ставится в `desktoptun.Start()` ДО split-default (Windows: `route ADD … METRIC 1`; Linux: `ip route add … via gw`). Теперь LAN-трафик вообще не доходит до netstack — поведение «allow LAN», как у обычных VPN, и туннель так же тих, как VK. Своя подсеть TUN сохраняет более специфичный on-link маршрут и не задета. Маршруты снимаются в `Stop()`.
+- **Тихие логи tun2socks.** In-process путь (v0.3.60) не понижал уровень логгера tun2socks, поэтому каждый TCP/UDP-флоу писался на `info` (`tunnel/udp.go:47`) — при всплеске это тысячи строк/сек + лишний CPU. Теперь `quietTun2socksLogs()` ставит `warn` для обоих путей (in-process и SOCKS-fallback).
+- **Проверка на сервере**: pre-release gate (unit + live E2E против WB-creator) — PASS (tunnel 1с, ttf 0с, throughput 26.5 Mbps, stress PASS, exit `178.173.248.141`). Сервис `wdtt` активен, VK DTLS-хендшейки проходят, штормов/exhaust в логах нет.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.60] — 2026-06-28
 
 ### WB Stream — убран локальный SOCKS из полного VPN (единый netstack-фронтенд)
