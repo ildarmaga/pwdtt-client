@@ -194,12 +194,15 @@ func (m *WBManager) readOutput(r io.Reader) {
 		case strings.HasPrefix(line, "STATS "):
 			m.handleStats(line)
 		case strings.Contains(line, "STATUS:TUNNEL_CONNECTED"):
-			runtime.EventsEmit(m.ctx, "state_changed", "running")
-			m.emitLog("STATUS", fmt.Sprintf("WB туннель активен · SOCKS5 %s", m.SocksAddr()))
+			m.emitLog("STATUS", fmt.Sprintf("WB туннель · SOCKS5 %s, поднимаю VPN…", m.SocksAddr()))
+		case strings.Contains(line, "STATUS:TRAFFIC_READY"):
+			m.emitLog("STATUS", "Трафик через туннель проверен")
 		case strings.Contains(line, "TUN ACTIVE"),
 			strings.Contains(line, "STATUS:TUN_ACTIVE"):
+			runtime.EventsEmit(m.ctx, "state_changed", "running")
 			m.emitLog("STATUS", "Полный VPN активен — весь трафик через WB Stream")
 		case strings.Contains(line, "STATUS:TUN_UNAVAILABLE"):
+			runtime.EventsEmit(m.ctx, "state_changed", "running")
 			m.emitLog("WARN", "TUN недоступен — работает только SOCKS5 (проверьте права администратора)")
 		case strings.Contains(line, "STATUS:SOCKS_PORT:"):
 			m.handleSocksPort(line)

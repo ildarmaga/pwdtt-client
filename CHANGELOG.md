@@ -1,6 +1,17 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.58] — 2026-06-28
+
+### WB Stream — «поднят, но трафика нет» и обрывы при speedtest
+- **UI «Подключено» только после TUN ACTIVE**, а не сразу после WebRTC — раньше статус «активен» показывался до поднятия wintun/маршрутов, и 1–3 мин казались «мёртвыми».
+- **VP8 pacing 30/64** (как у creator) вместо 24/30 — выше пропускная способность, меньше затыков при параллельных загрузках.
+- **Warmup после TUN:** joiner сам прогоняет HTTP через SOCKS и пишет `STATUS:TRAFFIC_READY` — KCP/DNS прогреты до первого клика пользователя.
+- **smux буферы увеличены** (2 MB stream / 16 MB session) — параллельные TCP (speedtest) не вешают туннель.
+- **Headless E2E-тест** `test-before-release.sh` на сервере: unit + live joiner против creator, замер tunnel/ttf/throughput/stress.
+- **stdin EOF** больше не убивает joiner в headless/daemon (только pipe от pwdtt).
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.57] — 2026-06-28
 
 ### WB Stream — один shared SOCKS UDP relay
