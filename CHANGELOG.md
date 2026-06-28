@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.60] — 2026-06-28
+
+### WB Stream — убран локальный SOCKS из полного VPN (единый netstack-фронтенд)
+- **Нет больше петли `tun2socks → 127.0.0.1:1080 → joiner`.** В режиме `--tun` netstack tun2socks теперь дёргает диалер **внутри процесса** (`tunnel.SetDialer` + `core.CreateStack`): пакеты из wintun сразу превращаются в smux-стримы WB-туннеля. Это устраняет сам класс багов «SOCKS port exhaustion» / шторма соединений к sink-адресам (например `172.31.255.254`), а не лечит симптом.
+- **Единый принцип фронтенда с VK**: VK поднимает wireguard-go netstack, WB теперь тоже работает через in-process netstack (gvisor) вместо локального SOCKS-сервера. Транспорт WB остаётся прежним (KCP+smux поверх VP8 до creator'а — он по-прежнему терминирует соединения как прокси, отдельный WG-bridge на сервере не требуется).
+- **Диалер**: новые `Joiner.DialTCP` (smux-stream + отсечение sink/fake-dns/локальных адресов) и `Joiner.DialUDP` (`net.PacketConn` поверх пула UDP-стримов, для DNS).
+- **Фолбэк сохранён**: флаг `-tun-inproc=false` возвращает старый путь `tun2socks → SOCKS5`; SOCKS-сервер по-прежнему доступен для ручного режима без `--tun`.
+- **Тесты**: добавлены unit-тесты `TestWBTDialTCP`, `TestWBTDialTCPRejectsSink`, `TestWBTDialUDP` (round-trip через in-memory туннель creator↔joiner). Pre-release gate (unit + live SOCKS E2E) — PASS.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.59] — 2026-06-28
 
 ### WB Stream — шторм `172.31.255.254` / exhaustion SOCKS
