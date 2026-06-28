@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.59] — 2026-06-28
+
+### WB Stream — шторм `172.31.255.254` / exhaustion SOCKS
+- **Отклонение tunnel-sink адресов** (`172.31.255.254` wintun gateway, `10.99.0.x`) — joiner больше не делает `local dial` на сотни соединений; возвращает SOCKS fail.
+- **Bypass `172.31.255.254`** на физическом NIC при поднятии TUN — tun2socks не гоняет этот трафик в SOCKS.
+- Пересобран встроенный `wbt-joiner` (Windows/Linux).
+
 ## [0.3.58] — 2026-06-28
 
 ### WB Stream — «поднят, но трафика нет» и обрывы при speedtest
