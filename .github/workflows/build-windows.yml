@@ -12,8 +12,18 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pwdtt-client
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: pwdtt-client
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ildarmaga/wbstream-wbt
+          path: wbstream-wbt
 
       - uses: actions/setup-go@v5
         with:
