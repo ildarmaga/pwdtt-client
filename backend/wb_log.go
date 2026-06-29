@@ -45,6 +45,9 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 	}
 
 	// Errors
+	if strings.Contains(raw, "guests cannot create rooms") {
+		return "ERROR", "[WB] Сервер не вещает в комнату — owner/creator offline, обратитесь к админу", true
+	}
 	if strings.Contains(low, "fatal") || strings.Contains(low, " error") ||
 		strings.Contains(low, "ошибка") || strings.Contains(low, "failed") && !strings.Contains(raw, "retry") {
 		return "ERROR", "[WB] " + raw, true
@@ -60,11 +63,21 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 	switch {
 	case strings.Contains(raw, "TUNNEL CONNECTED"):
 		return "INFO", "[WB] Туннель WebRTC подключён", true
+	case strings.Contains(raw, "[warmup] joiner ready"):
+		if ip := extractAfter(raw, "ip="); ip != "" {
+			return "INFO", fmt.Sprintf("[WB] Joiner проверен · IP %s", ip), true
+		}
+		return "INFO", "[WB] Joiner проверен", true
 	case strings.Contains(raw, "[warmup] traffic ready"):
 		if ip := extractAfter(raw, "ip="); ip != "" {
 			return "INFO", fmt.Sprintf("[WB] Трафик через туннель проверен · IP %s", ip), true
 		}
 		return "INFO", "[WB] Трафик через туннель проверен", true
+	case strings.Contains(raw, "[warmup] OS route"):
+		if ip := extractAfter(raw, "ip="); ip != "" {
+			return "INFO", fmt.Sprintf("[WB] Браузерный маршрут · IP %s", ip), true
+		}
+		return "INFO", "[WB] Браузерный маршрут проверен", true
 	case strings.Contains(raw, "TUN ACTIVE"):
 		return "INFO", "[WB] VPN-адаптер поднят (WDTT-WB)", true
 	case strings.Contains(raw, "[wbt] room="):
@@ -89,6 +102,20 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 		return "INFO", "[WB] Шлюз LAN: " + extractGateway(raw), true
 	case strings.Contains(raw, "[wbt] tunnel swapped"):
 		return "INFO", "[WB] Туннель переподключён", true
+	case strings.Contains(raw, "joiner WBT: awaiting inbound"):
+		return "INFO", "[WB] Ожидание медиаканала от сервера…", true
+	case strings.Contains(raw, "joiner WBT: sub ICE ready"):
+		return "INFO", "[WB] Sub ICE готов · поднимаю KCP", true
+	case strings.Contains(raw, "signaling bypass refreshed"):
+		return "INFO", "[WB] Переподключение: обновляю bypass для stream.wb.ru…", true
+	case strings.Contains(raw, "WebRTC session ended") || strings.Contains(raw, "joiner cleared"):
+		return "WARN", "[WB] Сессия WebRTC завершена · переподключение…", true
+	case strings.Contains(raw, "tunnel rebound"):
+		return "INFO", "[WB] Туннель переподключён (carrier swap)", true
+	case strings.Contains(raw, "tunnel already active"):
+		return "", "", false
+	case strings.Contains(raw, "[wb] sub ICE connected — rebinding"):
+		return "", "", false
 	case strings.Contains(raw, "[wbt] obf localEpoch"):
 		return "", "", false
 	case strings.Contains(raw, "vp8tunnel: writer (re)started"):

@@ -1,6 +1,125 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.85] — 2026-06-29
+
+### WB Stream — reconnect после disconnect не стартует
+- **awaitShutdown**: 5 s + принудительный `EmergencyDown` (маршруты/DNS WDTT-WB).
+- **runner**: быстрый shutdown (session 2s, join-loop 2s, tun 4s).
+- **runGen**: stale runner не сбрасывает UI после force-reconnect.
+
+## [0.3.84] — 2026-06-29
+
+### WB Stream — «туннель уже запущен» после отключения
+- **Disconnect**: UI отключается мгновенно; cleanup в фоне.
+- **Connect**: ждёт завершения предыдущего runner (`awaitShutdown`) перед новым подключением.
+
+## [0.3.83] — 2026-06-29
+
+### WB Stream — фикс 30 с «мёртвого» интернета после подключения
+- **DNS**: netstack-путь не ставит 1.1.1.1/8.8.8.8 на WDTT-WB — Windows использует роутер (192.168.8.1), как VK.
+- **bypass**: public DNS (1.1.1.1/8.8.8.8) на physical NIC **до** split-default маршрутов.
+- **TCP**: dial timeout 30s → 12s (не ждём полминуты на зависших соединениях).
+- **warmup**: OS probe с A-only lookup (без Windows AAAA flake).
+
+## [0.3.82] — 2026-06-29
+
+### WB Stream — фикс зависания «Отключение…» (reconnect при shutdown)
+- **wbjrunner**: при Disconnect не эмитится `TUNNEL_RECONNECTING` и не ретраится join-loop.
+- **session**: `Close()` гарантированно закрывает `Done` (не ждёт 15s ICE drain на сервере).
+- **UI**: после `DisconnectWB` принудительно `idle` в `finally`.
+
+
+### WB Stream — VPN как VK (DNS + маршруты)
+- **DNS**: не перехватываем DNS на WDTT-WB — система использует роутер (192.168.8.1), как WG.
+- **bypass**: signaling + 1.1.1.1/8.8.8.8 всегда через физический NIC (аналог VK TURN exclude).
+- **warmup**: OS probe через tcp4; убран `releaseResolverBypass` (ломал Windows DNS).
+
+## [0.3.80] — 2026-06-28
+
+### WB Stream — фикс ↓0 B / UI «Подключение…» при reconnect
+- **server creator**: `RestartLink` когда joiner возвращается (sub offer skip + stale smux).
+- **warmup**: при таймауте probe UI переходит в running + WARN (не вечное «Подключение…»).
+
+## [0.3.79] — 2026-06-28
+
+### WB Stream — фикс 403 «guests cannot create rooms»
+- **server**: PingLoop при broken pipe закрывает WS → creator переподключается, не зависает.
+- **UI**: понятная ошибка если creator на сервере не вещает.
+
+## [0.3.78] — 2026-06-28
+
+### WB Stream — фикс зависания «Отключение…»
+- **shutdown**: joiner закрывается до `tun.Stop()` — gVisor не ждёт 30s на активных TCP.
+- **netstack**: таймаут 4s на `st.Wait()` при остановке TUN.
+- **session**: таймаут 5s на `sess.Close()` (DTLS).
+- **UI**: `state_changed stopped` сразу при Disconnect, не после полной очистки.
+
+## [0.3.77] — 2026-06-28
+
+### WB Stream — фикс Windows DNS leak (Яндекс видит реальный IP)
+- **bypass**: DNS 1.1.1.1/8.8.8.8 не bypass'ятся постоянно — только на окно reconnect-auth; после `TRAFFIC_READY` снимаются (Windows Smart DNS leak).
+- **warmup**: второй probe через OS route (`[warmup] OS route ip=…`) — проверка что браузер идёт через туннель.
+
+## [0.3.76] — 2026-06-28
+
+### WB Stream — фикс reconnect после tunnel lost
+- **session**: после `tunnel lost` снова вызывается `OnConnected` (WBT carrier rebind), не блокируется «skip re-fire».
+- **joiner**: sub ICE после обрыва снова поднимает KCP, если peer переподключился.
+- **server creator** (relay): при tunnel lost сбрасывается creator; при recovery — `SwapTunnel` + `RestartLink`.
+
+## [0.3.75] — 2026-06-28
+
+### WB Stream — bug-hunt: reconnect warmup + UI
+- **warmup**: при reconnect после обрыва снова запускается ipify probe (`TRAFFIC_READY`), не только первый connect.
+- **UI**: статус `connecting` при `TUNNEL_RECONNECTING` (joiner cleared).
+
+## [0.3.74] — 2026-06-28
+
+### WB Stream — фикс reconnect при активном TUN
+- **reconnect**: перед `guest-register` обновляется bypass `stream.wb.ru` / `auth-stream.wb.ru` + DNS (1.1.1.1, 8.8.8.8) через физический NIC — auth не идёт в мёртвый туннель.
+- **joiner**: сброс joiner при `session end` / `tunnel lost` (0.3.73).
+
+## [0.3.73] — 2026-06-28
+
+### WB Stream — фикс zombie после обрыва WebRTC
+- **joiner**: при `tunnel lost` / переподключении WebRTC сбрасывается KCP+joiner и поднимается заново (раньше skip duplicate OnConnected → ↓ keepalive, Яндекс видит реальный IP).
+- **WBT в стате**: показывает SRTT (реальный RTT), не RTO.
+
+## [0.3.72] — 2026-06-28
+
+### WB Stream — фикс egress (SOCKS noauth + KCP timing)
+- **server**: пустой `upstream_user` не подставляет пароль — xray SOCKS `noauth` на 10879 снова работает (раньше `dial failed: rejected auth 0xff`, ↓ 0 B).
+- **relay**: joiner WBT/KCP стартует после sub ICE + inbound VP8 (не на pub-only ICE).
+- SOCKS-клиент при явном user/pass предлагает noauth и userpass — совместимость с mixed inbound.
+
+## [0.3.71] — 2026-06-28
+
+### WB Stream — фикс KCP до входящего VP8
+- **joiner**: WBT/KCP стартует после первого VP8-фрейма от creator (sub track), не на pub-only ICE.
+- Устраняет ↓ 0 B и timeout warmup ipify при «туннель подключён».
+
+## [0.3.70] — 2026-06-28
+
+### WB Stream — фикс «↓ 0 B», warmup ipify timeout
+- **relay/session**: sub ICE/offer не вызывает повторный `OnConnected` в WBT-режиме — KCP не ломается через 1 с после connect.
+- **joiner/creator**: игнор дублирующего `OnConnected` (раньше `SwapTunnel` убивал ответный трафик).
+
+## [0.3.69] — 2026-06-28
+
+### WB Stream — стабильность как VK (без обрывов страниц)
+- **relay**: WebRTC rebind не убивает smux/KCP — браузерные TCP не рвутся при ICE recovery.
+- **relay/creator**: DNS/UDP через xray SOCKS (как TCP), не direct с VPS.
+- **desktoptun**: TCP dial 30s, UDP idle 120s, keepalive, 512 TCP relays.
+- **panel**: пустой `upstream_user` → per-user xray auth (`$password$`).
+
+## [0.3.68] — 2026-06-28
+
+### WB Stream — видимый трафик в логах и tray
+- **СТАТ каждые 3 с**: `[WB СТАТ] ↓ … ↑ … · WBT … ms` — как VK, видно что байты реально идут.
+- **Tray**: счётчики rx/tx обновляются в WB-режиме.
+- **relay**: netstack relay через `sessionstats.Copy`; сброс счётчиков при старте joiner.
+
 ## [0.3.67] — 2026-06-28
 
 ### WB Stream — фикс «туннель активен, трафик не идёт» после reconnect

@@ -383,10 +383,16 @@ export default function Connect() {
       await doConnect();
     } else if (tunnelState === 'connected' || tunnelState === 'connecting') {
       tunnelStore.set('disconnecting');
-      if (tunnelProtocol === 'wb') {
-        await WailsDisconnectWB();
-      } else {
-        await WailsDisconnect();
+      try {
+        if (tunnelProtocol === 'wb') {
+          await WailsDisconnectWB();
+        } else {
+          await WailsDisconnect();
+        }
+      } finally {
+        tunnelStore.set('idle');
+        activeServerStore.setId(null);
+        tunnelStatsStore.reset();
       }
       setReconnectAt(Date.now() + 2000);
     }
