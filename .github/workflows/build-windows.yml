@@ -24,6 +24,7 @@ jobs:
         with:
           repository: ildarmaga/wbstream-wbt
           path: wbstream-wbt
+          token: ${{ secrets.WBSTREAM_REPO_TOKEN }}
 
       - uses: actions/setup-go@v5
         with:
