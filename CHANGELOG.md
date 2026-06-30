@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.86] — 2026-06-30
+
+### WB Stream — браузер через туннель (IPv6 + DNS)
+- **IPv6**: при подключении отключается ms_tcpip6 на физических адаптерах — Chrome больше не обходит VPN по v6.
+- **DNS**: 1.1.1.1/8.8.8.8 на WDTT-WB **через туннель** (убран bypass на physical NIC).
+- **MTU**: 1380 (как WG) — меньше фрагментации на WebRTC+KCP.
+- **metric**: WDTT-WB interface metric=1 — Windows предпочитает VPN-адаптер.
+
 ## [0.3.85] — 2026-06-29
 
 ### WB Stream — reconnect после disconnect не стартует
