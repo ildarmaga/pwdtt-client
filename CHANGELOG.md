@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.88] — 2026-06-30
+
+### WB Stream — трафик в панели + egress как VK
+- **Сервер**: убран force-NL для WB SOCKS — xray маршрутизирует как VK (RU direct / NL по правилам).
+- **Сервер**: трафик WB flush каждые 3 с (не только при закрытии TCP).
+- **Клиент**: TCP dial timeout 20 s.
+
 ## [0.3.87] — 2026-06-30
 
 ### WB Stream — lordfilms / ISP DNS + browser параллель
