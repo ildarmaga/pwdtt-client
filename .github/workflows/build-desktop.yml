@@ -50,6 +50,7 @@ jobs:
             VERSION="dev"
           fi
           wails build -platform linux/amd64 -clean -o wdtt-linux-amd64 \
+            -tags webkit2_41 \
             -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
           ls -la build/bin
 
