@@ -40,7 +40,11 @@ jobs:
       - name: Build Windows app
         shell: bash
         run: |
-          wails build -platform windows/amd64 -clean -ldflags "-s -w"
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            VERSION="dev"
+          fi
+          wails build -platform windows/amd64 -clean -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
           ls -la build/bin
 
       - name: Resolve release tag

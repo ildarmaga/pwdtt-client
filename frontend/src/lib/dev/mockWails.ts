@@ -228,6 +228,18 @@ function installGoMock() {
         ClearVKCookies: async () => {
           localStorage.removeItem(VK_COOKIES_RAW_KEY);
         },
+        GetAppVersion: async () => '0.3.90',
+        CheckForUpdate: async () => ({
+          current: '0.3.90',
+          latest: '0.3.90',
+          hasUpdate: false,
+          downloadURL: '',
+          releaseURL: 'https://github.com/ildarmaga/pwdtt-client/releases',
+          checkedAt: new Date().toISOString(),
+        }),
+        StartVKLogin: async () => ({ url: 'about:blank', active: true }),
+        StopVKLogin: asyncVoid,
+        PollVKLogin: async () => ({ done: false, status: 'waiting', message: 'dev mock' }),
       },
     },
   };

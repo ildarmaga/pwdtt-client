@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Settings from '../modals/Settings';
 import DevMetricsPanel from './DevMetricsPanel';
 import DevConnectionErrorsPanel from './DevConnectionErrorsPanel';
+import UpdateBanner from './UpdateBanner';
 import { isBrowserDev } from '../lib/dev/mockWails';
 
 export default function Layout() {
@@ -41,6 +42,7 @@ export default function Layout() {
         <Outlet />
       </div>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      <UpdateBanner />
       <DevMetricsPanel />
       <DevConnectionErrorsPanel />
     </div>

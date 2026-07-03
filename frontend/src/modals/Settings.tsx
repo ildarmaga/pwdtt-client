@@ -9,7 +9,9 @@ import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, GetAppVersion, CheckForUpdate } from '../../wailsjs/go/backend/App';
+import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
 
 interface Props {
@@ -50,6 +52,10 @@ export default function Settings({ onClose }: Props) {
   const [vkStatus, setVkStatus] = useState<backend.VKCookiesStatus | null>(null);
   const [vkSaveMsg, setVkSaveMsg] = useState('');
   const [vkUseCookies, setVkUseCookies] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
+  const [updateMsg, setUpdateMsg] = useState('');
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [vkAuthOpen, setVkAuthOpen] = useState(false);
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
   const isVk = isVkProtocol(protocol);
@@ -76,6 +82,10 @@ export default function Settings({ onClose }: Props) {
   };
 
   useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
+
+  useEffect(() => {
+    GetAppVersion().then(v => setAppVersion(v || '')).catch(() => {});
+  }, []);
 
   useEffect(() => settingsStore.subscribe(s => {
     setSettings(prev => prev.tunnelProtocol === s.tunnelProtocol ? prev : { ...prev, tunnelProtocol: s.tunnelProtocol });
@@ -128,9 +138,9 @@ export default function Settings({ onClose }: Props) {
   return (
     <>
       <style>{`
-        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow-y: auto; }
-        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: 440px; max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; }
-        .st-modal-body { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; margin-right: -2px; }
+        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow-x: hidden; overflow-y: auto; }
+        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: min(440px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
+        .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 2px; }
         .st-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .st-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }
         .st-protocol-badge {
@@ -157,10 +167,10 @@ export default function Settings({ onClose }: Props) {
         }
         .st-input:focus { border-color: var(--accent); }
         .st-close { background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text); line-height: 1; padding: 0; }
-        .st-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-2); font-size: 14px; color: var(--text); }
-        .st-row--stack { flex-direction: column; align-items: stretch; gap: 6px; }
-        .st-row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-        .st-row-hint { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+        .st-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-2); font-size: 14px; color: var(--text); min-width: 0; gap: 8px; }
+        .st-row--stack { flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
+        .st-row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; width: 100%; }
+        .st-row-hint { font-size: 11px; color: var(--text-3); line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
         .st-row:last-of-type { border-bottom: none; }
         .st-toggle { width: 48px; height: 26px; border-radius: 50px; border: none; cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; }
         .st-toggle--on { background: var(--accent); }
@@ -208,9 +218,9 @@ export default function Settings({ onClose }: Props) {
         .st-vk-status { font-size: 12px; margin-bottom: 8px; color: var(--text-2); }
         .st-vk-status--ok { color: #22c55e; }
         .st-vk-status--bad { color: #ef4444; }
-        .st-vk-textarea { width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 11px; font-family: 'Geist Mono', ui-monospace, monospace; background: var(--input-bg); color: var(--text); box-sizing: border-box; }
-        .st-vk-actions { display: flex; gap: 8px; margin-top: 8px; }
-        .st-vk-btn { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
+        .st-vk-textarea { width: 100%; max-width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 11px; font-family: 'Geist Mono', ui-monospace, monospace; background: var(--input-bg); color: var(--text); box-sizing: border-box; overflow-wrap: anywhere; word-break: break-all; }
+        .st-vk-actions { display: flex; gap: 8px; margin-top: 8px; min-width: 0; }
+        .st-vk-btn { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
         .st-vk-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
         .st-vk-msg { font-size: 11px; color: var(--text-3); margin-top: 6px; min-height: 16px; }
       `}</style>
@@ -274,6 +284,43 @@ export default function Settings({ onClose }: Props) {
               </button>
             </div>
           )}
+
+          <div className="st-row st-row--stack">
+            <div className="st-row-head">
+              <span>Версия</span>
+              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{appVersion || '…'}</span>
+            </div>
+            <button
+              type="button"
+              className="st-vk-btn"
+              disabled={updateChecking}
+              onClick={async () => {
+                setUpdateChecking(true);
+                setUpdateMsg('');
+                try {
+                  const info = await CheckForUpdate();
+                  if (info.error && !info.latest) {
+                    setUpdateMsg(info.error);
+                    return;
+                  }
+                  if (info.hasUpdate) {
+                    setUpdateMsg(`Доступна ${info.latest}`);
+                    const url = info.downloadURL || info.releaseURL;
+                    if (url) BrowserOpenURL(url);
+                  } else {
+                    setUpdateMsg(info.latest ? `Актуальная версия (${info.latest})` : 'Обновлений нет');
+                  }
+                } catch (e) {
+                  setUpdateMsg(String(e));
+                } finally {
+                  setUpdateChecking(false);
+                }
+              }}
+            >
+              {updateChecking ? 'Проверка…' : 'Проверить обновления'}
+            </button>
+            {updateMsg && <div className="st-vk-msg">{updateMsg}</div>}
+          </div>
 
           {isVk && (
             <>
@@ -350,6 +397,16 @@ export default function Settings({ onClose }: Props) {
             {vkStatus?.path && (
               <div className="st-vk-hint" style={{ marginBottom: 8 }}>{vkStatus.path}</div>
             )}
+            <div className="st-vk-actions" style={{ marginBottom: vkUseCookies ? 8 : 0 }}>
+              <button
+                type="button"
+                className="st-vk-btn st-vk-btn--primary"
+                disabled={locked}
+                onClick={() => setVkAuthOpen(true)}
+              >
+                Войти через VK
+              </button>
+            </div>
             {vkUseCookies && (
               <>
                 <textarea
@@ -554,6 +611,15 @@ export default function Settings({ onClose }: Props) {
             serverStore.update(updated);
             await saveServerProfile(updated).catch(() => {});
             setProfileHashes(hashes);
+          }}
+        />
+      )}
+      {vkAuthOpen && (
+        <VKAuth
+          onClose={() => setVkAuthOpen(false)}
+          onDone={() => {
+            setVkSaveMsg('Cookies сохранены через VK login');
+            refreshVkStatus();
           }}
         />
       )}
