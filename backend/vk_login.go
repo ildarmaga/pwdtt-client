@@ -156,7 +156,14 @@ func vkHarvestCookieHeader(jar *cookiejar.Jar) (string, bool) {
 		return "", false
 	}
 	var remixsid, pCookie *http.Cookie
-	for _, raw := range []string{"https://vk.com/", "https://login.vk.com/"} {
+	urls := []string{
+		"https://vk.com/",
+		"https://login.vk.com/",
+		"https://id.vk.com/",
+		"https://m.vk.com/",
+		"https://oauth.vk.com/",
+	}
+	for _, raw := range urls {
 		u, err := url.Parse(raw)
 		if err != nil {
 			continue
@@ -174,10 +181,14 @@ func vkHarvestCookieHeader(jar *cookiejar.Jar) (string, bool) {
 			}
 		}
 	}
-	if remixsid == nil || pCookie == nil {
+	if remixsid == nil {
 		return "", false
 	}
-	return "remixsid=" + remixsid.Value + "; p=" + pCookie.Value, true
+	header := "remixsid=" + remixsid.Value
+	if pCookie != nil {
+		header += "; p=" + pCookie.Value
+	}
+	return header, true
 }
 
 func (st *vkLoginSession) loginPrefix() string {
@@ -399,7 +410,7 @@ func vkLoginRewriteText(body, proxyPrefix, host string) string {
 
 func vkLoginInjectHooks(html, proxyPrefix, host string) string {
 	escPrefix, escHost := vkLoginJSONEscape(proxyPrefix), vkLoginJSONEscape(host)
-	script := `<script>(function(){var P=` + escPrefix + `,H=` + escHost + `;function map(u){if(!u||typeof u!=="string")return u;if(u.charAt(0)==="/"&&u.charAt(1)!=="/")return P+"h/"+H+u;try{var x=new URL(u,location.href);if(/\.(vk\.com|vk\.ru|vkuser\.net|userapi\.com|vkontakte\.com)$/i.test(x.hostname))return P+"h/"+x.hostname+x.pathname+x.search+x.hash;}catch(e){}return u;}var f=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=map(i);else if(i&&i.url)i=new Request(map(i.url),i);return f.call(this,i,o);};var xo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=map(u);return xo.apply(this,arguments);};})();</script>`
+	script := `<script>(function(){var P=` + escPrefix + `,H=` + escHost + `;function map(u){if(!u||typeof u!=="string")return u;if(u.charAt(0)==="/"&&u.charAt(1)!=="/")return P+"h/"+H+u;try{var x=new URL(u,location.href);if(/\.(vk\.com|vk\.ru|vkuser\.net|userapi\.com|vkontakte\.com)$/i.test(x.hostname))return P+"h/"+x.hostname+x.pathname+x.search+x.hash;}catch(e){}return u;}function mapWs(u){if(!u||typeof u!=="string")return u;var s=u.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:");var m=map(s);if(m!==s)return m.replace(/^https:/i,"wss:").replace(/^http:/i,"ws:");return u;}var f=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=map(i);else if(i&&i.url)i=new Request(map(i.url),i);return f.call(this,i,o);};var xo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=map(u);return xo.apply(this,arguments);};var wo=window.open;window.open=function(u,n,fe){u=map(u);if(u&&u.indexOf(P)===0){location.href=u;return window;}return wo.call(window,u,n,fe);};var la=location.assign.bind(location);location.assign=function(u){return la(map(u));};var lr=location.replace.bind(location);location.replace=function(u){return lr(map(u));};try{var desc=Object.getOwnPropertyDescriptor(Location.prototype,"href");if(desc&&desc.set){var gs=desc.get,ss=desc.set;Object.defineProperty(location,"href",{configurable:true,enumerable:true,get:function(){return gs.call(location);},set:function(v){return ss.call(location,map(v));}});}}catch(e){}try{var WS=window.WebSocket;window.WebSocket=function(u,p){return new WS(mapWs(u),p);};}catch(e2){}})();</script>`
 	loc := vkLoginHeadTagRe.FindStringIndex(html)
 	if loc == nil {
 		return script + html

@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { IconDownload, IconX } from '@tabler/icons-react';
-import { CheckForUpdate } from '../../wailsjs/go/backend/App';
+import { CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
-import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import { tunnelStore } from '../lib/stores/tunnelStore';
 
 const DISMISS_KEY = 'pwdtt_update_dismiss';
 
 export default function UpdateBanner() {
   const [info, setInfo] = useState<backend.UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [tunnelState, setTunnelState] = useState(() => tunnelStore.get());
+  useEffect(() => tunnelStore.subscribe(setTunnelState), []);
+  const locked = tunnelState === 'connected' || tunnelState === 'connecting';
 
   useEffect(() => {
     void CheckForUpdate().then(res => {
@@ -26,9 +30,17 @@ export default function UpdateBanner() {
 
   if (!info?.hasUpdate || dismissed) return null;
 
-  const openRelease = () => {
-    const url = info.downloadURL || info.releaseURL;
-    if (url) BrowserOpenURL(url);
+  const installUpdate = async () => {
+    if (locked) return;
+    setApplying(true);
+    try {
+      const res = await DownloadAndApplyUpdate();
+      if (!res.ok && res.message) alert(res.message);
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setApplying(false);
+    }
   };
 
   const dismiss = () => {
@@ -48,9 +60,9 @@ export default function UpdateBanner() {
         <div className="upd-banner__text">
           Доступна новая версия <strong>{info.latest}</strong> (у вас {info.current})
         </div>
-        <button type="button" className="upd-banner__btn" onClick={openRelease}>
+        <button type="button" className="upd-banner__btn" disabled={locked || applying} onClick={installUpdate} title={locked ? 'Отключитесь перед обновлением' : undefined}>
           <IconDownload size={15} />
-          Скачать
+          {applying ? '…' : 'Установить'}
         </button>
         <button type="button" className="upd-banner__close" aria-label="Скрыть" onClick={dismiss}>
           <IconX size={16} />

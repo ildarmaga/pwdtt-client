@@ -9,8 +9,7 @@ import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, GetAppVersion, CheckForUpdate } from '../../wailsjs/go/backend/App';
-import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, GetAppVersion, CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
 
@@ -55,6 +54,8 @@ export default function Settings({ onClose }: Props) {
   const [appVersion, setAppVersion] = useState('');
   const [updateMsg, setUpdateMsg] = useState('');
   const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<backend.UpdateInfo | null>(null);
+  const [updateApplying, setUpdateApplying] = useState(false);
   const [vkAuthOpen, setVkAuthOpen] = useState(false);
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
@@ -138,9 +139,11 @@ export default function Settings({ onClose }: Props) {
   return (
     <>
       <style>{`
-        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow-x: hidden; overflow-y: auto; }
-        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: min(440px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
-        .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 2px; }
+        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
+        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 14px 16px 18px; width: min(440px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
+        .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 10px; scrollbar-gutter: stable; }
+        .st-modal-body::-webkit-scrollbar { width: 8px; }
+        .st-modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 2px solid var(--surface); }
         .st-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .st-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }
         .st-protocol-badge {
@@ -290,35 +293,58 @@ export default function Settings({ onClose }: Props) {
               <span>Версия</span>
               <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{appVersion || '…'}</span>
             </div>
-            <button
-              type="button"
-              className="st-vk-btn"
-              disabled={updateChecking}
-              onClick={async () => {
-                setUpdateChecking(true);
-                setUpdateMsg('');
-                try {
-                  const info = await CheckForUpdate();
-                  if (info.error && !info.latest) {
-                    setUpdateMsg(info.error);
-                    return;
+            <div className="st-vk-actions">
+              <button
+                type="button"
+                className="st-vk-btn"
+                disabled={updateChecking}
+                onClick={async () => {
+                  setUpdateChecking(true);
+                  setUpdateMsg('');
+                  try {
+                    const info = await CheckForUpdate();
+                    setUpdateInfo(info);
+                    if (info.error && !info.latest) {
+                      setUpdateMsg(info.error);
+                      return;
+                    }
+                    if (info.hasUpdate) {
+                      setUpdateMsg(`Доступна ${info.latest}`);
+                    } else {
+                      setUpdateMsg(info.latest ? `Актуальная версия (${info.latest})` : 'Обновлений нет');
+                    }
+                  } catch (e) {
+                    setUpdateMsg(String(e));
+                  } finally {
+                    setUpdateChecking(false);
                   }
-                  if (info.hasUpdate) {
-                    setUpdateMsg(`Доступна ${info.latest}`);
-                    const url = info.downloadURL || info.releaseURL;
-                    if (url) BrowserOpenURL(url);
-                  } else {
-                    setUpdateMsg(info.latest ? `Актуальная версия (${info.latest})` : 'Обновлений нет');
-                  }
-                } catch (e) {
-                  setUpdateMsg(String(e));
-                } finally {
-                  setUpdateChecking(false);
-                }
-              }}
-            >
-              {updateChecking ? 'Проверка…' : 'Проверить обновления'}
-            </button>
+                }}
+              >
+                {updateChecking ? 'Проверка…' : 'Проверить'}
+              </button>
+              {updateInfo?.hasUpdate && (
+                <button
+                  type="button"
+                  className="st-vk-btn st-vk-btn--primary"
+                  disabled={updateApplying || locked}
+                  title={locked ? 'Отключитесь перед обновлением' : undefined}
+                  onClick={async () => {
+                    setUpdateApplying(true);
+                    setUpdateMsg('');
+                    try {
+                      const res = await DownloadAndApplyUpdate();
+                      setUpdateMsg(res.message || (res.ok ? 'Перезапуск…' : 'Ошибка'));
+                    } catch (e) {
+                      setUpdateMsg(String(e));
+                    } finally {
+                      setUpdateApplying(false);
+                    }
+                  }}
+                >
+                  {updateApplying ? 'Скачивание…' : `Установить ${updateInfo.latest}`}
+                </button>
+              )}
+            </div>
             {updateMsg && <div className="st-vk-msg">{updateMsg}</div>}
           </div>
 
@@ -618,6 +644,7 @@ export default function Settings({ onClose }: Props) {
         <VKAuth
           onClose={() => setVkAuthOpen(false)}
           onDone={() => {
+            setVkUseCookies(true);
             setVkSaveMsg('Cookies сохранены через VK login');
             refreshVkStatus();
           }}

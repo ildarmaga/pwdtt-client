@@ -77,7 +77,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
             </button>
           </div>
           {url ? (
-            <iframe className="vk-auth-frame" src={url} title="VK login" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+            <iframe className="vk-auth-frame" src={url} title="VK login" />
           ) : (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)' }}>
               {error || 'Запуск…'}

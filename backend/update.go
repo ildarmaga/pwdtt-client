@@ -21,6 +21,11 @@ type UpdateInfo struct {
 	Error       string `json:"error,omitempty"`
 }
 
+type UpdateApplyResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
 type ghReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
