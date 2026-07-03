@@ -1,0 +1,139 @@
+name: Build Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pwdtt-client
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pwdtt-client
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ildarmaga/wbstream-wbt
+          path: wbstream-wbt
+          token: ${{ secrets.WBSTREAM_REPO_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build Linux app
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            VERSION="dev"
+          fi
+          wails build -platform linux/amd64 -clean -o wdtt-linux-amd64 \
+            -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
+          ls -la build/bin
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdtt-linux-amd64
+          path: pwdtt-client/build/bin/wdtt-linux-amd64
+          retention-days: 90
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pwdtt-client
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pwdtt-client
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ildarmaga/wbstream-wbt
+          path: wbstream-wbt
+          token: ${{ secrets.WBSTREAM_REPO_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build Windows app
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            VERSION="dev"
+          fi
+          wails build -platform windows/amd64 -clean \
+            -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
+          cp build/bin/wdtt.exe build/bin/wdtt-windows-amd64.exe
+          ls -la build/bin
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdtt-windows-amd64
+          path: pwdtt-client/build/bin/wdtt-windows-amd64.exe
+          retention-days: 90
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wdtt-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WDTT Desktop ${{ github.ref_name }}
+          make_latest: true
+          body: |
+            **WDTT Desktop** — Linux x64 + Windows x64
+
+            | Файл | Платформа |
+            |------|-----------|
+            | `wdtt-linux-amd64` | Linux x64 |
+            | `wdtt-windows-amd64.exe` | Windows x64 |
+
+            - commit: ${{ github.sha }}
+            - run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          files: |
+            dist/wdtt-linux-amd64
+            dist/wdtt-windows-amd64.exe
+          fail_on_unmatched_files: true
