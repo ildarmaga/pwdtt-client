@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.91] — 2026-07-04
+
+### CI
+- **GitHub Actions**: Linux + Windows собираются на CI (`build-desktop.yml`), релизные файлы `wdtt-linux-amd64` и `wdtt-windows-amd64.exe`.
+
 ## [0.3.90] — 2026-07-03
 
 ### Обновления
