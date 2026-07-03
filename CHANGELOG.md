@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.89] — 2026-07-03
+
+### WB Stream — реконнект на ПК не поднимался (guest-register TLS timeout)
+- **awaitShutdown**: 5 s → 25 s. Предыдущий туннель (gVisor drain + снятие split-default
+  маршрутов WDTT-WB) при зависшем линке рвётся дольше 5 s. Раньше новый Connect
+  стартовал до снятия маршрутов мёртвого адаптера → `guest-register` к `stream.wb.ru`
+  уходил в дохлый туннель и падал по TLS handshake timeout в бесконечном цикле.
+  Теперь ждём полного последовательного teardown (как iOS) перед новым подключением.
+- **Сервер (panel.db)**: сняты лимиты трафика (`total_bytes=0`) — WB работает без квоты.
+
 ## [0.3.88] — 2026-06-30
 
 ### WB Stream — трафик в панели + egress как VK

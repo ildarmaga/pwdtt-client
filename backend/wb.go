@@ -14,7 +14,12 @@ import (
 
 const (
 	wbStatsLogInterval = 3 * time.Second
-	wbShutdownWait     = 5 * time.Second
+	// Teardown of the previous WB tunnel (gVisor drain + wintun route removal)
+	// can take well over 5s when the link stalled with active flows. Starting a
+	// new connection before the old adapter's split-default routes are gone
+	// sends guest-register auth into the dead tunnel → TLS handshake timeout on
+	// every reconnect. Wait long enough for a full serial teardown (iOS-style).
+	wbShutdownWait = 25 * time.Second
 )
 
 // WBManager runs WB Stream in-process (like VK WireGuard), no child wbt-joiner process.
