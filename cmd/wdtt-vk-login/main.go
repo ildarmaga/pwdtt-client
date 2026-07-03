@@ -3,24 +3,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"github.com/wailsapp/go-webview2/internal/w32"
-	"github.com/wailsapp/go-webview2/pkg/edge"
-	"golang.org/x/sys/windows"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 )
 
-const (
-	vkLoginURL  = "https://vk.com/"
-	timerPollID = 42
-)
+const vkLoginURL = "https://vk.com/"
 
 type statusFile struct {
 	Done    bool   `json:"done"`
@@ -30,9 +27,8 @@ type statusFile struct {
 }
 
 var (
-	chromium  *edge.Chromium
-	done      atomic.Bool
 	statusOut string
+	done      atomic.Bool
 )
 
 func writeStatus(st statusFile) {
@@ -43,162 +39,117 @@ func writeStatus(st statusFile) {
 	_ = os.WriteFile(statusOut, b, 0600)
 }
 
-func tryHarvest() {
-	if done.Load() || chromium == nil {
-		return
+func findEdge() string {
+	candidates := []string{
+		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Edge", "Application", "msedge.exe"),
 	}
-	cm, err := chromium.GetCookieManager()
-	if err != nil {
-		return
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
-	defer cm.Release()
+	return ""
+}
 
+func harvestCookies(ctx context.Context) (string, bool) {
+	var cookies []*network.Cookie
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		cookies, err = network.GetCookies().WithUrls([]string{
+			"https://vk.com/",
+			"https://login.vk.com/",
+			"https://id.vk.com/",
+		}).Do(ctx)
+		return err
+	})); err != nil {
+		return "", false
+	}
 	var remixsid, pCookie string
-	for _, uri := range []string{"https://vk.com/", "https://login.vk.com/", "https://id.vk.com/"} {
-		list, err := cm.GetCookies(uri)
-		if err != nil || list == nil {
-			continue
+	for _, c := range cookies {
+		dom := strings.ToLower(c.Domain)
+		if !strings.HasPrefix(dom, ".") {
+			dom = "." + dom
 		}
-		count, _ := list.GetCount()
-		for i := uint32(0); i < count; i++ {
-			c, err := list.GetItem(i)
-			if err != nil || c == nil {
-				continue
-			}
-			name, _ := c.GetName()
-			val, _ := c.GetValue()
-			dom, _ := c.GetDomain()
-			dom = strings.ToLower(dom)
-			if !strings.HasPrefix(dom, ".") {
-				dom = "." + dom
-			}
-			if name == "remixsid" && strings.HasSuffix(dom, ".vk.com") && val != "" {
-				remixsid = val
-			}
-			if name == "p" && strings.HasSuffix(dom, ".login.vk.com") && val != "" {
-				pCookie = val
-			}
-			c.Release()
+		if c.Name == "remixsid" && strings.HasSuffix(dom, ".vk.com") && c.Value != "" {
+			remixsid = c.Value
 		}
-		list.Release()
+		if c.Name == "p" && strings.HasSuffix(dom, ".login.vk.com") && c.Value != "" {
+			pCookie = c.Value
+		}
 	}
 	if remixsid == "" {
-		writeStatus(statusFile{Status: "waiting", Message: "Войдите в VK — ожидаем remixsid…"})
-		return
+		return "", false
 	}
 	header := "remixsid=" + remixsid
 	if pCookie != "" {
 		header += "; p=" + pCookie
 	}
-	done.Store(true)
-	writeStatus(statusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
-}
-
-func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
-	switch msg {
-	case w32.WMSize:
-		if chromium != nil {
-			chromium.Resize()
-		}
-	case 0x0113: // WM_TIMER
-		if wParam == timerPollID {
-			tryHarvest()
-			if done.Load() {
-				w32.User32DestroyWindow.Call(hwnd)
-			}
-		}
-	case w32.WMDestroy:
-		if !done.Load() {
-			writeStatus(statusFile{Status: "cancelled", Message: "Вход отменён"})
-		}
-		w32.User32PostQuitMessage.Call(0)
-		return 0
-	}
-	r, _, _ := w32.User32DefWindowProcW.Call(hwnd, msg, wParam, lParam)
-	return r
+	return header, true
 }
 
 func main() {
 	out := flag.String("status", "", "status json path")
-	dataDir := flag.String("data", "", "WebView2 user data dir")
+	dataDir := flag.String("data", "", "Edge user data dir")
 	flag.Parse()
 	statusOut = *out
 	writeStatus(statusFile{Status: "waiting", Message: "Загрузка VK…"})
 
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil {
+	edge := findEdge()
+	if edge == "" {
+		writeStatus(statusFile{Status: "error", Message: "Microsoft Edge не найден"})
+		os.Exit(1)
+	}
+
+	profile := *dataDir
+	if profile == "" {
+		profile = filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+	}
+	if err := os.MkdirAll(profile, 0700); err != nil {
 		writeStatus(statusFile{Status: "error", Message: err.Error()})
 		os.Exit(1)
 	}
-	defer windows.CoUninitialize()
 
-	var hinstance windows.Handle
-	_ = windows.GetModuleHandleEx(0, nil, &hinstance)
-
-	className, _ := windows.UTF16PtrFromString("WDTTVKLoginWnd")
-	wc := w32.WndClassExW{
-		CbSize:        uint32(unsafe.Sizeof(w32.WndClassExW{})),
-		HInstance:     hinstance,
-		LpszClassName: className,
-		LpfnWndProc:   windows.NewCallback(wndProc),
-	}
-	if _, _, _ = w32.User32RegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); true {
-	}
-
-	title, _ := windows.UTF16PtrFromString("WDTT — вход VK")
-	hwnd, _, _ := w32.User32CreateWindowExW.Call(
-		0,
-		uintptr(unsafe.Pointer(className)),
-		uintptr(unsafe.Pointer(title)),
-		w32.WSOverlappedWindow,
-		uintptr(w32.CW_USEDEFAULT), uintptr(w32.CW_USEDEFAULT),
-		520, 720,
-		0, 0, uintptr(hinstance), 0,
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(edge),
+		chromedp.Flag("user-data-dir", profile),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.WindowSize(520, 720),
 	)
-	if hwnd == 0 {
-		writeStatus(statusFile{Status: "error", Message: "не удалось создать окно"})
+
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+
+	ctx, cancelCtx := chromedp.NewContext(allocCtx)
+	defer cancelCtx()
+
+	if err := chromedp.Run(ctx, chromedp.Navigate(vkLoginURL)); err != nil {
+		writeStatus(statusFile{Status: "error", Message: "Не удалось открыть vk.com: " + err.Error()})
 		os.Exit(1)
 	}
-
-	chromium = edge.NewChromium()
-	if *dataDir != "" {
-		chromium.DataPath = *dataDir
-	} else {
-		chromium.DataPath = filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
-	}
-	_ = os.MkdirAll(chromium.DataPath, 0700)
-	chromium.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
-		tryHarvest()
-	}
-
-	if !chromium.Embed(hwnd) {
-		writeStatus(statusFile{Status: "error", Message: "WebView2 не установлен — установите Microsoft Edge WebView2 Runtime"})
-		os.Exit(1)
-	}
-
-	w32.User32ShowWindow.Call(hwnd, w32.SWShow)
-	w32.User32UpdateWindow.Call(hwnd)
-	chromium.Resize()
-	chromium.Navigate(vkLoginURL)
-
-	setTimer := user32Proc("SetTimer")
-	setTimer.Call(hwnd, timerPollID, 1200, 0)
 	writeStatus(statusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически"})
 
-	var msg w32.Msg
-	for {
-		if done.Load() {
-			time.Sleep(500 * time.Millisecond)
-			w32.User32DestroyWindow.Call(hwnd)
-		}
-		r, _, _ := w32.User32GetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
-		if r == 0 {
-			break
-		}
-		w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
-		w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
-	}
-}
+	ticker := time.NewTicker(1200 * time.Millisecond)
+	defer ticker.Stop()
 
-func user32Proc(name string) *windows.LazyProc {
-	return windows.NewLazySystemDLL("user32").NewProc(name)
+	for {
+		select {
+		case <-ctx.Done():
+			if !done.Load() {
+				writeStatus(statusFile{Status: "cancelled", Message: "Вход отменён"})
+			}
+			return
+		case <-ticker.C:
+			header, ok := harvestCookies(ctx)
+			if !ok {
+				continue
+			}
+			done.Store(true)
+			writeStatus(statusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
+			fmt.Println("ok")
+			return
+		}
+	}
 }
