@@ -95,7 +95,8 @@ jobs:
           if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
             VERSION="dev"
           fi
-          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -H windowsgui" -o build/bin/wdtt-vk-login.exe ./cmd/wdtt-vk-login
+          mkdir -p build/bin
+          GOOS=windows GOARCH=amd64 go build -C cmd/wdtt-vk-login -ldflags "-s -w -H windowsgui" -o ../../build/bin/wdtt-vk-login.exe .
           wails build -platform windows/amd64 -clean \
             -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
           cp build/bin/wdtt.exe build/bin/wdtt-windows-amd64.exe
