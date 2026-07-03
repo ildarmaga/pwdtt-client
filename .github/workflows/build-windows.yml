@@ -61,7 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wdtt-windows-amd64
-          path: build/bin/wdtt.exe
+          path: pwdtt-client/build/bin/wdtt.exe
           retention-days: 90
 
       - name: Publish GitHub Release
@@ -76,5 +76,5 @@ jobs:
             - commit: ${{ github.sha }}
             - run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           files: |
-            build/bin/wdtt.exe
+            pwdtt-client/build/bin/wdtt.exe
           fail_on_unmatched_files: true
