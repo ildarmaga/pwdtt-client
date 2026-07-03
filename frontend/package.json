@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@rolldown/binding-linux-x64-gnu": "^1.0.3",
     "@tabler/icons-react": "^3.44.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
