@@ -96,10 +96,10 @@ jobs:
             VERSION="dev"
           fi
           mkdir -p build/bin
-          GOOS=windows GOARCH=amd64 go build -C cmd/wdtt-vk-login -ldflags "-s -w -H windowsgui" -o ../../build/bin/wdtt-vk-login.exe .
           wails build -platform windows/amd64 -clean \
             -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
           cp build/bin/wdtt.exe build/bin/wdtt-windows-amd64.exe
+          GOOS=windows GOARCH=amd64 go build -C cmd/wdtt-vk-login -ldflags "-s -w -H windowsgui" -o ../../build/bin/wdtt-vk-login.exe .
           ls -la build/bin
 
       - name: Upload Windows artifact
