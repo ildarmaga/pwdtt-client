@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.94] — 2026-07-04
+
+### VK login (Windows)
+- **Как на iOS**: отдельное окно WebView2 с прямым `https://vk.com/` (не iframe+прокси).
+- **`wdtt-vk-login.exe`**: helper рядом с основным exe — читает HttpOnly cookies (`remixsid`, `p`) из WebView2.
+- Исправлено «id.vk.com отказано в подключении» при QR-входе.
+
 ## [0.3.93] — 2026-07-04
 
 ### VK login (Windows)

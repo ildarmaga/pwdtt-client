@@ -237,7 +237,7 @@ function installGoMock() {
           releaseURL: 'https://github.com/ildarmaga/pwdtt-client/releases',
           checkedAt: new Date().toISOString(),
         }),
-        StartVKLogin: async () => ({ url: 'about:blank', active: true }),
+        StartVKLogin: async () => ({ url: '', active: true, native: true }),
         StopVKLogin: asyncVoid,
         PollVKLogin: async () => ({ done: false, status: 'waiting', message: 'dev mock' }),
       },

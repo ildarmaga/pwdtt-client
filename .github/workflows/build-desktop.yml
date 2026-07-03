@@ -95,6 +95,7 @@ jobs:
           if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
             VERSION="dev"
           fi
+          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -H windowsgui" -o build/bin/wdtt-vk-login.exe ./cmd/wdtt-vk-login
           wails build -platform windows/amd64 -clean \
             -ldflags "-s -w -X pwdtt-desktop/backend.AppVersion=${VERSION}"
           cp build/bin/wdtt.exe build/bin/wdtt-windows-amd64.exe
@@ -104,7 +105,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wdtt-windows-amd64
-          path: pwdtt-client/build/bin/wdtt-windows-amd64.exe
+          path: |
+            pwdtt-client/build/bin/wdtt-windows-amd64.exe
+            pwdtt-client/build/bin/wdtt-vk-login.exe
           retention-days: 90
 
   release:
@@ -130,11 +133,13 @@ jobs:
             | Файл | Платформа |
             |------|-----------|
             | `wdtt-linux-amd64` | Linux x64 |
-            | `wdtt-windows-amd64.exe` | Windows x64 |
+            | `wdtt-windows-amd64.exe` | Windows x64 (основное приложение) |
+            | `wdtt-vk-login.exe` | Windows — окно входа VK (положить рядом с .exe) |
 
             - commit: ${{ github.sha }}
             - run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           files: |
             dist/wdtt-linux-amd64
             dist/wdtt-windows-amd64.exe
+            dist/wdtt-vk-login.exe
           fail_on_unmatched_files: true

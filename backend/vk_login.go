@@ -1,3 +1,5 @@
+//go:build !windows
+
 package backend
 
 import (
@@ -56,17 +58,6 @@ var (
 
 var vkLoginUpgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
-}
-
-type VKLoginStartResult struct {
-	URL    string `json:"url"`
-	Active bool   `json:"active"`
-}
-
-type VKLoginPollResult struct {
-	Done    bool   `json:"done"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
