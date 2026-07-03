@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"wg-turn-client/core"
 )
 
@@ -52,6 +53,10 @@ var (
 	vkLoginMu sync.Mutex
 	vkLogin   *vkLoginSession
 )
+
+var vkLoginUpgrader = websocket.Upgrader{
+	CheckOrigin: func(_ *http.Request) bool { return true },
+}
 
 type VKLoginStartResult struct {
 	URL    string `json:"url"`
@@ -236,7 +241,90 @@ func (st *vkLoginSession) handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		st.proxyWebSocket(w, r, target)
+		return
+	}
 	st.proxyRequest(w, r, target)
+}
+
+func (st *vkLoginSession) proxyWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL) {
+	st.mu.Lock()
+	st.lastHost = target.Host
+	st.mu.Unlock()
+
+	wsURL := url.URL{Scheme: "wss", Host: target.Host, Path: target.Path, RawQuery: target.RawQuery}
+	hdr := http.Header{}
+	hdr.Set("User-Agent", vkLoginUserAgent)
+	hdr.Set("Origin", "https://"+target.Host)
+	if ck := vkLoginJarCookieHeader(st.jar, target); ck != "" {
+		hdr.Set("Cookie", ck)
+	}
+	for _, k := range []string{"Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions"} {
+		if v := r.Header.Get(k); v != "" {
+			hdr.Set(k, v)
+		}
+	}
+
+	upConn, err := vkLoginUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer upConn.Close()
+
+	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+	remote, resp, err := dialer.Dial(wsURL.String(), hdr)
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		_ = upConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "upstream dial failed"))
+		return
+	}
+	defer remote.Close()
+
+	errCh := make(chan error, 2)
+	go func() {
+		for {
+			mt, msg, err := remote.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if err := upConn.WriteMessage(mt, msg); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		for {
+			mt, msg, err := upConn.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if err := remote.WriteMessage(mt, msg); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	<-errCh
+}
+
+func vkLoginJarCookieHeader(jar *cookiejar.Jar, u *url.URL) string {
+	if jar == nil || u == nil {
+		return ""
+	}
+	var parts []string
+	for _, c := range jar.Cookies(u) {
+		if c.Value != "" {
+			parts = append(parts, c.Name+"="+c.Value)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (st *vkLoginSession) proxyRequest(w http.ResponseWriter, r *http.Request, target *url.URL) {

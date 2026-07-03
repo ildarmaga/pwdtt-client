@@ -140,10 +140,11 @@ export default function Settings({ onClose }: Props) {
     <>
       <style>{`
         .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
-        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 14px 16px 18px; width: min(440px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
-        .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 10px; scrollbar-gutter: stable; }
-        .st-modal-body::-webkit-scrollbar { width: 8px; }
-        .st-modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 2px solid var(--surface); }
+        .st-modal { background: var(--surface); border-radius: 14px; padding: 16px 8px 16px 18px; width: min(440px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
+        .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 16px; scrollbar-gutter: stable both-edges; }
+        .st-modal-body::-webkit-scrollbar { width: 6px; }
+        .st-modal-body::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+        .st-modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
         .st-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .st-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }
         .st-protocol-badge {
