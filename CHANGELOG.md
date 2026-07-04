@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.116] — 2026-07-04
+
+### WB Stream — детект «мёртвого» data path
+- **HTTP-probe через туннель**: KCP RTT может оставаться ~90 ms, пока новые TCP-соединения уже не проходят (сайты `ERR_CONNECTION_CLOSED`, старые загрузки ещё идут). Клиент каждые 10 с проверяет реальный HTTP через VPN (IPv4-only, как warmup); 3 подряд неудачи → полный реконнект.
+- Unit-тесты `wbTunnelDead` / probe limit.
+
+### VK login + обновления (Windows)
+- **`execDetachedUI`**: VK worker и relaunch после updater запускаются без `HideWindow` — первый `ShowWindow` больше не прячет окно.
+- **WebView2**: двойной `ShowWindow(SW_SHOWNORMAL)` + `SWP_SHOWWINDOW`; подсказка в модалке про окно «WDTT — вход VK» на экране / в панели задач.
+
 ## [0.3.115] — 2026-07-04
 
 ### VK login (Windows)

@@ -152,7 +152,7 @@ func runUpdateApply(pid int, dest string) {
 		if _, err := os.Stat(dest); err != nil {
 			if err := os.Rename(dest+".old", dest); err == nil {
 				logln("restored old exe")
-				_ = execDetached(dest, ShowWindowFlag).Start()
+				_ = execDetachedUI(dest, ShowWindowFlag).Start()
 			}
 		}
 		return
@@ -161,7 +161,7 @@ func runUpdateApply(pid int, dest string) {
 	logln("copy ok")
 
 	// 3. Relaunch with --show-window so the app opens visibly, not only in tray.
-	if err := execDetached(dest, ShowWindowFlag).Start(); err != nil {
+	if err := execDetachedUI(dest, ShowWindowFlag).Start(); err != nil {
 		logln("FAIL: relaunch: %v", err)
 		return
 	}

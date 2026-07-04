@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,7 +33,22 @@ const (
 	wbConnectTimeout = 90 * time.Second
 	wbWatchTick      = 5 * time.Second
 	wbReconnectDelay = 2 * time.Second
+
+	// Active data-path probe: KCP rtt can stay healthy while the actual TCP
+	// forwarding through netstack is dead (traffic trickles at B/s, browser
+	// gets ERR_CONNECTION_CLOSED). With full-VPN routes up, the app's own HTTP
+	// requests go through the tunnel, so a periodic generate_204 probe tests
+	// the real data path. This many consecutive failures = rebuild tunnel.
+	wbProbeFailLimit = 3
+	wbProbeInterval  = 10 * time.Second
+	wbProbeTimeout   = 5 * time.Second
 )
+
+var wbProbeURLs = []string{
+	"http://cp.cloudflare.com/generate_204",
+	"https://www.gstatic.com/generate_204",
+	"https://ya.ru/",
+}
 
 // WBManager runs WB Stream in-process (like VK WireGuard), no child wbt-joiner process.
 type WBManager struct {
@@ -149,13 +166,69 @@ func (m *WBManager) connect(room string) error {
 	return nil
 }
 
-// watchLiveness detects a dead-but-not-exited tunnel: after "tunnel lost" the
-// runner's internal recovery re-registers through its own (dead) netstack and
-// backs off forever, while stats keep coming with rtt == 0. When no healthy
-// rtt is seen for wbDeadTimeout, force a full teardown + reconnect.
+// wbTunnelDead is the watchdog decision: rebuild the tunnel when either the
+// KCP link reports no healthy rtt for too long, a fresh connect never became
+// healthy, or the active HTTP probe through the tunnel failed too many times
+// in a row (rtt can stay alive while the data path is dead).
+func wbTunnelDead(now, started, lastHealthy time.Time, probeFails int) (bool, string) {
+	if probeFails >= wbProbeFailLimit {
+		return true, "интернет через туннель не отвечает"
+	}
+	if lastHealthy.IsZero() {
+		if now.Sub(started) > wbConnectTimeout {
+			return true, "туннель не поднялся"
+		}
+		return false, ""
+	}
+	if now.Sub(lastHealthy) > wbDeadTimeout {
+		return true, "нет живого RTT"
+	}
+	return false, ""
+}
+
+// wbProbeDataPath does a real HTTP request; with full-VPN routes up it goes
+// through the tunnel and therefore tests actual TCP forwarding, not just KCP.
+func wbProbeDataPath() bool {
+	client := &http.Client{
+		Timeout: wbProbeTimeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			Proxy:             nil,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				// Match warmup: IPv4-only dial avoids AAAA flake after TUN up.
+				ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+				if err != nil || len(ips) == 0 {
+					return nil, fmt.Errorf("resolve %s: %w", host, err)
+				}
+				d := net.Dialer{Timeout: wbProbeTimeout}
+				return d.DialContext(ctx, "tcp4", net.JoinHostPort(ips[0].String(), port))
+			},
+		},
+	}
+	defer client.CloseIdleConnections()
+	for _, u := range wbProbeURLs {
+		resp, err := client.Get(u)
+		if err != nil {
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 500 {
+			return true
+		}
+	}
+	return false
+}
+
+// watchLiveness detects a dead-but-not-exited tunnel and rebuilds it.
 func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 	t := time.NewTicker(wbWatchTick)
 	defer t.Stop()
+	probeFails := 0
+	lastProbe := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -170,14 +243,21 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if stale || stopped {
 				return
 			}
-			var dead bool
-			if !healthy.IsZero() {
-				dead = time.Since(healthy) > wbDeadTimeout
-			} else {
-				dead = time.Since(started) > wbConnectTimeout
+
+			// Active probe only after the tunnel was healthy at least once
+			// (otherwise we'd count failures during normal connect).
+			if !healthy.IsZero() && time.Since(lastProbe) >= wbProbeInterval {
+				lastProbe = time.Now()
+				if wbProbeDataPath() {
+					probeFails = 0
+				} else {
+					probeFails++
+					m.emitLog("WARN", fmt.Sprintf("[WB] Проверка трафика через туннель не прошла (%d/%d)", probeFails, wbProbeFailLimit))
+				}
 			}
-			if dead {
-				m.emitLog("WARN", "[WB] Туннель мёртв (нет живого RTT) — пересоздаю подключение…")
+
+			if dead, reason := wbTunnelDead(time.Now(), started, healthy, probeFails); dead {
+				m.emitLog("WARN", "[WB] Туннель мёртв ("+reason+") — пересоздаю подключение…")
 				runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 				m.reconnect(gen)
 				return

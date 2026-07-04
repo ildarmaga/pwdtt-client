@@ -34,6 +34,18 @@ func execDetached(name string, arg ...string) *exec.Cmd {
 	return cmd
 }
 
+// execDetachedUI starts a detached GUI process that must be able to show
+// windows. No HideWindow: STARTF_USESHOWWINDOW with SW_HIDE makes the child's
+// FIRST ShowWindow(SW_SHOW) call silently hide its window instead — this is
+// why the VK login window and the relaunched app were invisible.
+func execDetachedUI(name string, arg ...string) *exec.Cmd {
+	cmd := exec.Command(name, arg...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: winDetachedProcess | winCreateNewProcessGroup | winCreateBreakawayFromJob,
+	}
+	return cmd
+}
+
 // vbsQuote returns a VBScript string literal for WScript.Shell.Run.
 func vbsQuote(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`

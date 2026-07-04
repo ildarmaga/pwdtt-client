@@ -101,7 +101,7 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 	_ = os.MkdirAll(dataDir, 0700)
 	_ = os.Remove(statusPath)
 
-	cmd := execDetached(exe, vkLoginWorkerFlag, "-status", statusPath, "-data", profile)
+	cmd := execDetachedUI(exe, vkLoginWorkerFlag, "-status", statusPath, "-data", profile)
 	cmd.Dir = filepath.Dir(exe)
 	if err := cmd.Start(); err != nil {
 		vkLoginWin.Lock()

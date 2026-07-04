@@ -117,9 +117,13 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		_ = settings.PutAreDevToolsEnabled(false)
 	}
 
-	win.ShowWindow(hwnd, win.SW_SHOW)
+	// First ShowWindow call in a process obeys STARTUPINFO wShowWindow, not the
+	// argument — call twice and force with SWP_SHOWWINDOW so the window is
+	// visible regardless of how the parent spawned us.
+	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
+	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
 	win.UpdateWindow(hwnd)
-	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
+	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_SHOWWINDOW)
 	win.SetForegroundWindow(hwnd)
 	chromium.Resize()
 	chromium.Navigate("https://vk.com/")
