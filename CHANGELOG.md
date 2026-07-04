@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.134] — 2026-07-05
+
+### WB Stream xray — wintun pool collision
+- **Адаптер `WDTT-WB-<pid>`** — свежий wintun pool каждый запуск, без «file already exists» от прошлой сессии.
+- **CleanupAllWDTTAdapters** — удаляет все `WDTT-WB*` перед стартом и при shutdown.
+- **ICE filter** — не bind на 169.254.x (ghost APIPA).
+- Retry: 2.5 с пауза после kill xray + повторная очистка.
+
 ## [0.3.133] — 2026-07-05
 
 ### WB Stream xray — ghost adapter fix
