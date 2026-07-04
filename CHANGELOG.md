@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.139] — 2026-07-05
+
+### WB Stream xray — fix TUN hang / adapter timeout
+- **Egress IP** через InterfaceIndex + fallback (192.168.x) — больше не `ip=` пустой.
+- **autoOutboundsInterface** всегда `auto` на TUN; explicit bind только при наличии local IP.
+- **prepXray** + `EnsureAdapterAbsent` перед стартом; stdout xray в лог.
+
 ## [0.3.138] — 2026-07-05
 
 ### WB Stream — меньше лишних действий при connect
