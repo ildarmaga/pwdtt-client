@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.106] — 2026-07-04
+
+### Обновления (Windows)
+- **Updater живёт после выхода**: bat запускается через detached wscript — не убивается вместе с wdtt.
+- **Copy move/rename**: старый exe → `.old`, до 90 попыток; откат при ошибке.
+- **Перезапуск**: `Start-Process -Verb RunAs` — явный UAC-диалог; `os.Exit(0)` вместо `runtime.Quit`.
+- **Ошибка**: MessageBox с путём к `%TEMP%\\wdtt-update\\apply.log`.
+
 ## [0.3.105] — 2026-07-04
 
 ### VK login (Windows, admin)

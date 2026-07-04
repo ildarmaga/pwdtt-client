@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,18 +67,21 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 
 	logPath := filepath.Join(tmpDir, "apply.log")
 	batPath := filepath.Join(tmpDir, "wdtt-apply.bat")
-	bat := updateApplyBatchScript()
-	if err := os.WriteFile(batPath, []byte(bat), 0600); err != nil {
+	if err := os.WriteFile(batPath, []byte(updateApplyBatchScript()), 0600); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
 	pid := os.Getpid()
-	cmd := execHidden("cmd.exe", "/c", batPath,
-		strconv.Itoa(pid),
-		newExe,
-		exePath,
-		logPath,
+	vbsPath := filepath.Join(tmpDir, "wdtt-launch-update.vbs")
+	vbs := fmt.Sprintf(
+		"CreateObject(\"WScript.Shell\").Run %s, 0, False\r\n",
+		vbsQuote(updateApplyCmdLine(batPath, pid, newExe, exePath, logPath)),
 	)
+	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
+		return UpdateApplyResult{Message: err.Error()}
+	}
+
+	cmd := execDetached("wscript.exe", "//B", "//Nologo", vbsPath)
 	if err := cmd.Start(); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
 	}
@@ -88,14 +90,19 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	a.orch.Stop()
 	a.wb.Disconnect()
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		runtime.Quit(a.ctx)
+		time.Sleep(300 * time.Millisecond)
+		os.Exit(0)
 	}()
 
 	return UpdateApplyResult{
 		OK:      true,
-		Message: fmt.Sprintf("Обновление до %s — приложение перезапустится", info.Latest),
+		Message: fmt.Sprintf("Обновление до %s — подтвердите UAC при перезапуске", info.Latest),
 	}
+}
+
+func updateApplyCmdLine(batPath string, pid int, newExe, destExe, logPath string) string {
+	return fmt.Sprintf(`cmd /c "%s" %d "%s" "%s" "%s"`,
+		batPath, pid, newExe, destExe, logPath)
 }
 
 func updateApplyBatchScript() string {
@@ -105,30 +112,38 @@ func updateApplyBatchScript() string {
 		"set \"NEW=%~2\"\r\n" +
 		"set \"DEST=%~3\"\r\n" +
 		"set \"LOG=%~4\"\r\n" +
-		"echo [%date% %time%] update start pid=%PID% >> \"%LOG%\"\r\n" +
+		"echo [%date% %time%] update start pid=%PID% dest=%DEST% >> \"%LOG%\"\r\n" +
 		":waitproc\r\n" +
-		"tasklist /FI \"PID eq %PID%\" 2>nul | find /I \"%PID%\" >nul\r\n" +
+		"tasklist /FI \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n" +
 		"if not errorlevel 1 (\r\n" +
 		"  timeout /t 1 /nobreak >nul\r\n" +
 		"  goto waitproc\r\n" +
 		")\r\n" +
 		"echo [%date% %time%] process exited >> \"%LOG%\"\r\n" +
+		"timeout /t 2 /nobreak >nul\r\n" +
 		"set /a N=0\r\n" +
 		":trycopy\r\n" +
 		"set /a N+=1\r\n" +
+		"if exist \"%DEST%.old\" del /F /Q \"%DEST%.old\" >nul 2>&1\r\n" +
+		"if exist \"%DEST%\" move /Y \"%DEST%\" \"%DEST%.old\" >> \"%LOG%\" 2>&1\r\n" +
 		"copy /Y \"%NEW%\" \"%DEST%\" >> \"%LOG%\" 2>&1\r\n" +
 		"if errorlevel 1 (\r\n" +
-		"  if %N% lss 60 (\r\n" +
+		"  if exist \"%DEST%.old\" move /Y \"%DEST%.old\" \"%DEST%\" >nul 2>&1\r\n" +
+		"  if %N% lss 90 (\r\n" +
 		"    timeout /t 1 /nobreak >nul\r\n" +
 		"    goto trycopy\r\n" +
 		"  )\r\n" +
 		"  echo COPY FAILED after %N% tries >> \"%LOG%\"\r\n" +
-		"  exit /b 1\r\n" +
+		"  goto fail\r\n" +
 		")\r\n" +
+		"if exist \"%DEST%.old\" del /F /Q \"%DEST%.old\" >nul 2>&1\r\n" +
 		"echo [%date% %time%] copy ok >> \"%LOG%\"\r\n" +
-		"start \"\" \"%DEST%\"\r\n" +
-		"echo [%date% %time%] restarted >> \"%LOG%\"\r\n" +
-		"exit /b 0\r\n"
+		"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Start-Process -FilePath \"\"%DEST%\"\" -Verb RunAs\" >> \"%LOG%\" 2>&1\r\n" +
+		"echo [%date% %time%] restart issued >> \"%LOG%\"\r\n" +
+		"exit /b 0\r\n" +
+		":fail\r\n" +
+		"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('WDTT: не удалось обновить. Лог: %LOG%','WDTT', 'OK', 'Error')\" >nul 2>&1\r\n" +
+		"exit /b 1\r\n"
 }
 
 func verifyWindowsExe(path string) error {
