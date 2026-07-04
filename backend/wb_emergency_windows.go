@@ -7,5 +7,5 @@ import (
 )
 
 func emergencyStopWBTun() {
-	desktoptun.EmergencyDown("WDTT-WB")
+	desktoptun.CleanupAllWDTTAdapters()
 }

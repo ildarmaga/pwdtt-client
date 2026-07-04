@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.135] — 2026-07-05
+
+### WB Stream xray — adapter Disabled fix
+- xray создаёт WDTT-WB-* в состоянии **Disconnected** — `FinishTunSetup` теперь **Enable-NetAdapter** + **setAdapterIP** (как legacy tun2socks), затем split routes.
+- Ждём **present** (адаптер есть), не Up+IP — настройка через RouteShell.
+- Cleanup: удаляет offline Wintun/Xray Tunnel orphans; ctx-aware retry; текст ошибки WDTT-WB*.
+
 ## [0.3.134] — 2026-07-05
 
 ### WB Stream xray — wintun pool collision
