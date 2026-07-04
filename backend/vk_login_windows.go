@@ -40,6 +40,23 @@ func findEdgeBrowser() string {
 	return ""
 }
 
+// vkVisibleChromedpOptions — visible Edge window (DefaultExecAllocatorOptions includes Headless).
+func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOption {
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(edge),
+		chromedp.Flag("user-data-dir", profile),
+		chromedp.Flag("headless", false),
+		chromedp.Flag("hide-scrollbars", false),
+		chromedp.Flag("mute-audio", false),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("new-window", true),
+		chromedp.WindowSize(520, 720),
+	)
+	return opts
+}
+
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
 	vkLoginWin.Lock()
 	defer vkLoginWin.Unlock()
@@ -85,14 +102,7 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
 	_ = os.MkdirAll(profile, 0700)
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(edge),
-		chromedp.Flag("user-data-dir", profile),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("disable-extensions", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.WindowSize(520, 720),
-	)
+	opts := vkVisibleChromedpOptions(edge, profile)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	defer cancelAlloc()

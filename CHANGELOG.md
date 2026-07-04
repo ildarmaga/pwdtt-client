@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.96] — 2026-07-04
+
+### VK login (Windows)
+- **Видимое окно Edge**: chromedp больше не запускается в headless — окно VK реально появляется.
+
 ## [0.3.95] — 2026-07-04
 
 ### Обновления
