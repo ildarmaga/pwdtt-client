@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,6 +25,13 @@ var trayIcon []byte
 var wintunDLL []byte
 
 func main() {
+	if exit, err := backend.MaybeRunVKLoginWorker(os.Args[1:]); exit {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	backend.InitWintun(wintunDLL)
 	app := backend.NewApp(trayIcon)
 

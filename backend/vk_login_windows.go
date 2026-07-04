@@ -129,20 +129,17 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 		vkLoginWin.Unlock()
 		return
 	}
-	helper := filepath.Join(filepath.Dir(exe), "wdtt-vk-login.exe")
-	if _, err := os.Stat(helper); err != nil {
-		vkLoginWin.Lock()
-		vkLoginWin.errMsg = "Не найден wdtt-vk-login.exe рядом с приложением — переустановите WDTT Desktop"
-		vkLoginWin.Unlock()
-		return
-	}
 
 	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
 	statusPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "status.json")
 	_ = os.MkdirAll(filepath.Dir(statusPath), 0700)
 	_ = os.Remove(statusPath)
 
-	pid, err := runDeElevated(helper, []string{"-status", statusPath, "-data", profile}, filepath.Dir(helper))
+	pid, err := runDeElevated(exe, []string{
+		vkLoginWorkerFlag,
+		"-status", statusPath,
+		"-data", profile,
+	}, filepath.Dir(exe))
 	if err != nil {
 		vkLoginWin.Lock()
 		vkLoginWin.errMsg = "Не удалось запустить окно VK: " + err.Error()

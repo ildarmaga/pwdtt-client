@@ -34,6 +34,49 @@ func isProcessElevated() bool {
 }
 
 func runDeElevated(exePath string, args []string, workDir string) (uint32, error) {
+	var errs []string
+	if pid, err := runDeElevatedWTS(exePath, args, workDir); err == nil {
+		return pid, nil
+	} else {
+		errs = append(errs, err.Error())
+	}
+	if pid, err := runDeElevatedExplorer(exePath, args, workDir); err == nil {
+		return pid, nil
+	} else {
+		errs = append(errs, err.Error())
+	}
+	return 0, fmt.Errorf("de-elevation failed: %s", strings.Join(errs, "; "))
+}
+
+func runDeElevatedWTS(exePath string, args []string, workDir string) (uint32, error) {
+	sessionID := windows.WTSGetActiveConsoleSessionId()
+	if sessionID == 0xFFFFFFFF {
+		return 0, fmt.Errorf("no active session")
+	}
+
+	var userToken windows.Token
+	if err := windows.WTSQueryUserToken(sessionID, &userToken); err != nil {
+		return 0, fmt.Errorf("WTSQueryUserToken: %w", err)
+	}
+	defer userToken.Close()
+
+	var primaryToken windows.Token
+	if err := windows.DuplicateTokenEx(
+		userToken,
+		windows.MAXIMUM_ALLOWED,
+		nil,
+		windows.SecurityIdentification,
+		windows.TokenPrimary,
+		&primaryToken,
+	); err != nil {
+		return 0, fmt.Errorf("DuplicateTokenEx: %w", err)
+	}
+	defer primaryToken.Close()
+
+	return createProcessAsUserToken(primaryToken, exePath, args, workDir)
+}
+
+func runDeElevatedExplorer(exePath string, args []string, workDir string) (uint32, error) {
 	hwnd := windows.GetShellWindow()
 	if hwnd == 0 {
 		return 0, fmt.Errorf("GetShellWindow: окно оболочки не найдено")
@@ -70,6 +113,19 @@ func runDeElevated(exePath string, args []string, workDir string) (uint32, error
 	}
 	defer hDupToken.Close()
 
+	return createProcessAsUserToken(hDupToken, exePath, args, workDir)
+}
+
+func createProcessAsUserToken(token windows.Token, exePath string, args []string, workDir string) (uint32, error) {
+	_ = enableTokenPrivilege("SeIncreaseQuotaPrivilege")
+	_ = enableTokenPrivilege("SeAssignPrimaryTokenPrivilege")
+
+	var envBlock *uint16
+	if err := windows.CreateEnvironmentBlock(&envBlock, token, false); err != nil {
+		return 0, fmt.Errorf("CreateEnvironmentBlock: %w", err)
+	}
+	defer windows.DestroyEnvironmentBlock(envBlock)
+
 	cmdLine := windowsCmdLine(exePath, args)
 	cmdLineUTF16, err := windows.UTF16PtrFromString(cmdLine)
 	if err != nil {
@@ -89,14 +145,14 @@ func runDeElevated(exePath string, args []string, workDir string) (uint32, error
 	var pi windows.ProcessInformation
 
 	if err := windows.CreateProcessAsUser(
-		hDupToken,
+		token,
 		nil,
 		cmdLineUTF16,
 		nil,
 		nil,
 		false,
 		windows.CREATE_UNICODE_ENVIRONMENT,
-		nil,
+		envBlock,
 		workDirPtr,
 		si,
 		&pi,
@@ -107,6 +163,31 @@ func runDeElevated(exePath string, args []string, workDir string) (uint32, error
 	windows.CloseHandle(pi.Thread)
 	windows.CloseHandle(pi.Process)
 	return pi.ProcessId, nil
+}
+
+func enableTokenPrivilege(name string) error {
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token); err != nil {
+		return err
+	}
+	defer token.Close()
+
+	var luid windows.LUID
+	namePtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	if err := windows.LookupPrivilegeValue(nil, namePtr, &luid); err != nil {
+		return err
+	}
+
+	tp := windows.Tokenprivileges{
+		PrivilegeCount: 1,
+		Privileges: [1]windows.LUIDAndAttributes{
+			{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED},
+		},
+	}
+	return windows.AdjustTokenPrivileges(token, false, &tp, 0, nil, nil)
 }
 
 func windowsCmdLine(exe string, args []string) string {

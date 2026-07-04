@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.103] — 2026-07-04
+
+### VK login (Windows, один exe)
+- **Без `wdtt-vk-login.exe`**: при запуске от администратора Edge открывается через скрытый режим `--vk-login-worker` того же exe.
+- **De-elevation**: `WTSQueryUserToken` + fallback explorer token; включение `SeIncreaseQuotaPrivilege` перед `CreateProcessAsUser` — исправляет «A required privilege is not held by the client».
+- **Обновления**: скачивается только `wdtt-windows-amd64.exe`.
+
 ## [0.3.102] — 2026-07-04
 
 ### WB Stream (стабильность после burst)
