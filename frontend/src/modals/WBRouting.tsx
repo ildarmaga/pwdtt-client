@@ -271,7 +271,7 @@ export default function WBRouting({ onClose }: Props) {
                     value={editing.port}
                     disabled={locked}
                     onChange={e => updateRule(editing.id, { port: e.target.value })}
-                    placeholder="443"
+                    placeholder="все порты"
                   />
                 </div>
               </div>

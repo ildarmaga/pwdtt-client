@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.136] — 2026-07-05
+
+### WB Stream — фиксированный адаптер WDTT-WB
+- Всегда одно имя **WDTT-WB** (без `-PID`).
+- **TeardownTunAdapter** при disconnect и закрытии приложения — Remove-NetAdapter, не только disable.
+- Legacy `WDTT-WB-*` удаляются при cleanup.
+
 ## [0.3.135] — 2026-07-05
 
 ### WB Stream xray — adapter Disabled fix
