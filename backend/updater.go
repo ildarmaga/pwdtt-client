@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,29 +59,36 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
 		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
 	}
+	if err := verifyWindowsExe(newExe); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
+		return UpdateApplyResult{Message: "Скачанный файл повреждён: " + err.Error()}
+	}
 
 	a.emitUpdateProgress(UpdateProgress{Phase: "applying", Percent: 100, Message: "Установка…"})
 
-	vbsPath := filepath.Join(tmpDir, "wdtt-apply.vbs")
-	vbs := fmt.Sprintf(
-		"Set sh = CreateObject(\"WScript.Shell\")\r\n"+
-			"Set sa = CreateObject(\"Shell.Application\")\r\n"+
-			"sh.Run \"cmd /c timeout /t 2 /nobreak >nul & copy /Y \"\"%s\"\" \"\"%s\"\" >nul\", 0, True\r\n"+
-			"sa.ShellExecute \"\"%s\"\", \"\", \"\", \"runas\", 1\r\n",
-		newExe, exePath, exePath,
-	)
-	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
+	logPath := filepath.Join(tmpDir, "apply.log")
+	batPath := filepath.Join(tmpDir, "wdtt-apply.bat")
+	bat := updateApplyBatchScript()
+	if err := os.WriteFile(batPath, []byte(bat), 0600); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
-	cmd := execHidden("wscript.exe", "//B", "//Nologo", vbsPath)
+	pid := os.Getpid()
+	cmd := execHidden("cmd.exe", "/c", batPath,
+		strconv.Itoa(pid),
+		newExe,
+		exePath,
+		logPath,
+	)
 	if err := cmd.Start(); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
 	a.quitting.Store(true)
+	a.orch.Stop()
+	a.wb.Disconnect()
 	go func() {
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 		runtime.Quit(a.ctx)
 	}()
 
@@ -88,6 +96,62 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		OK:      true,
 		Message: fmt.Sprintf("Обновление до %s — приложение перезапустится", info.Latest),
 	}
+}
+
+func updateApplyBatchScript() string {
+	return "@echo off\r\n" +
+		"setlocal EnableExtensions\r\n" +
+		"set \"PID=%~1\"\r\n" +
+		"set \"NEW=%~2\"\r\n" +
+		"set \"DEST=%~3\"\r\n" +
+		"set \"LOG=%~4\"\r\n" +
+		"echo [%date% %time%] update start pid=%PID% >> \"%LOG%\"\r\n" +
+		":waitproc\r\n" +
+		"tasklist /FI \"PID eq %PID%\" 2>nul | find /I \"%PID%\" >nul\r\n" +
+		"if not errorlevel 1 (\r\n" +
+		"  timeout /t 1 /nobreak >nul\r\n" +
+		"  goto waitproc\r\n" +
+		")\r\n" +
+		"echo [%date% %time%] process exited >> \"%LOG%\"\r\n" +
+		"set /a N=0\r\n" +
+		":trycopy\r\n" +
+		"set /a N+=1\r\n" +
+		"copy /Y \"%NEW%\" \"%DEST%\" >> \"%LOG%\" 2>&1\r\n" +
+		"if errorlevel 1 (\r\n" +
+		"  if %N% lss 60 (\r\n" +
+		"    timeout /t 1 /nobreak >nul\r\n" +
+		"    goto trycopy\r\n" +
+		"  )\r\n" +
+		"  echo COPY FAILED after %N% tries >> \"%LOG%\"\r\n" +
+		"  exit /b 1\r\n" +
+		")\r\n" +
+		"echo [%date% %time%] copy ok >> \"%LOG%\"\r\n" +
+		"start \"\" \"%DEST%\"\r\n" +
+		"echo [%date% %time%] restarted >> \"%LOG%\"\r\n" +
+		"exit /b 0\r\n"
+}
+
+func verifyWindowsExe(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Size() < 8<<20 {
+		return fmt.Errorf("слишком маленький файл (%d байт)", fi.Size())
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	hdr := make([]byte, 2)
+	if _, err := io.ReadFull(f, hdr); err != nil {
+		return err
+	}
+	if hdr[0] != 'M' || hdr[1] != 'Z' {
+		return fmt.Errorf("не PE-файл")
+	}
+	return nil
 }
 
 func (a *App) emitUpdateProgress(p UpdateProgress) {
