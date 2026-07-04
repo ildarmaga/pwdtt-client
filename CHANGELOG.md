@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.132] — 2026-07-05
+
+### WB Stream xray — быстрый подъём TUN
+- **Без 25 с ожидания**: split-маршруты ставятся сразу после `Creating adapter` (~1–2 с), как в legacy tun2socks.
+- **RouteShell.FinishTunSetup**: metric, MTU, IPv6 off, DNS off на адаптере.
+- xray только поднимает wintun + gateway; маршруты — наш RouteShell (autoSystemRoutingTable убран).
+
 ## [0.3.131] — 2026-07-05
 
 ### WB Stream xray — Windows маршруты
