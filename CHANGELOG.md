@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.137] — 2026-07-05
+
+### WB Stream — Direct (RU) через провайдера
+- **freedom outbound** привязан к физическому NIC (`sockopt.interface` + `sendThrough`) — RU/direct больше не уходит обратно в TUN и на VPS.
+- В логах: `[xray] direct egress via "Wi-Fi" ip=192.168.x.x`.
+
 ## [0.3.136] — 2026-07-05
 
 ### WB Stream — фиксированный адаптер WDTT-WB

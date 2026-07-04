@@ -273,6 +273,11 @@ export default function WBRouting({ onClose }: Props) {
                     onChange={e => updateRule(editing.id, { port: e.target.value })}
                     placeholder="все порты"
                   />
+                  {editing.port.trim() && (
+                    <span style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2, display: 'block' }}>
+                      Только порт {editing.port.trim()} — для Direct по IP оставьте пустым.
+                    </span>
+                  )}
                 </div>
               </div>
             )}
