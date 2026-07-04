@@ -22,7 +22,6 @@ export default function VKAuth({ onClose, onDone }: Props) {
         if (cancelled) return;
         if (res.native) {
           setNativeWindow(true);
-          setStatus('Откроется окно Microsoft Edge. Войдите в аккаунт — cookies сохранятся автоматически.');
         } else {
           setUrl(res.url);
           setStatus('Войдите в VK — cookies сохранятся автоматически');
@@ -32,7 +31,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
       }
     })();
 
-    pollRef.current = window.setInterval(() => {
+    const poll = () => {
       void PollVKLogin().then(res => {
         if (res.done) {
           setStatus(res.message || 'Готово');
@@ -43,11 +42,15 @@ export default function VKAuth({ onClose, onDone }: Props) {
         }
         if (res.status === 'error') {
           setError(res.message || 'Ошибка');
+          window.clearInterval(pollRef.current);
           return;
         }
         if (res.message) setStatus(res.message);
       }).catch(e => setError(String(e)));
-    }, 1200);
+    };
+
+    poll();
+    pollRef.current = window.setInterval(poll, 800);
 
     return () => {
       cancelled = true;
@@ -74,6 +77,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
         .vk-auth-frame { flex: 1; border: none; width: 100%; background: #fff; }
         .vk-auth-native { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px 20px; text-align: center; color: var(--text-2); font-size: 14px; line-height: 1.5; }
         .vk-auth-native-icon { font-size: 42px; opacity: 0.85; }
+        .vk-auth-native-err { color: #ef4444; }
         .vk-auth-foot { padding: 8px 12px; font-size: 11px; color: var(--text-3); text-align: center; border-top: 1px solid var(--border-2); min-height: 32px; }
         .vk-auth-foot--err { color: #ef4444; }
       `}</style>
@@ -88,7 +92,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
           {nativeWindow ? (
             <div className="vk-auth-native">
               <div className="vk-auth-native-icon">🪟</div>
-              <p>{error || status}</p>
+              <p className={error ? 'vk-auth-native-err' : ''}>{error || status}</p>
               <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Не закрывайте окно VK, пока не войдёте в аккаунт.</p>
             </div>
           ) : url ? (

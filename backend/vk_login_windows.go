@@ -40,21 +40,25 @@ func findEdgeBrowser() string {
 	return ""
 }
 
-// vkVisibleChromedpOptions — visible Edge window (DefaultExecAllocatorOptions includes Headless).
+func clearEdgeProfileLocks(profile string) {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile"} {
+		_ = os.Remove(filepath.Join(profile, name))
+	}
+}
+
+// vkVisibleChromedpOptions — visible Edge window without DefaultExecAllocatorOptions (headless).
 func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOption {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+	return []chromedp.ExecAllocatorOption{
+		chromedp.NoFirstRun,
+		chromedp.NoDefaultBrowserCheck,
 		chromedp.ExecPath(edge),
-		chromedp.Flag("user-data-dir", profile),
-		chromedp.Flag("headless", false),
-		chromedp.Flag("hide-scrollbars", false),
-		chromedp.Flag("mute-audio", false),
-		chromedp.Flag("no-first-run", true),
+		chromedp.UserDataDir(profile),
+		chromedp.NoSandbox,
 		chromedp.Flag("disable-extensions", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("new-window", true),
 		chromedp.WindowSize(520, 720),
-	)
-	return opts
+		chromedp.Flag("window-position", "200,100"),
+		chromedp.Flag("disable-dev-shm-usage", true),
+	}
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
@@ -101,8 +105,24 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 
 	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
 	_ = os.MkdirAll(profile, 0700)
+	clearEdgeProfileLocks(profile)
+
+	logDir := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk")
+	_ = os.MkdirAll(logDir, 0700)
+	logFile, logErr := os.OpenFile(filepath.Join(logDir, "edge.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if logErr == nil {
+		defer logFile.Close()
+	}
+
+	vkLoginWin.Lock()
+	vkLoginWin.status = "Открываем Edge…"
+	vkLoginWin.Unlock()
 
 	opts := vkVisibleChromedpOptions(edge, profile)
+	opts = append(opts, chromedp.WSURLReadTimeout(30*time.Second))
+	if logFile != nil {
+		opts = append(opts, chromedp.CombinedOutput(logFile))
+	}
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	defer cancelAlloc()
@@ -110,9 +130,16 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 	defer cancelBrowser()
 
-	if err := chromedp.Run(browserCtx, chromedp.Navigate("https://vk.com/")); err != nil {
+	navCtx, cancelNav := context.WithTimeout(browserCtx, 45*time.Second)
+	defer cancelNav()
+
+	if err := chromedp.Run(navCtx, chromedp.Navigate("https://vk.com/")); err != nil {
 		vkLoginWin.Lock()
-		vkLoginWin.errMsg = "Не удалось открыть vk.com: " + err.Error()
+		if navCtx.Err() == context.DeadlineExceeded {
+			vkLoginWin.errMsg = "Edge не запустился за 45 сек — закройте другие окна Edge и попробуйте снова"
+		} else {
+			vkLoginWin.errMsg = "Не удалось открыть vk.com: " + err.Error()
+		}
 		vkLoginWin.Unlock()
 		return
 	}
@@ -184,11 +211,11 @@ func (a *App) PollVKLogin() VKLoginPollResult {
 	vkLoginWin.Lock()
 	defer vkLoginWin.Unlock()
 
-	if !vkLoginWin.active && !vkLoginWin.done {
-		return VKLoginPollResult{Status: "idle"}
-	}
 	if vkLoginWin.errMsg != "" {
 		return VKLoginPollResult{Status: "error", Message: vkLoginWin.errMsg}
+	}
+	if !vkLoginWin.active && !vkLoginWin.done {
+		return VKLoginPollResult{Status: "idle"}
 	}
 	if vkLoginWin.done && vkLoginWin.cookie != "" {
 		if err := core.SaveVKCookiesJSON([]byte(vkLoginWin.cookie)); err != nil {

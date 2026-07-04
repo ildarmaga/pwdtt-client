@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.99] — 2026-07-04
+
+### VK login (Windows)
+- **Edge видимый запуск**: chromedp без DefaultExecAllocatorOptions/headless — явные флаги visible-браузера, снятие profile lock, WSURLReadTimeout 30s, navigate timeout 45s.
+- **Диагностика**: лог Edge в `%APPDATA%/pwdtt/webview-vk/edge.log`.
+- **UI**: статус из poll (800ms), ошибки красным.
+
 ## [0.3.96] — 2026-07-04
 
 ### VK login (Windows)
