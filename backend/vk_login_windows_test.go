@@ -43,6 +43,9 @@ func TestVkVisibleChromedpOptionsNoHeadless(t *testing.T) {
 		if a == "--headless" || len(a) >= 10 && a[:10] == "--headless" {
 			t.Fatalf("unexpected headless arg in cmd args: %q", a)
 		}
+		if a == "--no-sandbox" || strings.HasPrefix(a, "--no-sandbox") {
+			t.Fatalf("unexpected no-sandbox arg in cmd args: %q", a)
+		}
 		if a == "--edge-skip-compat-layer-relaunch" || strings.Contains(a, "edge-skip-compat-layer-relaunch") {
 			hasEdgeSkip = true
 		}

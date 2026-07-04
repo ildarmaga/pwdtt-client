@@ -4,6 +4,7 @@ package backend
 
 import (
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -31,4 +32,9 @@ func execDetached(name string, arg ...string) *exec.Cmd {
 		HideWindow:    true,
 	}
 	return cmd
+}
+
+// vbsQuote returns a VBScript string literal for WScript.Shell.Run.
+func vbsQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }

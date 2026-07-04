@@ -25,7 +25,6 @@ func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOpti
 	return []chromedp.ExecAllocatorOption{
 		chromedp.ExecPath(edge),
 		chromedp.UserDataDir(profile),
-		chromedp.NoSandbox,
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.WindowSize(520, 720),
@@ -34,7 +33,7 @@ func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOpti
 		chromedp.Flag("hide-scrollbars", false),
 		chromedp.Flag("mute-audio", false),
 		chromedp.Flag("edge-skip-compat-layer-relaunch", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("disable-extensions", true),
 		chromedp.Flag("remote-allow-origins", "*"),
 	}
 }

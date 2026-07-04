@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.110] — 2026-07-04
+
+### VK login (Windows)
+- **Edge chromedp**: убран `--no-sandbox` — окно больше не открывается на `about:blank` с предупреждением и ошибкой «chrome failed to start».
+
+### Обновления (Windows)
+- **Updater**: полностью скрытый запуск (wscript, без echo/pause); один перезапуск через PowerShell Hidden + UAC (без explorer/RunOnce — не два окна wdtt).
+
 ## [0.3.109] — 2026-07-04
 
 ### WB Stream

@@ -72,7 +72,16 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
-	if err := launchDetachedUpdate(scriptPath); err != nil {
+	vbsPath := filepath.Join(updateDir, "apply-launch.vbs")
+	vbs := fmt.Sprintf(
+		"CreateObject(\"WScript.Shell\").Run %s, 0, False\r\n",
+		vbsQuote(`cmd /c "`+scriptPath+`"`),
+	)
+	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
+		return UpdateApplyResult{Message: err.Error()}
+	}
+
+	if err := execDetached("wscript.exe", "//B", "//Nologo", vbsPath).Start(); err != nil {
 		return UpdateApplyResult{Message: "Не удалось запустить обновление: " + err.Error()}
 	}
 
@@ -82,13 +91,7 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	time.Sleep(150 * time.Millisecond)
 	os.Exit(0)
 
-	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s", info.Latest)}
-}
-
-func launchDetachedUpdate(scriptPath string) error {
-	// cmd start → independent process tree (survives wdtt exit).
-	cmd := execDetached("cmd.exe", "/C", "start", "/MIN", "WDTT Update", "cmd.exe", "/C", scriptPath)
-	return cmd.Start()
+	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s — подтвердите UAC", info.Latest)}
 }
 
 func buildUpdateScript(pid int, newExe, destExe, logPath string) string {
@@ -96,17 +99,14 @@ func buildUpdateScript(pid int, newExe, destExe, logPath string) string {
 	if fi, err := os.Stat(newExe); err == nil {
 		newSize = fi.Size()
 	}
-	destQ := destExeEscape(destExe)
 	return "@echo off\r\n" +
 		"setlocal EnableExtensions\r\n" +
-		"title WDTT Update\r\n" +
 		"set \"PID=" + strconv.Itoa(pid) + "\"\r\n" +
 		"set \"NEW=" + destExeEscape(newExe) + "\"\r\n" +
-		"set \"DEST=" + destQ + "\"\r\n" +
+		"set \"DEST=" + destExeEscape(destExe) + "\"\r\n" +
 		"set \"LOG=" + destExeEscape(logPath) + "\"\r\n" +
 		"set \"NEWSIZE=" + strconv.FormatInt(newSize, 10) + "\"\r\n" +
 		"echo [%date% %time%] start pid=%PID% >> \"%LOG%\"\r\n" +
-		"echo WDTT: closing, please wait...\r\n" +
 		":waitproc\r\n" +
 		"tasklist /FI \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n" +
 		"if not errorlevel 1 (\r\n" +
@@ -134,16 +134,10 @@ func buildUpdateScript(pid int, newExe, destExe, logPath string) string {
 		"goto trycopy\r\n" +
 		":copyfail\r\n" +
 		"echo COPY FAILED >> \"%LOG%\"\r\n" +
-		"echo Update FAILED — see %LOG%\r\n" +
-		"pause\r\n" +
 		"exit /b 1\r\n" +
 		":restart\r\n" +
-		"echo WDTT: starting — click Yes on UAC...\r\n" +
-		"reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\" /v WDTTUpdate /t REG_SZ /d \"\\\"%DEST%\\\"\" /f >> \"%LOG%\" 2>&1\r\n" +
-		"powershell -NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -Command \"Start-Process -FilePath '%DEST%' -Verb RunAs\" >> \"%LOG%\" 2>&1\r\n" +
-		"ping 127.0.0.1 -n 2 >nul\r\n" +
-		"%SystemRoot%\\explorer.exe \"%DEST%\"\r\n" +
-		"echo [%date% %time%] restart done >> \"%LOG%\"\r\n" +
+		"echo [%date% %time%] restart >> \"%LOG%\"\r\n" +
+		"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command \"Start-Process -LiteralPath '%DEST%' -Verb RunAs\" >> \"%LOG%\" 2>&1\r\n" +
 		"exit /b 0\r\n"
 }
 
