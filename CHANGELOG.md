@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.138] — 2026-07-05
+
+### WB Stream — меньше лишних действий при connect
+- Bypass-хосты резолвятся **один раз** после auth (без 3–4 повторов в логе).
+- **PrepareBeforeStart** — один раз перед xray, повтор только при retry.
+- `resolveHostForce` молчит, если IP не изменились.
+
 ## [0.3.137] — 2026-07-05
 
 ### WB Stream — Direct (RU) через провайдера
