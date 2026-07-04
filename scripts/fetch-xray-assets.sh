@@ -15,10 +15,11 @@ echo "Fetching xray v${XRAY_VER}..."
 curl -fsSL "$URL" -o "$TMP/xray.zip"
 unzip -qo "$TMP/xray.zip" -d "$TMP/xray"
 cp "$TMP/xray/xray.exe" "$DEST/xray.exe"
+cp "$TMP/xray/wintun.dll" "$DEST/wintun.dll"
 chmod +x "$DEST/xray.exe"
 
 GEOIP_URL="${GEOIP_URL:-https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat}"
 echo "Fetching geoip.dat..."
 curl -fsSL "$GEOIP_URL" -o "$DEST/geoip.dat"
 
-echo "OK: $(ls -lh "$DEST/xray.exe" "$DEST/geoip.dat")"
+echo "OK: $(ls -lh "$DEST/xray.exe" "$DEST/wintun.dll" "$DEST/geoip.dat")"

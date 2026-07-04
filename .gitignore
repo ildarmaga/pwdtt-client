@@ -15,6 +15,7 @@ frontend/wailsjs/
 
 # xray embed assets (CI fetch-xray-assets.sh)
 /assets/xray/xray.exe
+/assets/xray/wintun.dll
 /assets/xray/geoip.dat
 
 # Temp / IDE

@@ -72,6 +72,11 @@ function useWailsEvents() {
           logStore.push('INFO', '✓ Туннель активен');
         }
         else if (s === 'stopped' || s === 'error' || s === 'disconnected') {
+          // VK orchestrator emits "disconnected" when its session ends; ignore
+          // while WB Stream is the active protocol (shared event bus).
+          if (s === 'disconnected' && settingsStore.get().tunnelProtocol === 'wb') {
+            return;
+          }
           tunnelStore.set('idle');
           activeServerStore.setId(null);
           tunnelStatsStore.reset();

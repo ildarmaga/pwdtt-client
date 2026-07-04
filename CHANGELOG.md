@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.127] — 2026-07-05
+
+### WB Stream xray — hotfix Windows
+- **xray exit 23**: `wintun.dll` рядом с `xray.exe` (из zip Xray + embed) — без него TUN падал через ~2 с.
+- **PowerShell**: `PrepareBeforeStart` / disable adapter — скрытое окно (`CREATE_NO_WINDOW`).
+- **UI**: игнор VK `disconnected` при активном протоколе WB (ложное «— Отключено»).
+- **Логи xray**: stderr subprocess в UI.
+
 ## [0.3.126] — 2026-07-05
 
 ### WB Stream — xray TUN внутри приложения
