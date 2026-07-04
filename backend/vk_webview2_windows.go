@@ -31,13 +31,10 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 
 	s := &vkWebView2Session{writeSt: writeSt}
 
-	// S_FALSE (already initialized) is fine; only bail on real failures.
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil {
-		if !strings.Contains(err.Error(), "S_FALSE") && !strings.Contains(err.Error(), "Cannot change thread mode") {
-			writeSt(vkLoginStatusFile{Status: "error", Message: "COM init: " + err.Error()})
-			return err
-		}
-	}
+	// COM is already initialized (STA) on this thread by the go-webview2 edge
+	// package init() when this exe starts, so we must NOT call CoInitializeEx
+	// again here — a second call returns S_FALSE, which x/sys/windows surfaces
+	// as the misleading "Incorrect function." error.
 
 	hInstance := win.GetModuleHandle(nil)
 	className, _ := windows.UTF16PtrFromString("WDTTVKLoginWnd")

@@ -20,6 +20,17 @@ const (
 	// sends guest-register auth into the dead tunnel → TLS handshake timeout on
 	// every reconnect. Wait long enough for a full serial teardown (iOS-style).
 	wbShutdownWait = 25 * time.Second
+
+	// Liveness: healthy stats report rtt > 0 (~90-140ms). After "tunnel lost"
+	// the runner keeps emitting stats with rtt == 0 while its internal
+	// re-register loop hits the dead netstack (guest-register EOF, backoff up
+	// to 32s+). If we see no healthy rtt for this long, the in-place recovery
+	// has failed — tear everything down and reconnect from scratch (iOS-style).
+	wbDeadTimeout = 30 * time.Second
+	// If a fresh connect never becomes healthy at all, retry from scratch too.
+	wbConnectTimeout = 90 * time.Second
+	wbWatchTick      = 5 * time.Second
+	wbReconnectDelay = 2 * time.Second
 )
 
 // WBManager runs WB Stream in-process (like VK WireGuard), no child wbt-joiner process.
@@ -30,6 +41,11 @@ type WBManager struct {
 	done   chan struct{}
 	stop   bool
 	runGen atomic.Uint64
+
+	room         string
+	reconnecting atomic.Bool
+	connectedAt  time.Time // when this run started
+	lastHealthy  time.Time // last stats callback with rtt > 0
 
 	lastStatsLog time.Time
 	lastLogRx    int64
@@ -51,6 +67,15 @@ func (m *WBManager) Connect(room string) error {
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
 	}
+	m.mu.Lock()
+	m.stop = false // user explicitly asked to connect
+	m.mu.Unlock()
+	return m.connect(room)
+}
+
+// connect dials without resetting the user-stop flag, so a user Disconnect
+// racing with auto-reconnect always wins.
+func (m *WBManager) connect(room string) error {
 	m.awaitShutdown(wbShutdownWait)
 
 	m.mu.Lock()
@@ -58,7 +83,13 @@ func (m *WBManager) Connect(room string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("WB туннель уже запущен")
 	}
-	m.stop = false
+	if m.stop {
+		m.mu.Unlock()
+		return fmt.Errorf("подключение отменено")
+	}
+	m.room = room
+	m.connectedAt = time.Now()
+	m.lastHealthy = time.Time{}
 	m.lastStatsLog = time.Time{}
 	m.lastLogRx = 0
 	m.lastLogTx = 0
@@ -105,13 +136,103 @@ func (m *WBManager) Connect(room string) error {
 
 		setTrayStatus(false, 0, 0, 0)
 		runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
-		if !stopped {
-			m.emitLog("WARN", "WB туннель завершился")
-			m.emitLog("INFO", "— Отключено")
-			runtime.EventsEmit(m.ctx, "state_changed", "stopped")
+		if stopped {
+			return
 		}
+		// Tunnel died without user action — rebuild it from scratch.
+		m.emitLog("WARN", "[WB] Туннель завершился — пересоздаю подключение…")
+		runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+		go m.reconnect(gen)
 	}()
+
+	go m.watchLiveness(ctx, gen)
 	return nil
+}
+
+// watchLiveness detects a dead-but-not-exited tunnel: after "tunnel lost" the
+// runner's internal recovery re-registers through its own (dead) netstack and
+// backs off forever, while stats keep coming with rtt == 0. When no healthy
+// rtt is seen for wbDeadTimeout, force a full teardown + reconnect.
+func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
+	t := time.NewTicker(wbWatchTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.mu.Lock()
+			stale := m.runGen.Load() != gen
+			stopped := m.stop
+			healthy := m.lastHealthy
+			started := m.connectedAt
+			m.mu.Unlock()
+			if stale || stopped {
+				return
+			}
+			var dead bool
+			if !healthy.IsZero() {
+				dead = time.Since(healthy) > wbDeadTimeout
+			} else {
+				dead = time.Since(started) > wbConnectTimeout
+			}
+			if dead {
+				m.emitLog("WARN", "[WB] Туннель мёртв (нет живого RTT) — пересоздаю подключение…")
+				runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+				m.reconnect(gen)
+				return
+			}
+		}
+	}
+}
+
+// reconnect tears the current run down (if any) and dials again with the same
+// room. Deduplicated: run-exit handler and liveness watchdog may both fire.
+func (m *WBManager) reconnect(gen uint64) {
+	if !m.reconnecting.CompareAndSwap(false, true) {
+		return
+	}
+	defer m.reconnecting.Store(false)
+
+	m.mu.Lock()
+	if m.runGen.Load() != gen || m.stop {
+		m.mu.Unlock()
+		return
+	}
+	room := m.room
+	cancel := m.cancel
+	m.mu.Unlock()
+
+	if cancel != nil {
+		cancel() // stop the zombie run; Connect below waits for full teardown
+	}
+	time.Sleep(wbReconnectDelay)
+
+	m.mu.Lock()
+	stopped := m.stop
+	m.mu.Unlock()
+	if stopped {
+		return
+	}
+
+	m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
+	if err := m.connect(room); err != nil {
+		m.mu.Lock()
+		stopped = m.stop
+		m.mu.Unlock()
+		if stopped {
+			return
+		}
+		m.emitLog("ERROR", "[WB] Реконнект не удался: "+err.Error())
+		time.Sleep(5 * time.Second)
+		m.mu.Lock()
+		stopped = m.stop
+		cur := m.runGen.Load()
+		m.mu.Unlock()
+		if !stopped {
+			go m.reconnect(cur)
+		}
+	}
 }
 
 func (m *WBManager) finishRun(cancel context.CancelFunc, done chan struct{}) {
@@ -124,10 +245,8 @@ func (m *WBManager) finishRun(cancel context.CancelFunc, done chan struct{}) {
 
 func (m *WBManager) Disconnect() {
 	m.mu.Lock()
-	if m.cancel == nil {
-		m.mu.Unlock()
-		return
-	}
+	// Always set stop: auto-reconnect may be in-flight with cancel == nil,
+	// and the user's disconnect must abort it.
 	m.stop = true
 	cancel := m.cancel
 	m.mu.Unlock()
@@ -137,7 +256,9 @@ func (m *WBManager) Disconnect() {
 	setTrayStatus(false, 0, 0, 0)
 	runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
 
-	cancel()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // awaitShutdown waits for the runner goroutine to exit after Disconnect (or crash).
@@ -227,6 +348,9 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 
 	m.mu.Lock()
 	now := time.Now()
+	if rtt > 0 {
+		m.lastHealthy = now
+	}
 	shouldLog := now.Sub(m.lastStatsLog) >= wbStatsLogInterval
 	if shouldLog {
 		prevRx, prevTx := m.lastLogRx, m.lastLogTx

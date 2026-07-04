@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sys/windows"
 )
 
 // IsTunnelRunning reports whether VK or WB tunnel is active.
@@ -66,22 +68,15 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 
 	a.emitUpdateProgress(UpdateProgress{Phase: "applying", Percent: 100, Message: "Установка…"})
 
-	scriptPath := filepath.Join(updateDir, "apply.cmd")
-	logPath := filepath.Join(updateDir, "apply.log")
-	if err := os.WriteFile(scriptPath, []byte(buildUpdateScript(os.Getpid(), newExe, exePath, logPath)), 0600); err != nil {
-		return UpdateApplyResult{Message: err.Error()}
-	}
-
-	vbsPath := filepath.Join(updateDir, "apply-launch.vbs")
-	vbs := fmt.Sprintf(
-		"CreateObject(\"WScript.Shell\").Run %s, 0, False\r\n",
-		vbsQuote(`cmd /c "`+scriptPath+`"`),
+	// The downloaded exe applies the update itself: waits for us to exit,
+	// copies itself over the old exe and relaunches it. No cmd/vbs/powershell —
+	// nothing to flash a console, and elevation is inherited (no second UAC).
+	cmd := execDetached(newExe, updateApplyFlag,
+		"-pid", strconv.Itoa(os.Getpid()),
+		"-dest", exePath,
 	)
-	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
-		return UpdateApplyResult{Message: err.Error()}
-	}
-
-	if err := execDetached("wscript.exe", "//B", "//Nologo", vbsPath).Start(); err != nil {
+	cmd.Dir = updateDir
+	if err := cmd.Start(); err != nil {
 		return UpdateApplyResult{Message: "Не удалось запустить обновление: " + err.Error()}
 	}
 
@@ -91,58 +86,140 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	time.Sleep(150 * time.Millisecond)
 	os.Exit(0)
 
-	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s — подтвердите UAC", info.Latest)}
+	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s…", info.Latest)}
 }
 
-func buildUpdateScript(pid int, newExe, destExe, logPath string) string {
-	newSize := int64(0)
-	if fi, err := os.Stat(newExe); err == nil {
-		newSize = fi.Size()
+const updateApplyFlag = "--apply-update"
+
+// MaybeRunUpdateApply handles the hidden self-update mode: this (new) exe was
+// started from the update dir and must replace the old exe and relaunch it.
+func MaybeRunUpdateApply(args []string) bool {
+	if len(args) == 0 || args[0] != updateApplyFlag {
+		return false
 	}
-	return "@echo off\r\n" +
-		"setlocal EnableExtensions\r\n" +
-		"set \"PID=" + strconv.Itoa(pid) + "\"\r\n" +
-		"set \"NEW=" + destExeEscape(newExe) + "\"\r\n" +
-		"set \"DEST=" + destExeEscape(destExe) + "\"\r\n" +
-		"set \"LOG=" + destExeEscape(logPath) + "\"\r\n" +
-		"set \"NEWSIZE=" + strconv.FormatInt(newSize, 10) + "\"\r\n" +
-		"echo [%date% %time%] start pid=%PID% >> \"%LOG%\"\r\n" +
-		":waitproc\r\n" +
-		"tasklist /FI \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n" +
-		"if not errorlevel 1 (\r\n" +
-		"  ping 127.0.0.1 -n 2 >nul\r\n" +
-		"  goto waitproc\r\n" +
-		")\r\n" +
-		"echo [%date% %time%] process exited >> \"%LOG%\"\r\n" +
-		"ping 127.0.0.1 -n 3 >nul\r\n" +
-		"set /a N=0\r\n" +
-		":trycopy\r\n" +
-		"set /a N+=1\r\n" +
-		"if exist \"%DEST%.old\" del /F /Q \"%DEST%.old\" >nul 2>&1\r\n" +
-		"if exist \"%DEST%\" move /Y \"%DEST%\" \"%DEST%.old\" >> \"%LOG%\" 2>&1\r\n" +
-		"copy /Y \"%NEW%\" \"%DEST%\" >> \"%LOG%\" 2>&1\r\n" +
-		"if errorlevel 1 goto copyretry\r\n" +
-		"for %%A in (\"%DEST%\") do set \"DSize=%%~zA\"\r\n" +
-		"if not \"%DSize%\"==\"%NEWSIZE%\" goto copyretry\r\n" +
-		"if exist \"%DEST%.old\" del /F /Q \"%DEST%.old\" >nul 2>&1\r\n" +
-		"echo [%date% %time%] copy ok >> \"%LOG%\"\r\n" +
-		"goto restart\r\n" +
-		":copyretry\r\n" +
-		"if exist \"%DEST%.old\" if not exist \"%DEST%\" move /Y \"%DEST%.old\" \"%DEST%\" >nul 2>&1\r\n" +
-		"if %N% geq 120 goto copyfail\r\n" +
-		"ping 127.0.0.1 -n 2 >nul\r\n" +
-		"goto trycopy\r\n" +
-		":copyfail\r\n" +
-		"echo COPY FAILED >> \"%LOG%\"\r\n" +
-		"exit /b 1\r\n" +
-		":restart\r\n" +
-		"echo [%date% %time%] restart >> \"%LOG%\"\r\n" +
-		"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command \"Start-Process -LiteralPath '%DEST%' -Verb RunAs\" >> \"%LOG%\" 2>&1\r\n" +
-		"exit /b 0\r\n"
+	fs := flag.NewFlagSet("apply-update", flag.ContinueOnError)
+	pid := fs.Int("pid", 0, "pid of the exiting app")
+	dest := fs.String("dest", "", "path of the exe to replace")
+	_ = fs.Parse(args[1:])
+	runUpdateApply(*pid, *dest)
+	return true
 }
 
-func destExeEscape(p string) string {
-	return strings.ReplaceAll(p, `"`, "")
+func runUpdateApply(pid int, dest string) {
+	logPath := filepath.Join(os.Getenv("LOCALAPPDATA"), "WDTT", "update", "apply.log")
+	logf, _ := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logln := func(format string, args ...any) {
+		if logf != nil {
+			fmt.Fprintf(logf, "[%s] "+format+"\n", append([]any{time.Now().Format("15:04:05")}, args...)...)
+		}
+	}
+	defer func() {
+		if logf != nil {
+			_ = logf.Close()
+		}
+	}()
+
+	logln("apply start: pid=%d dest=%s", pid, dest)
+	if dest == "" {
+		logln("FAIL: empty dest")
+		return
+	}
+
+	src, err := os.Executable()
+	if err != nil {
+		logln("FAIL: os.Executable: %v", err)
+		return
+	}
+
+	// 1. Wait for the old app to exit (frees the exe file).
+	waitProcessExit(pid, 60*time.Second)
+	time.Sleep(1 * time.Second)
+	logln("old process gone")
+
+	// 2. Copy self over dest, retrying while AV/handles release the file.
+	var lastErr error
+	ok := false
+	for i := 0; i < 120; i++ {
+		if lastErr = replaceExe(src, dest); lastErr == nil {
+			ok = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !ok {
+		logln("FAIL: copy: %v", lastErr)
+		// Old exe may be renamed to .old — restore it so the user keeps a working app.
+		if _, err := os.Stat(dest); err != nil {
+			if err := os.Rename(dest+".old", dest); err == nil {
+				logln("restored old exe")
+				_ = execDetached(dest).Start()
+			}
+		}
+		return
+	}
+	_ = os.Remove(dest + ".old")
+	logln("copy ok")
+
+	// 3. Relaunch. We are elevated (inherited), so the new app starts without UAC.
+	if err := execDetached(dest).Start(); err != nil {
+		logln("FAIL: relaunch: %v", err)
+		return
+	}
+	logln("relaunch ok")
+}
+
+// waitProcessExit polls until the pid disappears or the timeout passes.
+func waitProcessExit(pid int, max time.Duration) {
+	if pid <= 0 {
+		return
+	}
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+		if err != nil {
+			return // process gone
+		}
+		var code uint32
+		errCode := windows.GetExitCodeProcess(h, &code)
+		_ = windows.CloseHandle(h)
+		if errCode != nil || code != 259 { // 259 = STILL_ACTIVE
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// replaceExe swaps dest with src: dest → dest.old, copy src → dest, verify size.
+func replaceExe(src, dest string) error {
+	if _, err := os.Stat(dest); err == nil {
+		_ = os.Remove(dest + ".old")
+		if err := os.Rename(dest, dest+".old"); err != nil {
+			return fmt.Errorf("rename old: %w", err)
+		}
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dest)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	sf, _ := os.Stat(src)
+	df, _ := os.Stat(dest)
+	if sf == nil || df == nil || sf.Size() != df.Size() {
+		return fmt.Errorf("size mismatch after copy")
+	}
+	return nil
 }
 
 func verifyWindowsExe(path string) error {

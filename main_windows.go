@@ -25,6 +25,9 @@ var trayIcon []byte
 var wintunDLL []byte
 
 func main() {
+	if backend.MaybeRunUpdateApply(os.Args[1:]) {
+		return
+	}
 	if exit, err := backend.MaybeRunVKLoginWorker(os.Args[1:]); exit {
 		if err != nil {
 			os.Exit(1)
