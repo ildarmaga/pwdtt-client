@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.126] — 2026-07-05
+
+### WB Stream — xray TUN внутри приложения
+- **Архитектура как на телефоне + v2rayN**: `wintun → xray-core → SOCKS joiner → WebRTC/KCP` вместо gVisor netstack.
+- **Presets маршрутизации** (Настройки → WB): Global, Bypass LAN, RU direct (`geoip:ru` + `geoip.dat`).
+- **Встроены** `xray.exe` + `geoip.dat` (~52 MB); bypass signaling/ICE по-прежнему через OS `/32` маршруты.
+- **Recovery** (SwapTunnel, bypass auth) без изменений.
+
 ## [0.3.125] — 2026-07-04
 
 ### WB Stream — zombie recovery (iOS-style)

@@ -13,6 +13,10 @@ frontend/wailsjs/
 *.so
 *.dylib
 
+# xray embed assets (CI fetch-xray-assets.sh)
+/assets/xray/xray.exe
+/assets/xray/geoip.dat
+
 # Temp / IDE
 .directory
 .idea/

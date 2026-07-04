@@ -544,6 +544,27 @@ export default function Settings({ onClose }: Props) {
           <div className="st-section-title">WB Stream · WebRTC</div>
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
+            <span>Маршрутизация</span>
+            <div className="st-seg st-seg--wrap">
+              {([
+                ['global', 'Global'],
+                ['bypass_lan', 'Bypass LAN'],
+                ['ru_direct', 'RU direct'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`st-seg-btn${settings.wbRoutingMode === value ? ' st-seg-btn--active' : ''}`}
+                  disabled={locked}
+                  onClick={() => update('wbRoutingMode', value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <span>Dual-track</span>
             <button
               className={`st-toggle st-toggle--${settings.wbDualTrack ? 'on' : 'off'}`}

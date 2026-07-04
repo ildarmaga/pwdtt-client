@@ -73,8 +73,8 @@ func (a *App) Disconnect()                   { a.orch.Stop() }
 func (a *App) Reconnect() error              { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
 
-// ConnectWB поднимает WB Stream туннель (KCP+smux поверх VP8, netstack VPN).
-func (a *App) ConnectWB(room string) error { return a.wb.Connect(room) }
+// ConnectWB поднимает WB Stream туннель (xray TUN + SOCKS joiner + WebRTC).
+func (a *App) ConnectWB(room string, routingMode string) error { return a.wb.Connect(room, routingMode) }
 
 // DisconnectWB останавливает WB Stream туннель.
 func (a *App) DisconnectWB() { a.wb.Disconnect() }

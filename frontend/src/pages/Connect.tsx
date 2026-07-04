@@ -314,7 +314,7 @@ export default function Connect() {
     logStore.push('INFO', 'Подключение WB Stream…');
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
-      await WailsConnectWB(room);
+      await WailsConnectWB(room, settingsStore.get().wbRoutingMode);
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);

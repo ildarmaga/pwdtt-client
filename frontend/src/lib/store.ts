@@ -62,6 +62,10 @@ export const settingsStore = {
     if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
       merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;
     }
+    const rm = merged.wbRoutingMode;
+    if (rm !== 'global' && rm !== 'bypass_lan' && rm !== 'ru_direct' && rm !== 'custom') {
+      merged.wbRoutingMode = DEFAULT_SETTINGS.wbRoutingMode;
+    }
     return merged;
   },
   save: (settings: AppSettings) => {

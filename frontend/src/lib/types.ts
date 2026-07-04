@@ -56,6 +56,8 @@ export interface AppSettings {
   wbProxyAuth: 'auto' | 'manual';
   wbProxyUser: string;
   wbProxyPass: string;
+  /** WB Stream xray routing preset (v2rayN-style) */
+  wbRoutingMode: 'global' | 'bypass_lan' | 'ru_direct' | 'custom';
 }
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
@@ -78,6 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wbProxyAuth: 'auto',
   wbProxyUser: '',
   wbProxyPass: '',
+  wbRoutingMode: 'global',
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [
