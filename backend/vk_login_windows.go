@@ -51,24 +51,9 @@ func findEdgeBrowser() string {
 }
 
 func clearEdgeProfileLocks(profile string) {
-	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile", "DevToolsActivePort"} {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile", "DevToolsActivePort", "SingletonSocket", "SingletonBadge"} {
 		_ = os.Remove(filepath.Join(profile, name))
 	}
-}
-
-func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOption {
-	return append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(edge),
-		chromedp.UserDataDir(profile),
-		chromedp.NoSandbox,
-		chromedp.WindowSize(520, 720),
-		chromedp.Flag("window-position", "200,100"),
-		chromedp.Flag("headless", false),
-		chromedp.Flag("hide-scrollbars", false),
-		chromedp.Flag("mute-audio", false),
-		chromedp.Flag("edge-skip-compat-layer-relaunch", true),
-		chromedp.Flag("disable-gpu", true),
-	)
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
@@ -136,7 +121,7 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 		return
 	}
 
-	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+	profile := vkLoginProfileDir()
 	statusPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "status.json")
 	_ = os.MkdirAll(filepath.Dir(statusPath), 0700)
 	_ = os.Remove(statusPath)
@@ -225,59 +210,20 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 		vkLoginWin.Unlock()
 	}()
 
-	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
-	_ = os.MkdirAll(profile, 0700)
-	clearEdgeProfileLocks(profile)
-
-	logDir := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk")
-	_ = os.MkdirAll(logDir, 0700)
-	logFile, logErr := os.OpenFile(filepath.Join(logDir, "edge.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if logErr == nil {
-		defer logFile.Close()
-	}
+	profile := vkLoginProfileDir()
 
 	vkLoginWin.Lock()
 	vkLoginWin.status = "Открываем Edge…"
 	vkLoginWin.Unlock()
 
-	opts := vkVisibleChromedpOptions(edge, profile)
-	opts = append(opts, chromedp.WSURLReadTimeout(30*time.Second))
-	if logFile != nil {
-		opts = append(opts, chromedp.CombinedOutput(logFile))
-	}
-
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancelAlloc()
-
-	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
-
-	navCtx, cancelNav := context.WithTimeout(browserCtx, 45*time.Second)
-	defer cancelNav()
-
-	if err := chromedp.Run(navCtx, chromedp.Navigate("https://vk.com/")); err != nil {
+	browserCtx, cleanup, err := startVKChromedp(ctx, edge, profile)
+	if err != nil {
 		vkLoginWin.Lock()
-		if navCtx.Err() == context.DeadlineExceeded {
-			vkLoginWin.errMsg = "Edge не запустился за 45 сек — закройте другие окна Edge и попробуйте снова"
-		} else {
-			errStr := err.Error()
-			if strings.Contains(errStr, "failed to start") || strings.Contains(errStr, "exit status") {
-				logPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "edge.log")
-				tail := errStr
-				if len(tail) > 150 {
-					tail = "…" + tail[len(tail)-150:]
-				}
-				vkLoginWin.errMsg = fmt.Sprintf(
-					"Edge не запустился. Закройте другие окна Edge и проверьте лог: %s. %s",
-					logPath, tail,
-				)
-			} else {
-				vkLoginWin.errMsg = "Не удалось открыть vk.com: " + errStr
-			}
-		}
+		vkLoginWin.errMsg = formatVKChromedpStartErr(err)
 		vkLoginWin.Unlock()
 		return
 	}
+	defer cleanup()
 
 	vkLoginWin.Lock()
 	vkLoginWin.status = "Войдите в VK — cookies сохранятся автоматически"
@@ -300,7 +246,6 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 			vkLoginWin.cookie = header
 			vkLoginWin.status = "Cookies сохранены"
 			vkLoginWin.Unlock()
-			cancelBrowser()
 			return
 		}
 	}

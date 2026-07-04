@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.107] — 2026-07-04
+
+### VK login (Windows)
+- **Edge chromedp**: явные флаги без `DefaultExecAllocatorOptions` (убран скрытый headless/disable-gpu).
+- **Профиль**: отдельная `session-*` папка на каждый вход — нет блокировок от admin-сессии.
+- **Worker**: проверка de-elevation; лог `%APPDATA%\\pwdtt\\webview-vk\\edge.log`.
+- **De-elevate**: VBS запускает worker с видимым окном (style 1).
+
 ## [0.3.106] — 2026-07-04
 
 ### Обновления (Windows)

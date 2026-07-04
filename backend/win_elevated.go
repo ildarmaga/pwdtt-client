@@ -40,7 +40,7 @@ func runDeElevated(exePath string, args []string, workDir string) (uint32, error
 	cmdLine := windowsCmdLine(exePath, args)
 	vbsPath := filepath.Join(os.TempDir(), "wdtt-vk-launch.vbs")
 	vbs := fmt.Sprintf(
-		"CreateObject(\"WScript.Shell\").Run %s, 0, False\r\n",
+		"CreateObject(\"WScript.Shell\").Run %s, 1, False\r\n",
 		vbsQuote(cmdLine),
 	)
 	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {

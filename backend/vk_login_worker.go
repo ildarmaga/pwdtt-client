@@ -11,14 +11,11 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
-
-	"github.com/chromedp/chromedp"
 )
 
 const vkLoginWorkerFlag = "--vk-login-worker"
 
 // MaybeRunVKLoginWorker handles hidden subprocess mode for de-elevated VK login.
-// Returns (true, nil) when this invocation was the worker and finished OK.
 func MaybeRunVKLoginWorker(args []string) (bool, error) {
 	if len(args) == 0 || args[0] != vkLoginWorkerFlag {
 		return false, nil
@@ -41,6 +38,14 @@ func runVKLoginWorker(statusPath, profile string) error {
 
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
 
+	if isProcessElevated() {
+		writeSt(vkLoginStatusFile{
+			Status:  "error",
+			Message: "Worker всё ещё запущен от администратора — перезапустите WDTT и попробуйте снова",
+		})
+		return fmt.Errorf("worker still elevated")
+	}
+
 	edge := findEdgeBrowser()
 	if edge == "" {
 		writeSt(vkLoginStatusFile{Status: "error", Message: "Microsoft Edge не найден"})
@@ -48,27 +53,17 @@ func runVKLoginWorker(statusPath, profile string) error {
 	}
 
 	if profile == "" {
-		profile = filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+		profile = vkLoginProfileDir()
 	}
-	if err := os.MkdirAll(profile, 0700); err != nil {
-		writeSt(vkLoginStatusFile{Status: "error", Message: err.Error()})
+	_ = os.MkdirAll(filepath.Dir(vkLoginLogPath()), 0700)
+
+	browserCtx, cleanup, err := startVKChromedp(context.Background(), edge, profile)
+	if err != nil {
+		writeSt(vkLoginStatusFile{Status: "error", Message: formatVKChromedpStartErr(err)})
 		return err
 	}
-	clearEdgeProfileLocks(profile)
+	defer cleanup()
 
-	opts := vkVisibleChromedpOptions(edge, profile)
-	opts = append(opts, chromedp.WSURLReadTimeout(30*time.Second))
-
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer cancelAlloc()
-
-	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	defer cancelCtx()
-
-	if err := chromedp.Run(ctx, chromedp.Navigate("https://vk.com/")); err != nil {
-		writeSt(vkLoginStatusFile{Status: "error", Message: "Не удалось открыть vk.com: " + err.Error()})
-		return err
-	}
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически"})
 
 	var done atomic.Bool
@@ -77,13 +72,13 @@ func runVKLoginWorker(statusPath, profile string) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-browserCtx.Done():
 			if !done.Load() {
 				writeSt(vkLoginStatusFile{Status: "cancelled", Message: "Вход отменён"})
 			}
-			return ctx.Err()
+			return browserCtx.Err()
 		case <-ticker.C:
-			header, ok := vkHarvestChromedp(ctx)
+			header, ok := vkHarvestChromedp(browserCtx)
 			if !ok {
 				continue
 			}
