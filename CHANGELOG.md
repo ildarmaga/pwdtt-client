@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.142] — 2026-07-05
+
+### Fix
+- **parse egress route** — PowerShell иногда отдаёт `LocalIP` как object; гибкий парсер + тесты.
+- **SOCKS accept loop** — выход при закрытом listener (без спама ×165k).
+
 ## [0.3.141] — 2026-07-05
 
 ### Fix
