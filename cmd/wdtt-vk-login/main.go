@@ -53,6 +53,27 @@ func findEdge() string {
 	return ""
 }
 
+func clearEdgeProfileLocks(profile string) {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile", "DevToolsActivePort"} {
+		_ = os.Remove(filepath.Join(profile, name))
+	}
+}
+
+func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOption {
+	return append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(edge),
+		chromedp.UserDataDir(profile),
+		chromedp.NoSandbox,
+		chromedp.WindowSize(520, 720),
+		chromedp.Flag("window-position", "200,100"),
+		chromedp.Flag("headless", false),
+		chromedp.Flag("hide-scrollbars", false),
+		chromedp.Flag("mute-audio", false),
+		chromedp.Flag("edge-skip-compat-layer-relaunch", true),
+		chromedp.Flag("disable-gpu", true),
+	)
+}
+
 func harvestCookies(ctx context.Context) (string, bool) {
 	var cookies []*network.Cookie
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -110,14 +131,10 @@ func main() {
 		writeStatus(statusFile{Status: "error", Message: err.Error()})
 		os.Exit(1)
 	}
+	clearEdgeProfileLocks(profile)
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(edge),
-		chromedp.Flag("user-data-dir", profile),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("disable-extensions", true),
-		chromedp.WindowSize(520, 720),
-	)
+	opts := vkVisibleChromedpOptions(edge, profile)
+	opts = append(opts, chromedp.WSURLReadTimeout(30*time.Second))
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancelAlloc()

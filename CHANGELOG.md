@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.101] — 2026-07-04
+
+### VK login (Windows, admin)
+- **De-elevation helper**: при запуске от администратора Edge/chromedp стартует через `wdtt-vk-login.exe` (medium-integrity token explorer.exe); статус в `%APPDATA%/pwdtt/webview-vk/status.json`.
+- **`wdtt-vk-login.exe`**: снова в релизе, manifest `asInvoker`, те же chromedp-опции что и in-process.
+
+### Обновления
+- **Restart runas**: после скрытого copy VBS перезапуск через `Shell.Application.ShellExecute` с verb `runas` — приложение остаётся с правами администратора.
+- **Helper в апдейте**: `wdtt-vk-login.exe` скачивается и копируется рядом с основным exe.
+
 ## [0.3.100] — 2026-07-04
 
 ### VK login (Windows)

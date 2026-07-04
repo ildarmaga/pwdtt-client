@@ -12,13 +12,14 @@ import (
 const updateRepo = "ildarmaga/pwdtt-client"
 
 type UpdateInfo struct {
-	Current     string `json:"current"`
-	Latest      string `json:"latest"`
-	HasUpdate   bool   `json:"hasUpdate"`
-	DownloadURL string `json:"downloadURL"`
-	ReleaseURL  string `json:"releaseURL"`
-	CheckedAt   string `json:"checkedAt"`
-	Error       string `json:"error,omitempty"`
+	Current           string `json:"current"`
+	Latest            string `json:"latest"`
+	HasUpdate         bool   `json:"hasUpdate"`
+	DownloadURL       string `json:"downloadURL"`
+	HelperDownloadURL string `json:"helperDownloadURL"`
+	ReleaseURL        string `json:"releaseURL"`
+	CheckedAt         string `json:"checkedAt"`
+	Error             string `json:"error,omitempty"`
 }
 
 type UpdateApplyResult struct {
@@ -93,23 +94,44 @@ func (a *App) CheckForUpdate() UpdateInfo {
 	}
 	out.Latest = latest
 	out.ReleaseURL = rel.HTMLURL
-	out.DownloadURL = pickWindowsAsset(rel.Assets)
+	out.DownloadURL = pickAssetName(rel.Assets, "wdtt-windows-amd64.exe")
+	if out.DownloadURL == "" {
+		out.DownloadURL = pickWindowsAsset(rel.Assets)
+	}
+	out.HelperDownloadURL = pickAssetName(rel.Assets, "wdtt-vk-login.exe")
 	if out.DownloadURL == "" && latest != "" {
-		out.DownloadURL = fmt.Sprintf("https://github.com/%s/releases/latest/download/wdtt-windows-amd64.exe", updateRepo)
+		out.DownloadURL = fmt.Sprintf("https://github.com/%s/releases/download/%s/wdtt-windows-amd64.exe", updateRepo, latest)
+	}
+	if out.HelperDownloadURL == "" && latest != "" {
+		out.HelperDownloadURL = fmt.Sprintf("https://github.com/%s/releases/download/%s/wdtt-vk-login.exe", updateRepo, latest)
 	}
 	out.HasUpdate = versionLess(cur, latest)
 	return out
 }
 
+func pickAssetName(assets []ghReleaseAsset, name string) string {
+	want := strings.ToLower(name)
+	for _, a := range assets {
+		if strings.EqualFold(a.Name, name) || strings.ToLower(a.Name) == want {
+			return a.BrowserDownloadURL
+		}
+	}
+	return ""
+}
+
 func pickWindowsAsset(assets []ghReleaseAsset) string {
+	if u := pickAssetName(assets, "wdtt-windows-amd64.exe"); u != "" {
+		return u
+	}
 	for _, a := range assets {
 		n := strings.ToLower(a.Name)
-		if strings.Contains(n, "windows") && strings.HasSuffix(n, ".exe") {
+		if strings.Contains(n, "windows") && strings.HasSuffix(n, ".exe") && !strings.Contains(n, "vk-login") {
 			return a.BrowserDownloadURL
 		}
 	}
 	for _, a := range assets {
-		if strings.HasSuffix(strings.ToLower(a.Name), ".exe") {
+		n := strings.ToLower(a.Name)
+		if strings.HasSuffix(n, ".exe") && !strings.Contains(n, "vk-login") {
 			return a.BrowserDownloadURL
 		}
 	}

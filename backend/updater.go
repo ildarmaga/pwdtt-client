@@ -59,13 +59,24 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
 	}
 
+	helperDest := filepath.Join(filepath.Dir(exePath), "wdtt-vk-login.exe")
+	newHelper := filepath.Join(tmpDir, "wdtt-vk-login.exe")
+	copyHelperVBS := ""
+	if helperURL := strings.TrimSpace(info.HelperDownloadURL); helperURL != "" {
+		if err := a.downloadFileSilent(helperURL, newHelper); err == nil {
+			copyHelperVBS = fmt.Sprintf(" & copy /Y \"\"%s\"\" \"\"%s\"\" >nul", newHelper, helperDest)
+		}
+	}
+
 	a.emitUpdateProgress(UpdateProgress{Phase: "applying", Percent: 100, Message: "Установка…"})
 
 	vbsPath := filepath.Join(tmpDir, "wdtt-apply.vbs")
 	vbs := fmt.Sprintf(
 		"Set sh = CreateObject(\"WScript.Shell\")\r\n"+
-			"sh.Run \"cmd /c timeout /t 2 /nobreak >nul & copy /Y \"\"%s\"\" \"\"%s\"\" >nul & \"\"%s\"\"\", 0, False\r\n",
-		newExe, exePath, exePath,
+			"Set sa = CreateObject(\"Shell.Application\")\r\n"+
+			"sh.Run \"cmd /c timeout /t 2 /nobreak >nul & copy /Y \"\"%s\"\" \"\"%s\"\" >nul%s\", 0, True\r\n"+
+			"sa.ShellExecute \"\"%s\"\", \"\", \"\", \"runas\", 1\r\n",
+		newExe, exePath, copyHelperVBS, exePath,
 	)
 	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
@@ -93,6 +104,38 @@ func (a *App) emitUpdateProgress(p UpdateProgress) {
 		return
 	}
 	runtime.EventsEmit(a.ctx, "update_progress", p)
+}
+
+func (a *App) downloadFileSilent(url, dest string) error {
+	client := &http.Client{Timeout: 5 * time.Minute}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "WDTT-Desktop-updater")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	tmp := dest + ".part"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dest)
 }
 
 func (a *App) downloadFileWithProgress(url, dest string) error {

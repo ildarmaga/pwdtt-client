@@ -4,6 +4,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,12 +19,20 @@ import (
 
 var vkLoginWin struct {
 	sync.Mutex
-	cancel  context.CancelFunc
-	status  string
-	errMsg  string
-	done    bool
-	cookie  string
-	active  bool
+	cancel    context.CancelFunc
+	status    string
+	errMsg    string
+	done      bool
+	cookie    string
+	active    bool
+	helperPid uint32
+}
+
+type vkLoginStatusFile struct {
+	Done    bool   `json:"done"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Cookie  string `json:"cookie,omitempty"`
 }
 
 func findEdgeBrowser() string {
@@ -80,19 +89,122 @@ func (a *App) StartVKLogin() (VKLoginStartResult, error) {
 	vkLoginWin.done = false
 	vkLoginWin.errMsg = ""
 	vkLoginWin.cookie = ""
+	vkLoginWin.helperPid = 0
 	vkLoginWin.status = "Загрузка VK…"
 
-	go a.runVKLoginBrowser(ctx, edge)
+	if isProcessElevated() {
+		go a.runVKLoginHelper(ctx)
+	} else {
+		go a.runVKLoginBrowser(ctx, edge)
+	}
 	return VKLoginStartResult{Active: true, Native: true}, nil
 }
 
 func (a *App) StopVKLogin() {
 	vkLoginWin.Lock()
 	cancel := vkLoginWin.cancel
+	pid := vkLoginWin.helperPid
 	vkLoginWin.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	if pid != 0 {
+		_ = killProcess(pid)
+	}
+}
+
+func (a *App) runVKLoginHelper(ctx context.Context) {
+	defer func() {
+		vkLoginWin.Lock()
+		vkLoginWin.active = false
+		vkLoginWin.cancel = nil
+		vkLoginWin.helperPid = 0
+		vkLoginWin.Unlock()
+	}()
+
+	exe, err := os.Executable()
+	if err != nil {
+		vkLoginWin.Lock()
+		vkLoginWin.errMsg = err.Error()
+		vkLoginWin.Unlock()
+		return
+	}
+	helper := filepath.Join(filepath.Dir(exe), "wdtt-vk-login.exe")
+	if _, err := os.Stat(helper); err != nil {
+		vkLoginWin.Lock()
+		vkLoginWin.errMsg = "Не найден wdtt-vk-login.exe рядом с приложением — переустановите WDTT Desktop"
+		vkLoginWin.Unlock()
+		return
+	}
+
+	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+	statusPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "status.json")
+	_ = os.MkdirAll(filepath.Dir(statusPath), 0700)
+	_ = os.Remove(statusPath)
+
+	pid, err := runDeElevated(helper, []string{"-status", statusPath, "-data", profile}, filepath.Dir(helper))
+	if err != nil {
+		vkLoginWin.Lock()
+		vkLoginWin.errMsg = "Не удалось запустить окно VK: " + err.Error()
+		vkLoginWin.Unlock()
+		return
+	}
+
+	vkLoginWin.Lock()
+	vkLoginWin.helperPid = pid
+	vkLoginWin.status = "Открываем Edge…"
+	vkLoginWin.Unlock()
+
+	ticker := time.NewTicker(800 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			st, err := readVKLoginStatus(statusPath)
+			if err != nil {
+				continue
+			}
+			switch st.Status {
+			case "error":
+				vkLoginWin.Lock()
+				vkLoginWin.errMsg = st.Message
+				vkLoginWin.Unlock()
+				return
+			case "done":
+				if st.Done && st.Cookie != "" {
+					vkLoginWin.Lock()
+					vkLoginWin.done = true
+					vkLoginWin.cookie = st.Cookie
+					vkLoginWin.status = st.Message
+					vkLoginWin.Unlock()
+				}
+				return
+			case "cancelled":
+				return
+			default:
+				vkLoginWin.Lock()
+				if st.Message != "" {
+					vkLoginWin.status = st.Message
+				}
+				vkLoginWin.Unlock()
+			}
+		}
+	}
+}
+
+func readVKLoginStatus(path string) (vkLoginStatusFile, error) {
+	var st vkLoginStatusFile
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return st, err
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		return st, err
+	}
+	return st, nil
 }
 
 func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
@@ -146,7 +258,7 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 					tail = "…" + tail[len(tail)-150:]
 				}
 				vkLoginWin.errMsg = fmt.Sprintf(
-					"Edge не запустился. Не запускайте приложение от имени администратора, закройте другие окна Edge и проверьте лог: %s. %s",
+					"Edge не запустился. Закройте другие окна Edge и проверьте лог: %s. %s",
 					logPath, tail,
 				)
 			} else {
