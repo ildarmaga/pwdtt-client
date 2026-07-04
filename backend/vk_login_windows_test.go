@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/chromedp/chromedp"
@@ -37,28 +38,39 @@ func TestVkVisibleChromedpOptionsNoHeadless(t *testing.T) {
 		t.Fatalf("ModifyCmdFunc was not invoked; gotArgs is nil")
 	}
 
+	hasEdgeSkip := false
 	for _, a := range gotArgs {
 		if a == "--headless" || len(a) >= 10 && a[:10] == "--headless" {
 			t.Fatalf("unexpected headless arg in cmd args: %q", a)
 		}
+		if a == "--edge-skip-compat-layer-relaunch" || strings.Contains(a, "edge-skip-compat-layer-relaunch") {
+			hasEdgeSkip = true
+		}
+	}
+	if !hasEdgeSkip {
+		t.Fatalf("expected edge-skip-compat-layer-relaunch in cmd args: %v", gotArgs)
 	}
 }
 
 func TestClearEdgeProfileLocks(t *testing.T) {
 	dir := t.TempDir()
-	lockPath := filepath.Join(dir, "SingletonLock")
-	if err := os.WriteFile(lockPath, []byte("lock"), 0600); err != nil {
-		t.Fatalf("failed to write dummy lock: %v", err)
-	}
-	// ensure file exists
-	if _, err := os.Stat(lockPath); err != nil {
-		t.Fatalf("expected lock to exist: %v", err)
+	for _, name := range []string{"SingletonLock", "DevToolsActivePort"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("lock"), 0600); err != nil {
+			t.Fatalf("failed to write dummy %s: %v", name, err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to exist: %v", name, err)
+		}
 	}
 
 	clearEdgeProfileLocks(dir)
 
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("expected lock to be removed, stat error: %v", err)
+	for _, name := range []string{"SingletonLock", "DevToolsActivePort"} {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat error: %v", name, err)
+		}
 	}
 }
 

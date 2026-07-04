@@ -41,24 +41,24 @@ func findEdgeBrowser() string {
 }
 
 func clearEdgeProfileLocks(profile string) {
-	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile"} {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "lockfile", "DevToolsActivePort"} {
 		_ = os.Remove(filepath.Join(profile, name))
 	}
 }
 
-// vkVisibleChromedpOptions — visible Edge window without DefaultExecAllocatorOptions (headless).
 func vkVisibleChromedpOptions(edge, profile string) []chromedp.ExecAllocatorOption {
-	return []chromedp.ExecAllocatorOption{
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
+	return append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(edge),
 		chromedp.UserDataDir(profile),
 		chromedp.NoSandbox,
-		chromedp.Flag("disable-extensions", true),
 		chromedp.WindowSize(520, 720),
 		chromedp.Flag("window-position", "200,100"),
-		chromedp.Flag("disable-dev-shm-usage", true),
-	}
+		chromedp.Flag("headless", false),
+		chromedp.Flag("hide-scrollbars", false),
+		chromedp.Flag("mute-audio", false),
+		chromedp.Flag("edge-skip-compat-layer-relaunch", true),
+		chromedp.Flag("disable-gpu", true),
+	)
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
@@ -138,7 +138,20 @@ func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
 		if navCtx.Err() == context.DeadlineExceeded {
 			vkLoginWin.errMsg = "Edge не запустился за 45 сек — закройте другие окна Edge и попробуйте снова"
 		} else {
-			vkLoginWin.errMsg = "Не удалось открыть vk.com: " + err.Error()
+			errStr := err.Error()
+			if strings.Contains(errStr, "failed to start") || strings.Contains(errStr, "exit status") {
+				logPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "edge.log")
+				tail := errStr
+				if len(tail) > 150 {
+					tail = "…" + tail[len(tail)-150:]
+				}
+				vkLoginWin.errMsg = fmt.Sprintf(
+					"Edge не запустился. Не запускайте приложение от имени администратора, закройте другие окна Edge и проверьте лог: %s. %s",
+					logPath, tail,
+				)
+			} else {
+				vkLoginWin.errMsg = "Не удалось открыть vk.com: " + errStr
+			}
 		}
 		vkLoginWin.Unlock()
 		return

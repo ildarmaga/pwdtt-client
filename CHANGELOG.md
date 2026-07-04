@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.100] — 2026-07-04
+
+### VK login (Windows)
+- **Edge «chrome failed to start»**: chromedp на базе DefaultExecAllocatorOptions с явным headless=false, флаг `edge-skip-compat-layer-relaunch`, снятие DevToolsActivePort из profile lock; понятная ошибка с советом не запускать от администратора и путь к edge.log.
+
 ## [0.3.99] — 2026-07-04
 
 ### VK login (Windows)
