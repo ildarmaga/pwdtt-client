@@ -1,6 +1,17 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.109] — 2026-07-04
+
+### WB Stream
+- **KCP restart storm**: debounce peer-epoch restart (3s) на joiner/creator; debounce sub-offer rebind (5s).
+
+### Обновления (Windows)
+- **Updater**: `cmd start /MIN` detached (без schtasks) + RunOnce fallback + explorer restart + UAC.
+
+### VK login (Windows)
+- **schtasks /RU %USERNAME% /RL LIMITED**; worker не блокируется если elevated — пробует Edge.
+
 ## [0.3.108] — 2026-07-04
 
 ### Обновления + VK login (Windows)

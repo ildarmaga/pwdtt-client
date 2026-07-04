@@ -20,8 +20,6 @@ func (a *App) IsTunnelRunning() bool {
 	return a.orch.IsRunning() || a.wb.IsRunning()
 }
 
-const updateTaskName = "WDTT_ApplyUpdate"
-
 // DownloadAndApplyUpdate downloads the latest Windows exe and schedules replace+restart.
 func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	if a.IsTunnelRunning() {
@@ -68,39 +66,45 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 
 	a.emitUpdateProgress(UpdateProgress{Phase: "applying", Percent: 100, Message: "Установка…"})
 
-	logPath := filepath.Join(updateDir, "apply.log")
 	scriptPath := filepath.Join(updateDir, "apply.cmd")
-	if err := os.WriteFile(scriptPath, []byte(buildUpdateScript(os.Getpid(), newExe, exePath, logPath, updateTaskName)), 0600); err != nil {
+	logPath := filepath.Join(updateDir, "apply.log")
+	if err := os.WriteFile(scriptPath, []byte(buildUpdateScript(os.Getpid(), newExe, exePath, logPath)), 0600); err != nil {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
-	if err := runScheduledTask(updateTaskName, `"`+scriptPath+`"`, false); err != nil {
+	if err := launchDetachedUpdate(scriptPath); err != nil {
 		return UpdateApplyResult{Message: "Не удалось запустить обновление: " + err.Error()}
 	}
 
 	a.quitting.Store(true)
 	a.orch.Stop()
 	a.wb.Disconnect()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	os.Exit(0)
 
 	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s", info.Latest)}
 }
 
-func buildUpdateScript(pid int, newExe, destExe, logPath, taskName string) string {
+func launchDetachedUpdate(scriptPath string) error {
+	// cmd start → independent process tree (survives wdtt exit).
+	cmd := execDetached("cmd.exe", "/C", "start", "/MIN", "WDTT Update", "cmd.exe", "/C", scriptPath)
+	return cmd.Start()
+}
+
+func buildUpdateScript(pid int, newExe, destExe, logPath string) string {
 	newSize := int64(0)
 	if fi, err := os.Stat(newExe); err == nil {
 		newSize = fi.Size()
 	}
+	destQ := destExeEscape(destExe)
 	return "@echo off\r\n" +
 		"setlocal EnableExtensions\r\n" +
 		"title WDTT Update\r\n" +
 		"set \"PID=" + strconv.Itoa(pid) + "\"\r\n" +
 		"set \"NEW=" + destExeEscape(newExe) + "\"\r\n" +
-		"set \"DEST=" + destExeEscape(destExe) + "\"\r\n" +
+		"set \"DEST=" + destQ + "\"\r\n" +
 		"set \"LOG=" + destExeEscape(logPath) + "\"\r\n" +
 		"set \"NEWSIZE=" + strconv.FormatInt(newSize, 10) + "\"\r\n" +
-		"set \"TASK=" + taskName + "\"\r\n" +
 		"echo [%date% %time%] start pid=%PID% >> \"%LOG%\"\r\n" +
 		"echo WDTT: closing, please wait...\r\n" +
 		":waitproc\r\n" +
@@ -121,7 +125,7 @@ func buildUpdateScript(pid int, newExe, destExe, logPath, taskName string) strin
 		"for %%A in (\"%DEST%\") do set \"DSize=%%~zA\"\r\n" +
 		"if not \"%DSize%\"==\"%NEWSIZE%\" goto copyretry\r\n" +
 		"if exist \"%DEST%.old\" del /F /Q \"%DEST%.old\" >nul 2>&1\r\n" +
-		"echo [%date% %time%] copy ok size=%DSize% >> \"%LOG%\"\r\n" +
+		"echo [%date% %time%] copy ok >> \"%LOG%\"\r\n" +
 		"goto restart\r\n" +
 		":copyretry\r\n" +
 		"if exist \"%DEST%.old\" if not exist \"%DEST%\" move /Y \"%DEST%.old\" \"%DEST%\" >nul 2>&1\r\n" +
@@ -130,17 +134,16 @@ func buildUpdateScript(pid int, newExe, destExe, logPath, taskName string) strin
 		"goto trycopy\r\n" +
 		":copyfail\r\n" +
 		"echo COPY FAILED >> \"%LOG%\"\r\n" +
-		"echo Update FAILED. See %LOG%\r\n" +
+		"echo Update FAILED — see %LOG%\r\n" +
 		"pause\r\n" +
-		"schtasks /Delete /TN \"%TASK%\" /F >nul 2>&1\r\n" +
 		"exit /b 1\r\n" +
 		":restart\r\n" +
-		"echo WDTT: starting — confirm UAC if asked...\r\n" +
-		"echo [%date% %time%] restart >> \"%LOG%\"\r\n" +
+		"echo WDTT: starting — click Yes on UAC...\r\n" +
+		"reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\" /v WDTTUpdate /t REG_SZ /d \"\\\"%DEST%\\\"\" /f >> \"%LOG%\" 2>&1\r\n" +
 		"powershell -NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -Command \"Start-Process -FilePath '%DEST%' -Verb RunAs\" >> \"%LOG%\" 2>&1\r\n" +
 		"ping 127.0.0.1 -n 2 >nul\r\n" +
 		"%SystemRoot%\\explorer.exe \"%DEST%\"\r\n" +
-		"schtasks /Delete /TN \"%TASK%\" /F >nul 2>&1\r\n" +
+		"echo [%date% %time%] restart done >> \"%LOG%\"\r\n" +
 		"exit /b 0\r\n"
 }
 

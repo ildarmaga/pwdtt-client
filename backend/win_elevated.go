@@ -4,6 +4,7 @@ package backend
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,7 +36,7 @@ func isProcessElevated() bool {
 	return elev != 0
 }
 
-// runDeElevated starts exePath at medium integrity via scheduled task (/RL LIMITED).
+// runDeElevated starts exePath at medium integrity via scheduled task (/RL LIMITED /RU user).
 func runDeElevated(exePath string, args []string, workDir string) (uint32, error) {
 	taskName := fmt.Sprintf("WDTT_VK_%d", time.Now().UnixNano())
 	tr := windowsCmdLine(exePath, args)
@@ -52,10 +53,13 @@ func runDeElevated(exePath string, args []string, workDir string) (uint32, error
 	return 0, nil
 }
 
-// runScheduledTask creates a one-shot task and runs it immediately.
-// limited=true → /RL LIMITED (medium integrity, for VK worker de-elevation).
 func runScheduledTask(taskName, taskRun string, limited bool) error {
 	_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+
+	user := os.Getenv("USERNAME")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
 
 	createArgs := []string{
 		"/Create", "/TN", taskName,
@@ -63,21 +67,20 @@ func runScheduledTask(taskName, taskRun string, limited bool) error {
 		"/SC", "ONCE", "/ST", "00:00",
 		"/F",
 	}
+	if user != "" {
+		createArgs = append(createArgs, "/RU", user)
+	}
 	if limited {
 		createArgs = append(createArgs, "/RL", "LIMITED")
 	}
-	if err := execHidden("schtasks", createArgs...).Run(); err != nil {
-		return fmt.Errorf("schtasks create: %w", err)
+	if out, err := execHidden("schtasks", createArgs...).CombinedOutput(); err != nil {
+		return fmt.Errorf("schtasks create: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
-	if err := execHidden("schtasks", "/Run", "/TN", taskName).Run(); err != nil {
+	if out, err := execHidden("schtasks", "/Run", "/TN", taskName).CombinedOutput(); err != nil {
 		_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
-		return fmt.Errorf("schtasks run: %w", err)
+		return fmt.Errorf("schtasks run: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func vbsQuote(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func windowsCmdLine(exe string, args []string) string {

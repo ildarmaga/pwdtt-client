@@ -39,11 +39,7 @@ func runVKLoginWorker(statusPath, profile string) error {
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
 
 	if isProcessElevated() {
-		writeSt(vkLoginStatusFile{
-			Status:  "error",
-			Message: "Worker всё ещё запущен от администратора — перезапустите WDTT и попробуйте снова",
-		})
-		return fmt.Errorf("worker still elevated")
+		writeSt(vkLoginStatusFile{Status: "waiting", Message: "Предупреждение: worker elevated, пробуем Edge…"})
 	}
 
 	edge := findEdgeBrowser()
