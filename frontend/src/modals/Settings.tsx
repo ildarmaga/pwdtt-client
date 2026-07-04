@@ -4,7 +4,7 @@ import Hash from './Hash';
 import { settingsStore, serverStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
-import type { AppSettings, TunnelProtocol, Server } from '../lib/types';
+import type { AppSettings, TunnelProtocol, Server, UpdateProgressEvent } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
@@ -92,7 +92,7 @@ export default function Settings({ onClose }: Props) {
   }, []);
 
   useEffect(() => {
-    const off = EventsOn('update_progress', (p: backend.UpdateProgress) => {
+    const off = EventsOn('update_progress', (p: UpdateProgressEvent) => {
       setUpdateProgress(p?.percent ?? 0);
       setUpdateProgressMsg(p?.message ?? '');
       if (p?.phase === 'error') setUpdateApplying(false);

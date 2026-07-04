@@ -24,6 +24,15 @@ export function isLinkManagedServer(s: Server): boolean {
 /** Протокол туннеля на экране подключения. VK — TURN/VK Calls; WB — WB Stream WebRTC. */
 export type TunnelProtocol = 'vk' | 'wb';
 
+/** In-app update download progress (EventsOn update_progress). */
+export interface UpdateProgressEvent {
+  phase?: string;
+  percent?: number;
+  written?: number;
+  total?: number;
+  message?: string;
+}
+
 export interface AppSettings {
   bypassMode: 'РУЧ' | 'АВТ';
   power: number;

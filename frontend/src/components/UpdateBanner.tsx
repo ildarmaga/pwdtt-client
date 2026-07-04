@@ -3,6 +3,7 @@ import { IconDownload, IconX } from '@tabler/icons-react';
 import { CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import type { backend } from '../../wailsjs/go/models';
+import type { UpdateProgressEvent } from '../lib/types';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 
 const DISMISS_KEY = 'pwdtt_update_dismiss';
@@ -33,7 +34,7 @@ export default function UpdateBanner() {
   }, []);
 
   useEffect(() => {
-    const off = EventsOn('update_progress', (p: backend.UpdateProgress) => {
+    const off = EventsOn('update_progress', (p: UpdateProgressEvent) => {
       setProgress(p?.percent ?? 0);
       setProgressMsg(p?.message ?? '');
       if (p?.phase === 'error') setApplying(false);
