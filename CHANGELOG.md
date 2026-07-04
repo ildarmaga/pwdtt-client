@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.143] — 2026-07-05
+
+### Fix — WB Stream TUN (Windows)
+- **Ghost wintun pool** — перед xray закрываем orphaned kernel-адаптер `WDTT-WB` (`ReleaseWintunPool`), иначе xray открывает «мёртвый» pool без NetAdapter → timeout 20s и APIPA `169.254.x`.
+- **Cleanup** — при disconnect/teardown и retry: pool release + удаление Wintun/Xray адаптеров в PowerShell.
+- **Диагностика** — при timeout в лог список видимых wintun-адаптеров.
+- **xray cwd** — `cmd.Dir` = каталог exe (wintun.dll рядом с xray).
+
 ## [0.3.142] — 2026-07-05
 
 ### Fix
