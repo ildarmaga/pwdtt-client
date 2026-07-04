@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.119] — 2026-07-04
+
+### VK login (Windows)
+- **Белый экран**: WebView2 после Embed не был видим — добавлены `Hide()`/`Show()` (как в Wails), теперь vk.com реально отображается.
+- **Ложное закрытие ~8 с**: гостевой `remixsid` при редиректах больше не считается входом — нужны **remixsid + p**, проверка `web_token`, два подтверждения подряд.
+- Лог: `%APPDATA%/pwdtt/webview-vk/vk-login.log`.
+
 ## [0.3.118] — 2026-07-04
 
 ### VK login (Windows)

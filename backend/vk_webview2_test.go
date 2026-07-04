@@ -19,3 +19,21 @@ func TestVKRemixsidIsNew(t *testing.T) {
 		}
 	}
 }
+
+func TestVKLoginCookiesReady(t *testing.T) {
+	cases := []struct {
+		remixsid, baseline, p string
+		want                    bool
+	}{
+		{"abc", "", "p1", true},
+		{"abc", "abc", "p1", false},
+		{"abc", "", "", false},
+		{"", "", "p1", false},
+	}
+	for _, c := range cases {
+		got := vkLoginCookiesReady(c.remixsid, c.baseline, c.p)
+		if got != c.want {
+			t.Fatalf("vkLoginCookiesReady(%q,%q,%q) = %v, want %v", c.remixsid, c.baseline, c.p, got, c.want)
+		}
+	}
+}

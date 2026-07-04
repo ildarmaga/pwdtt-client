@@ -67,6 +67,11 @@ func vkCheckWebToken(cookieHeader string) error {
 	return nil
 }
 
+// ValidateVKCookieHeader checks remixsid live via login.vk.com web_token (no cache).
+func ValidateVKCookieHeader(header string) error {
+	return vkCheckWebToken(header)
+}
+
 func vkCookiesLiveValid(header string) error {
 	vkCookieCheckMu.Lock()
 	defer vkCookieCheckMu.Unlock()
