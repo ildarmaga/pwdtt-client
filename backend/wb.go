@@ -43,19 +43,21 @@ const (
 	wbProbeInterval  = 10 * time.Second
 	wbProbeTimeout   = 5 * time.Second
 
-	// Don't treat probe failures as fatal while traffic is still moving (large
-	// downloads can starve the small generate_204 probe without killing the path).
+	// Meaningful throughput (not trickle keepalive) — probe ignored only during real load.
+	wbMeaningfulRateBps  = 32 * 1024 // 32 KiB/s combined rx+tx
+	wbMeaningfulWindow   = 25 * time.Second
 	wbTrafficActiveWindow  = 30 * time.Second
-	wbTrafficActiveMinDelta = int64(8192) // 8 KiB moved in window = alive
-	wbTrafficStallWindow   = 45 * time.Second // no byte growth for this long = stalled
+	wbTrafficActiveMinDelta = int64(8192)
+	wbTrafficStallWindow   = 45 * time.Second
 
-	// After carrier rebind the data path can be quiet for tens of seconds while
-	// KCP/smux settles — skip probe-based recovery during this grace period.
+	// Zombie: probe fails while only trickle bytes move (github ERR_CONNECTION_CLOSED).
+	wbZombieProbeLimit = 2
+
+	// After carrier rebind the data path can be quiet while KCP settles.
 	wbProbeGraceAfterRebind = 90 * time.Second
 
-	// Try in-place WebRTC/KCP recovery (TUN stays up) before full teardown.
-	wbSoftRecoverMax      = 2
-	wbSoftRecoverCooldown = 120 * time.Second
+	wbSoftRecoverMax      = 3
+	wbSoftRecoverCooldown = 90 * time.Second
 )
 
 var wbProbeURLs = []string{
@@ -87,6 +89,7 @@ type WBManager struct {
 
 	lastTrafficAt    time.Time
 	lastTrafficBytes int64
+	lastFastTrafficAt time.Time
 	probeGraceUntil  time.Time
 	softRecoverCount int
 	lastSoftRecover  time.Time
@@ -136,6 +139,7 @@ func (m *WBManager) connect(room string) error {
 	m.lastLogTx = 0
 	m.lastTrafficAt = time.Time{}
 	m.lastTrafficBytes = 0
+	m.lastFastTrafficAt = time.Time{}
 	m.probeGraceUntil = time.Time{}
 	m.softRecoverCount = 0
 	m.lastSoftRecover = time.Time{}
@@ -203,21 +207,29 @@ func (m *WBManager) connect(room string) error {
 // healthy, or the active HTTP probe through the tunnel failed too many times
 // in a row while traffic has actually stalled (rtt can stay alive while the
 // data path is dead, but probe alone must not kill an active download).
-func wbTunnelDead(now, started, lastHealthy, lastTraffic time.Time, lastTrafficBytes int64, probeFails int, probeGraceUntil time.Time) (dead bool, reason string, softRecover bool) {
+func wbTunnelDead(now, started, lastHealthy, lastTraffic, lastFast time.Time, lastTrafficBytes int64, probeFails int, probeGraceUntil time.Time) (dead bool, reason string, softRecover bool) {
 	if !probeGraceUntil.IsZero() && now.Before(probeGraceUntil) {
 		return false, "", false
 	}
-	trafficActive := wbTrafficActive(now, lastTraffic, lastTrafficBytes)
+	meaningful := wbTrafficMeaningful(now, lastFast)
 	trafficStalled := wbTrafficStalled(now, lastTraffic, lastTrafficBytes)
 
-	if probeFails >= wbProbeFailLimit {
-		if trafficActive {
+	limit := wbProbeFailLimit
+	if !meaningful {
+		limit = wbZombieProbeLimit
+	}
+	if probeFails >= limit {
+		if meaningful {
 			return false, "", false
 		}
-		if !trafficStalled {
+		if !trafficStalled && !wbTrafficActive(now, lastTraffic, lastTrafficBytes) {
 			return false, "", false
 		}
-		return true, "интернет через туннель не отвечает", true
+		reason = "интернет через туннель не отвечает"
+		if wbTrafficActive(now, lastTraffic, lastTrafficBytes) && !meaningful {
+			reason = "туннель завис (zombie)"
+		}
+		return true, reason, true
 	}
 	if lastHealthy.IsZero() {
 		if now.Sub(started) > wbConnectTimeout {
@@ -226,12 +238,16 @@ func wbTunnelDead(now, started, lastHealthy, lastTraffic time.Time, lastTrafficB
 		return false, "", false
 	}
 	if now.Sub(lastHealthy) > wbDeadTimeout {
-		if trafficActive {
+		if meaningful {
 			return false, "", false
 		}
 		return true, "нет живого RTT", true
 	}
 	return false, "", false
+}
+
+func wbTrafficMeaningful(now, lastFast time.Time) bool {
+	return !lastFast.IsZero() && now.Sub(lastFast) <= wbMeaningfulWindow
 }
 
 func wbTrafficActive(now, lastTraffic time.Time, lastBytes int64) bool {
@@ -306,6 +322,7 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			started := m.connectedAt
 			lastTraffic := m.lastTrafficAt
 			lastTrafficBytes := m.lastTrafficBytes
+			lastFast := m.lastFastTrafficAt
 			probeGrace := m.probeGraceUntil
 			softCount := m.softRecoverCount
 			lastSoft := m.lastSoftRecover
@@ -324,17 +341,16 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 				if wbProbeDataPath() {
 					probeFails = 0
 				} else {
-					if wbTrafficActive(now, lastTraffic, lastTrafficBytes) {
-						// Download in progress — probe starved, not a dead tunnel.
+					if wbTrafficMeaningful(now, lastFast) {
 						probeFails = 0
 					} else {
 						probeFails++
-						m.emitLog("WARN", fmt.Sprintf("[WB] Проверка трафика через туннель не прошла (%d/%d)", probeFails, wbProbeFailLimit))
+						m.emitLog("WARN", fmt.Sprintf("[WB] Проверка трафика через туннель не прошла (%d/%d)", probeFails, wbZombieProbeLimit))
 					}
 				}
 			}
 
-			dead, reason, trySoft := wbTunnelDead(now, started, healthy, lastTraffic, lastTrafficBytes, probeFails, probeGrace)
+			dead, reason, trySoft := wbTunnelDead(now, started, healthy, lastTraffic, lastFast, lastTrafficBytes, probeFails, probeGrace)
 			if !dead {
 				continue
 			}
@@ -581,14 +597,16 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 		m.lastStatsLog = now
 		m.lastLogRx = rx
 		m.lastLogTx = tx
+		downRate := float64(rx-prevRx) / wbStatsLogInterval.Seconds()
+		upRate := float64(tx-prevTx) / wbStatsLogInterval.Seconds()
+		if downRate+upRate >= wbMeaningfulRateBps {
+			m.lastFastTrafficAt = now
+		}
 		m.mu.Unlock()
 
 		if rx == 0 && tx == 0 {
 			return
 		}
-		dt := wbStatsLogInterval.Seconds()
-		downRate := float64(rx-prevRx) / dt
-		upRate := float64(tx-prevTx) / dt
 		totalMB := float64(rx+tx) / (1024.0 * 1024.0)
 		m.emitLog("INFO", fmt.Sprintf(
 			"[WB СТАТ] ↓ %s (%s) ↑ %s (%s) · WBT %d ms · %.2f MB",

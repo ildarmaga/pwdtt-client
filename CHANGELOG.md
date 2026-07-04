@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.122] — 2026-07-04
+
+### WB Stream — zombie tunnel + rebind fix
+- **Zombie-детект**: probe fail при trickle (1–16 KB/s) → soft recover через 2 попытки, не висим с «зелёным» мёртвым туннелем.
+- **Meaningful traffic**: probe игнорируется только при реальной нагрузке ≥32 KiB/s (не keepalive/trickle).
+- **Soft recover**: сначала KCP+smux restart без снятия VPN, потом WebRTC session.
+- **Relay**: после `carrier rebind` всегда перезапуск KCP+smux (старые smux-потоки ломали новые TCP → `ERR_CONNECTION_CLOSED`).
+
 ## [0.3.121] — 2026-07-04
 
 ### WB Stream — бесшовное восстановление

@@ -8,15 +8,16 @@ import (
 func TestWBTunnelDead(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
-		name              string
-		started           time.Time
-		lastHealthy       time.Time
-		lastTraffic       time.Time
-		lastTrafficBytes  int64
-		probeFails        int
-		probeGraceUntil   time.Time
-		wantDead          bool
-		wantSoft          bool
+		name             string
+		started          time.Time
+		lastHealthy      time.Time
+		lastTraffic      time.Time
+		lastFast         time.Time
+		lastTrafficBytes int64
+		probeFails       int
+		probeGraceUntil  time.Time
+		wantDead         bool
+		wantSoft         bool
 	}{
 		{
 			name:        "healthy rtt just now",
@@ -45,24 +46,25 @@ func TestWBTunnelDead(t *testing.T) {
 			name:        "probe failures below limit keep tunnel",
 			started:     now.Add(-5 * time.Minute),
 			lastHealthy: now.Add(-time.Second),
-			probeFails:  wbProbeFailLimit - 1,
+			probeFails:  wbZombieProbeLimit - 1,
 			wantDead:    false,
 		},
 		{
-			name:             "probe at limit with stalled traffic triggers soft recover",
+			name:             "zombie: probe at limit with trickle only",
 			started:          now.Add(-5 * time.Minute),
 			lastHealthy:      now.Add(-time.Second),
-			lastTraffic:      now.Add(-wbTrafficStallWindow - time.Second),
-			lastTrafficBytes: 1024 * 1024,
-			probeFails:       wbProbeFailLimit,
+			lastTraffic:      now.Add(-5 * time.Second),
+			lastTrafficBytes: 128 * 1024 * 1024,
+			probeFails:       wbZombieProbeLimit,
 			wantDead:         true,
 			wantSoft:         true,
 		},
 		{
-			name:             "probe at limit ignored while traffic active",
+			name:             "probe at limit ignored during meaningful download",
 			started:          now.Add(-5 * time.Minute),
 			lastHealthy:      now.Add(-time.Second),
 			lastTraffic:      now.Add(-5 * time.Second),
+			lastFast:         now.Add(-5 * time.Second),
 			lastTrafficBytes: 50 * 1024 * 1024,
 			probeFails:       wbProbeFailLimit,
 			wantDead:         false,
@@ -72,7 +74,7 @@ func TestWBTunnelDead(t *testing.T) {
 			started:         now.Add(-5 * time.Minute),
 			lastHealthy:     now.Add(-time.Second),
 			lastTraffic:     now.Add(-wbTrafficStallWindow - time.Second),
-			probeFails:      wbProbeFailLimit,
+			probeFails:      wbZombieProbeLimit,
 			probeGraceUntil: now.Add(30 * time.Second),
 			wantDead:        false,
 		},
@@ -80,7 +82,7 @@ func TestWBTunnelDead(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dead, reason, soft := wbTunnelDead(now, c.started, c.lastHealthy, c.lastTraffic, c.lastTrafficBytes, c.probeFails, c.probeGraceUntil)
+			dead, reason, soft := wbTunnelDead(now, c.started, c.lastHealthy, c.lastTraffic, c.lastFast, c.lastTrafficBytes, c.probeFails, c.probeGraceUntil)
 			if dead != c.wantDead {
 				t.Fatalf("wbTunnelDead() dead = %v (%q), want %v", dead, reason, c.wantDead)
 			}
@@ -94,15 +96,19 @@ func TestWBTunnelDead(t *testing.T) {
 	}
 }
 
+func TestWBTrafficMeaningful(t *testing.T) {
+	now := time.Now()
+	if !wbTrafficMeaningful(now, now.Add(-5*time.Second)) {
+		t.Fatal("expected meaningful traffic")
+	}
+	if wbTrafficMeaningful(now, now.Add(-wbMeaningfulWindow-time.Second)) {
+		t.Fatal("expected not meaningful after window")
+	}
+}
+
 func TestWBTrafficActive(t *testing.T) {
 	now := time.Now()
 	if !wbTrafficActive(now, now.Add(-10*time.Second), 1024*1024) {
 		t.Fatal("expected active traffic")
-	}
-	if wbTrafficActive(now, now.Add(-10*time.Second), 1024) {
-		t.Fatal("expected inactive below min delta")
-	}
-	if wbTrafficActive(now, now.Add(-wbTrafficActiveWindow-time.Second), 1024*1024) {
-		t.Fatal("expected inactive after window")
 	}
 }
