@@ -3,127 +3,195 @@
 package backend
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 	"wg-turn-client/core"
 )
 
-var (
-	vkLoginWinMu      sync.Mutex
-	vkLoginCmd        *exec.Cmd
-	vkLoginStatusPath string
-)
+var vkLoginWin struct {
+	sync.Mutex
+	cancel  context.CancelFunc
+	status  string
+	errMsg  string
+	done    bool
+	cookie  string
+	active  bool
+}
 
-type vkLoginStatusFile struct {
-	Done    bool   `json:"done"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
-	Cookie  string `json:"cookie,omitempty"`
+func findEdgeBrowser() string {
+	candidates := []string{
+		filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Edge", "Application", "msedge.exe"),
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {
-	vkLoginWinMu.Lock()
-	defer vkLoginWinMu.Unlock()
+	vkLoginWin.Lock()
+	defer vkLoginWin.Unlock()
 
-	if vkLoginCmd != nil && vkLoginCmd.Process != nil {
+	if vkLoginWin.active {
 		return VKLoginStartResult{Active: true, Native: true}, nil
 	}
 
-	helper, err := vkLoginHelperExe()
-	if err != nil {
-		return VKLoginStartResult{}, err
+	edge := findEdgeBrowser()
+	if edge == "" {
+		return VKLoginStartResult{}, fmt.Errorf("Microsoft Edge не найден — установите Edge")
 	}
 
-	statusDir := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "vk-login")
-	if err := os.MkdirAll(statusDir, 0700); err != nil {
-		return VKLoginStartResult{}, err
-	}
-	vkLoginStatusPath = filepath.Join(statusDir, "status.json")
-	_ = os.Remove(vkLoginStatusPath)
+	ctx, cancel := context.WithCancel(a.ctx)
+	vkLoginWin.cancel = cancel
+	vkLoginWin.active = true
+	vkLoginWin.done = false
+	vkLoginWin.errMsg = ""
+	vkLoginWin.cookie = ""
+	vkLoginWin.status = "Загрузка VK…"
 
-	dataDir := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return VKLoginStartResult{}, err
-	}
-
-	cmd := exec.Command(helper, "--status", vkLoginStatusPath, "--data", dataDir)
-	if err := cmd.Start(); err != nil {
-		return VKLoginStartResult{}, fmt.Errorf("не удалось открыть окно VK: %w", err)
-	}
-	vkLoginCmd = cmd
+	go a.runVKLoginBrowser(ctx, edge)
 	return VKLoginStartResult{Active: true, Native: true}, nil
 }
 
 func (a *App) StopVKLogin() {
-	vkLoginWinMu.Lock()
-	defer vkLoginWinMu.Unlock()
-	stopVKLoginHelperLocked()
+	vkLoginWin.Lock()
+	cancel := vkLoginWin.cancel
+	vkLoginWin.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
-func stopVKLoginHelperLocked() {
-	if vkLoginCmd != nil && vkLoginCmd.Process != nil {
-		_ = vkLoginCmd.Process.Kill()
-		_, _ = vkLoginCmd.Process.Wait()
+func (a *App) runVKLoginBrowser(ctx context.Context, edge string) {
+	defer func() {
+		vkLoginWin.Lock()
+		vkLoginWin.active = false
+		vkLoginWin.cancel = nil
+		vkLoginWin.Unlock()
+	}()
+
+	profile := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+	_ = os.MkdirAll(profile, 0700)
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(edge),
+		chromedp.Flag("user-data-dir", profile),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.WindowSize(520, 720),
+	)
+
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
+	defer cancelAlloc()
+
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+
+	if err := chromedp.Run(browserCtx, chromedp.Navigate("https://vk.com/")); err != nil {
+		vkLoginWin.Lock()
+		vkLoginWin.errMsg = "Не удалось открыть vk.com: " + err.Error()
+		vkLoginWin.Unlock()
+		return
 	}
-	vkLoginCmd = nil
+
+	vkLoginWin.Lock()
+	vkLoginWin.status = "Войдите в VK — cookies сохранятся автоматически"
+	vkLoginWin.Unlock()
+
+	ticker := time.NewTicker(1200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			header, ok := vkHarvestChromedp(browserCtx)
+			if !ok {
+				continue
+			}
+			vkLoginWin.Lock()
+			vkLoginWin.done = true
+			vkLoginWin.cookie = header
+			vkLoginWin.status = "Cookies сохранены"
+			vkLoginWin.Unlock()
+			cancelBrowser()
+			return
+		}
+	}
+}
+
+func vkHarvestChromedp(ctx context.Context) (string, bool) {
+	var cookies []*network.Cookie
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		cookies, err = network.GetCookies().WithUrls([]string{
+			"https://vk.com/",
+			"https://login.vk.com/",
+			"https://id.vk.com/",
+		}).Do(ctx)
+		return err
+	})); err != nil {
+		return "", false
+	}
+	var remixsid, pCookie string
+	for _, c := range cookies {
+		dom := strings.ToLower(c.Domain)
+		if !strings.HasPrefix(dom, ".") {
+			dom = "." + dom
+		}
+		if c.Name == "remixsid" && strings.HasSuffix(dom, ".vk.com") && c.Value != "" {
+			remixsid = c.Value
+		}
+		if c.Name == "p" && strings.HasSuffix(dom, ".login.vk.com") && c.Value != "" {
+			pCookie = c.Value
+		}
+	}
+	if remixsid == "" {
+		return "", false
+	}
+	header := "remixsid=" + remixsid
+	if pCookie != "" {
+		header += "; p=" + pCookie
+	}
+	return header, true
 }
 
 func (a *App) PollVKLogin() VKLoginPollResult {
-	vkLoginWinMu.Lock()
-	path := vkLoginStatusPath
-	cmd := vkLoginCmd
-	vkLoginWinMu.Unlock()
+	vkLoginWin.Lock()
+	defer vkLoginWin.Unlock()
 
-	if cmd == nil || cmd.Process == nil {
+	if !vkLoginWin.active && !vkLoginWin.done {
 		return VKLoginPollResult{Status: "idle"}
 	}
-	if path == "" {
-		return VKLoginPollResult{Status: "waiting", Message: "Войдите в VK — ожидаем remixsid…"}
+	if vkLoginWin.errMsg != "" {
+		return VKLoginPollResult{Status: "error", Message: vkLoginWin.errMsg}
 	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return VKLoginPollResult{Status: "waiting", Message: "Войдите в VK — ожидаем remixsid…"}
-	}
-	var st vkLoginStatusFile
-	if err := json.Unmarshal(data, &st); err != nil {
-		return VKLoginPollResult{Status: "waiting", Message: "Войдите в VK — ожидаем remixsid…"}
-	}
-	if st.Status == "error" {
-		return VKLoginPollResult{Status: "error", Message: st.Message}
-	}
-	if !st.Done || st.Cookie == "" {
-		msg := st.Message
-		if msg == "" {
-			msg = "Войдите в VK — ожидаем remixsid…"
+	if vkLoginWin.done && vkLoginWin.cookie != "" {
+		if err := core.SaveVKCookiesJSON([]byte(vkLoginWin.cookie)); err != nil {
+			return VKLoginPollResult{Status: "error", Message: err.Error()}
 		}
-		return VKLoginPollResult{Status: "waiting", Message: msg}
+		_ = core.SetVKUseCookies(true)
+		vkLoginWin.done = false
+		vkLoginWin.cookie = ""
+		return VKLoginPollResult{Done: true, Status: "done", Message: "Cookies сохранены"}
 	}
-
-	if err := core.SaveVKCookiesJSON([]byte(st.Cookie)); err != nil {
-		return VKLoginPollResult{Status: "error", Message: err.Error()}
+	msg := vkLoginWin.status
+	if msg == "" {
+		msg = "Войдите в VK — ожидаем remixsid…"
 	}
-	_ = core.SetVKUseCookies(true)
-
-	vkLoginWinMu.Lock()
-	stopVKLoginHelperLocked()
-	vkLoginWinMu.Unlock()
-	return VKLoginPollResult{Done: true, Status: "done", Message: "Cookies сохранены"}
-}
-
-func vkLoginHelperExe() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	helper := filepath.Join(filepath.Dir(exe), "wdtt-vk-login.exe")
-	if _, err := os.Stat(helper); err == nil {
-		return helper, nil
-	}
-	return "", fmt.Errorf("wdtt-vk-login.exe не найден рядом с программой — переустановите WDTT")
+	return VKLoginPollResult{Status: "waiting", Message: msg}
 }

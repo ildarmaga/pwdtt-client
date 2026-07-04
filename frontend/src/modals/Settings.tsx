@@ -10,6 +10,7 @@ import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
 import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, GetAppVersion, CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
 
@@ -56,6 +57,8 @@ export default function Settings({ onClose }: Props) {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<backend.UpdateInfo | null>(null);
   const [updateApplying, setUpdateApplying] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateProgressMsg, setUpdateProgressMsg] = useState('');
   const [vkAuthOpen, setVkAuthOpen] = useState(false);
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
@@ -86,6 +89,15 @@ export default function Settings({ onClose }: Props) {
 
   useEffect(() => {
     GetAppVersion().then(v => setAppVersion(v || '')).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const off = EventsOn('update_progress', (p: backend.UpdateProgress) => {
+      setUpdateProgress(p?.percent ?? 0);
+      setUpdateProgressMsg(p?.message ?? '');
+      if (p?.phase === 'error') setUpdateApplying(false);
+    });
+    return () => { off?.(); };
   }, []);
 
   useEffect(() => settingsStore.subscribe(s => {
@@ -227,6 +239,11 @@ export default function Settings({ onClose }: Props) {
         .st-vk-btn { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
         .st-vk-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
         .st-vk-msg { font-size: 11px; color: var(--text-3); margin-top: 6px; min-height: 16px; }
+        .st-vk-msg--warn { color: #f59e0b; }
+        .st-upd-progress { margin-top: 8px; }
+        .st-upd-progress-track { height: 6px; border-radius: 3px; background: var(--seg-bg); overflow: hidden; }
+        .st-upd-progress-bar { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.2s ease; }
+        .st-upd-progress-label { font-size: 11px; color: var(--text-3); margin-top: 4px; }
       `}</style>
       <div className="st-overlay" onClick={handleClose}>
         <div className="st-modal" onClick={e => e.stopPropagation()}>
@@ -327,26 +344,43 @@ export default function Settings({ onClose }: Props) {
                 <button
                   type="button"
                   className="st-vk-btn st-vk-btn--primary"
-                  disabled={updateApplying || locked}
-                  title={locked ? 'Отключитесь перед обновлением' : undefined}
+                  disabled={updateApplying}
                   onClick={async () => {
+                    if (locked) {
+                      setUpdateMsg('Сначала отключитесь — нажмите кнопку питания на главном экране');
+                      return;
+                    }
                     setUpdateApplying(true);
+                    setUpdateProgress(0);
+                    setUpdateProgressMsg('Скачивание…');
                     setUpdateMsg('');
                     try {
                       const res = await DownloadAndApplyUpdate();
-                      setUpdateMsg(res.message || (res.ok ? 'Перезапуск…' : 'Ошибка'));
+                      if (res.ok) {
+                        setUpdateMsg(res.message || 'Перезапуск…');
+                      } else {
+                        setUpdateMsg(res.message || 'Ошибка');
+                        setUpdateApplying(false);
+                      }
                     } catch (e) {
                       setUpdateMsg(String(e));
-                    } finally {
                       setUpdateApplying(false);
                     }
                   }}
                 >
-                  {updateApplying ? 'Скачивание…' : `Установить ${updateInfo.latest}`}
+                  {updateApplying ? (updateProgress > 0 ? `${updateProgress}%` : 'Скачивание…') : `Установить ${updateInfo.latest}`}
                 </button>
               )}
             </div>
-            {updateMsg && <div className="st-vk-msg">{updateMsg}</div>}
+            {updateApplying && (
+              <div className="st-upd-progress">
+                <div className="st-upd-progress-track">
+                  <div className="st-upd-progress-bar" style={{ width: `${Math.max(updateProgress, 2)}%` }} />
+                </div>
+                <div className="st-upd-progress-label">{updateProgressMsg || 'Скачивание…'}</div>
+              </div>
+            )}
+            {updateMsg && <div className={`st-vk-msg${locked && updateInfo?.hasUpdate ? ' st-vk-msg--warn' : ''}`}>{updateMsg}</div>}
           </div>
 
           {isVk && (

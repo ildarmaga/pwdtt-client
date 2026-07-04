@@ -237,6 +237,16 @@ function installGoMock() {
           releaseURL: 'https://github.com/ildarmaga/pwdtt-client/releases',
           checkedAt: new Date().toISOString(),
         }),
+        DownloadAndApplyUpdate: async () => {
+          if (window.__pwdttDevConnected) {
+            return { ok: false, message: 'Сначала отключитесь — нажмите кнопку питания на главном экране' };
+          }
+          for (let i = 0; i <= 100; i += 20) {
+            emitDevEvent('update_progress', { phase: 'downloading', percent: i, message: `Скачивание… ${i}%` });
+            await new Promise(r => setTimeout(r, 120));
+          }
+          return { ok: true, message: 'dev mock — обновление' };
+        },
         StartVKLogin: async () => ({ url: '', active: true, native: true }),
         StopVKLogin: asyncVoid,
         PollVKLogin: async () => ({ done: false, status: 'waiting', message: 'dev mock' }),

@@ -26,6 +26,14 @@ type UpdateApplyResult struct {
 	Message string `json:"message"`
 }
 
+type UpdateProgress struct {
+	Phase   string `json:"phase"`
+	Percent int    `json:"percent"`
+	Written int64  `json:"written"`
+	Total   int64  `json:"total"`
+	Message string `json:"message"`
+}
+
 type ghReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`

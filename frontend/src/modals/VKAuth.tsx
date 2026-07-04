@@ -22,7 +22,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
         if (cancelled) return;
         if (res.native) {
           setNativeWindow(true);
-          setStatus('Окно «WDTT — вход VK» открыто. Войдите в аккаунт — cookies сохранятся автоматически.');
+          setStatus('Откроется окно Microsoft Edge. Войдите в аккаунт — cookies сохранятся автоматически.');
         } else {
           setUrl(res.url);
           setStatus('Войдите в VK — cookies сохранятся автоматически');
