@@ -10,5 +10,8 @@ var xrayEXE []byte
 //go:embed assets/xray/geoip.dat
 var geoipDAT []byte
 
+//go:embed assets/xray/geosite.dat
+var geositeDAT []byte
+
 //go:embed assets/xray/wintun.dll
 var wintunXrayDLL []byte

@@ -543,25 +543,12 @@ export default function Settings({ onClose }: Props) {
             <>
           <div className="st-section-title">WB Stream · WebRTC</div>
 
-          <div className={`st-row${locked ? ' st-locked' : ''}`}>
+          <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
             <span>Маршрутизация</span>
-            <div className="st-seg st-seg--wrap">
-              {([
-                ['global', 'Global'],
-                ['bypass_lan', 'Bypass LAN'],
-                ['ru_direct', 'RU direct'],
-              ] as const).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`st-seg-btn${settings.wbRoutingMode === value ? ' st-seg-btn--active' : ''}`}
-                  disabled={locked}
-                  onClick={() => update('wbRoutingMode', value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {settings.wbRoutingMode === 'custom' ? 'Custom' : settings.wbRoutingMode.replace('_', ' ')}
+              · {settings.wbRoutingRules?.length ?? 0} правил — кнопка ↗ в sidebar
+            </span>
           </div>
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>

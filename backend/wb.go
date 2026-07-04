@@ -79,7 +79,8 @@ type WBManager struct {
 	runGen atomic.Uint64
 
 	room         string
-	routingMode  string
+	routingMode    string
+	routingPayload string
 	reconnecting atomic.Bool
 	connectedAt  time.Time // when this run started
 	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
@@ -109,7 +110,7 @@ func (m *WBManager) IsRunning() bool {
 	return m.cancel != nil
 }
 
-func (m *WBManager) Connect(room string, routingMode string) error {
+func (m *WBManager) Connect(room string, routingPayload string) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -117,12 +118,12 @@ func (m *WBManager) Connect(room string, routingMode string) error {
 	m.mu.Lock()
 	m.stop = false // user explicitly asked to connect
 	m.mu.Unlock()
-	return m.connect(room, routingMode)
+	return m.connect(room, routingPayload)
 }
 
 // connect dials without resetting the user-stop flag, so a user Disconnect
 // racing with auto-reconnect always wins.
-func (m *WBManager) connect(room, routingMode string) error {
+func (m *WBManager) connect(room, routingPayload string) error {
 	m.awaitShutdown(wbShutdownWait)
 
 	m.mu.Lock()
@@ -135,7 +136,13 @@ func (m *WBManager) connect(room, routingMode string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
-	m.routingMode = routingMode
+	mode, customRules, err := wbxray.ParseConnectPayload(routingPayload)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("маршрутизация: %w", err)
+	}
+	m.routingMode = string(mode)
+	m.routingPayload = routingPayload
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
 	m.lastHealthy = time.Time{}
@@ -187,7 +194,8 @@ func (m *WBManager) connect(room, routingMode string) error {
 			UseTUN:      true,
 			UseXray:     useXray,
 			XrayBinary:  xrayBin,
-			RoutingMode: wbxray.ParseRoutingMode(routingMode),
+			RoutingMode: mode,
+			CustomRoutingJSON: customRules,
 			RecoverCh:   recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))
@@ -443,7 +451,7 @@ func (m *WBManager) reconnect(gen uint64) {
 		return
 	}
 	room := m.room
-	mode := m.routingMode
+	payload := m.routingPayload
 	cancel := m.cancel
 	m.mu.Unlock()
 
@@ -460,7 +468,7 @@ func (m *WBManager) reconnect(gen uint64) {
 	}
 
 	m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
-	if err := m.connect(room, mode); err != nil {
+	if err := m.connect(room, payload); err != nil {
 		m.mu.Lock()
 		stopped = m.stop
 		m.mu.Unlock()

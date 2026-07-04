@@ -9,16 +9,18 @@ import (
 )
 
 var (
-	xrayEXE      []byte
-	geoipDAT     []byte
+	xrayEXE       []byte
+	geoipDAT      []byte
 	wintunXrayDLL []byte
+	geositeDAT    []byte
 )
 
-// InitXray stores embedded xray-core, geoip.dat and wintun.dll for WB VPN routing.
-func InitXray(exe, geoip, wintun []byte) {
+// InitXray stores embedded xray-core assets for WB VPN routing.
+func InitXray(exe, geoip, wintun, geosite []byte) {
 	xrayEXE = exe
 	geoipDAT = geoip
 	wintunXrayDLL = wintun
+	geositeDAT = geosite
 }
 
 // prepareWBXray writes xray.exe, wintun.dll and geoip.dat into <exe>/xray/.
@@ -46,6 +48,11 @@ func prepareWBXray() error {
 	if len(geoipDAT) > 0 {
 		if err := writeIfDifferent(filepath.Join(dir, "geoip.dat"), geoipDAT, 0644); err != nil {
 			return fmt.Errorf("extract geoip.dat: %w", err)
+		}
+	}
+	if len(geositeDAT) > 0 {
+		if err := writeIfDifferent(filepath.Join(dir, "geosite.dat"), geositeDAT, 0644); err != nil {
+			return fmt.Errorf("extract geosite.dat: %w", err)
 		}
 	}
 	return nil

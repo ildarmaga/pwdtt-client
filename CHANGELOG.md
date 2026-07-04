@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.128] — 2026-07-05
+
+### WB Stream — редактор маршрутизации
+- **Отдельная настройка** (иконка ↗ в sidebar при протоколе WB): таблица правил как v2rayN/панель.
+- **Пресеты** Global / Bypass LAN / RU direct загружают шаблон в таблицу; правила редактируются.
+- **Поля правила**: outbound (Proxy/Direct/Block), domain, IP, port, network; порядок ↑↓.
+- **geosite.dat** в bundle для `geosite:ru`, `geosite:private`.
+
 ## [0.3.127] — 2026-07-05
 
 ### WB Stream xray — hotfix Windows

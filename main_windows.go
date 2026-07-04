@@ -36,7 +36,7 @@ func main() {
 	}
 
 	backend.InitWintun(wintunDLL)
-	backend.InitXray(xrayEXE, geoipDAT, wintunXrayDLL)
+	backend.InitXray(xrayEXE, geoipDAT, wintunXrayDLL, geositeDAT)
 	app := backend.NewApp(trayIcon)
 	if backend.WantsShowWindow(os.Args[1:]) {
 		app.SetShowOnStartup(true)

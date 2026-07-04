@@ -4,4 +4,4 @@ package main
 
 var xrayEXE []byte
 var geoipDAT []byte
-var wintunXrayDLL []byte
+var geositeDAT []byte

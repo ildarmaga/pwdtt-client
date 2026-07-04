@@ -17,6 +17,7 @@ frontend/wailsjs/
 /assets/xray/xray.exe
 /assets/xray/wintun.dll
 /assets/xray/geoip.dat
+/assets/xray/geosite.dat
 
 # Temp / IDE
 .directory
