@@ -33,13 +33,16 @@ func InitWintun(dll []byte) { wintunDLL = dll }
 // extractWintun writes the embedded wintun.dll next to the exe so the wintun
 // package can load it via LoadLibrary.
 func extractWintun() error {
+	if len(wintunDLL) == 0 {
+		return fmt.Errorf("wintun.dll не встроен")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	dst := filepath.Join(filepath.Dir(exe), "wintun.dll")
-	if _, err := os.Stat(dst); err == nil {
-		return nil // already extracted
+	if fi, err := os.Stat(dst); err == nil && fi.Size() == int64(len(wintunDLL)) {
+		return nil
 	}
 	return os.WriteFile(dst, wintunDLL, 0644)
 }

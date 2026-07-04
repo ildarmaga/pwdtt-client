@@ -3,5 +3,6 @@
 package backend
 
 func prepareWBTun() error {
+	emergencyStopWBTun()
 	return extractWintun()
 }
