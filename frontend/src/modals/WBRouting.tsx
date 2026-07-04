@@ -5,13 +5,9 @@ import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import {
   type WBRoutingRule,
-  type WBRoutingPreset,
   type WBOutboundTag,
-  DEFAULT_WB_ROUTING_RULES,
   newRuleId,
-  presetRules,
   OUTBOUND_LABELS,
-  PRESET_LABELS,
 } from '../lib/wbRouting';
 
 interface Props {
@@ -34,11 +30,8 @@ function emptyRule(): WBRoutingRule {
 export default function WBRouting({ onClose }: Props) {
   const [settings, setSettings] = useState<AppSettings>(() => settingsStore.get());
   const [rules, setRules] = useState<WBRoutingRule[]>(() =>
-    settingsStore.get().wbRoutingRules?.length
-      ? [...settingsStore.get().wbRoutingRules!]
-      : [...DEFAULT_WB_ROUTING_RULES],
+    [...(settingsStore.get().wbRoutingRules ?? [])],
   );
-  const [preset, setPreset] = useState<WBRoutingPreset>(() => settingsStore.get().wbRoutingMode);
   const [editId, setEditId] = useState<string | null>(null);
   const [tunnelState, setTunnelState] = useState(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
@@ -47,7 +40,7 @@ export default function WBRouting({ onClose }: Props) {
   const save = () => {
     const next: AppSettings = {
       ...settings,
-      wbRoutingMode: preset,
+      wbRoutingMode: rules.length > 0 ? 'custom' : 'global',
       wbRoutingRules: rules,
     };
     settingsStore.save(next);
@@ -55,19 +48,8 @@ export default function WBRouting({ onClose }: Props) {
     onClose();
   };
 
-  const applyPreset = (p: Exclude<WBRoutingPreset, 'custom'>) => {
-    if (locked) return;
-    if (rules.length > 1 && !window.confirm(`Заменить ${rules.length} правил шаблоном «${PRESET_LABELS[p]}»?`)) {
-      return;
-    }
-    setPreset(p);
-    setRules(presetRules(p));
-    setEditId(null);
-  };
-
   const updateRule = (id: string, patch: Partial<WBRoutingRule>) => {
     setRules(rs => rs.map(r => (r.id === id ? { ...r, ...patch } : r)));
-    setPreset('custom');
   };
 
   const moveRule = (idx: number, dir: -1 | 1) => {
@@ -78,20 +60,17 @@ export default function WBRouting({ onClose }: Props) {
       [copy[idx], copy[j]] = [copy[j], copy[idx]];
       return copy;
     });
-    setPreset('custom');
   };
 
   const removeRule = (id: string) => {
     setRules(rs => rs.filter(r => r.id !== id));
     if (editId === id) setEditId(null);
-    setPreset('custom');
   };
 
   const addRule = () => {
     const r = emptyRule();
     setRules(rs => [...rs, r]);
     setEditId(r.id);
-    setPreset('custom');
   };
 
   const editing = editId ? rules.find(r => r.id === editId) : null;
@@ -103,16 +82,19 @@ export default function WBRouting({ onClose }: Props) {
         .rt-modal { background: var(--surface); border-radius: 14px; width: min(720px, calc(100vw - 16px)); max-height: calc(100vh - 24px); box-shadow: var(--shadow); border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; animation: modal-in 0.25s ease-out; }
         .rt-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
         .rt-title { font-size: 15px; font-weight: 600; flex: 1; color: var(--text); }
-        .rt-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
         .rt-close { border: none; background: transparent; color: var(--text-3); cursor: pointer; padding: 4px; border-radius: 8px; }
         .rt-close:hover { color: var(--text); background: var(--border); }
-        .rt-body { overflow: auto; flex: 1; padding: 12px 16px 16px; }
-        .rt-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-        .rt-preset { font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-        .rt-preset--active { background: color-mix(in srgb, #6d6aac 22%, transparent); border-color: #6d6aac; color: var(--text); }
-        .rt-preset:disabled { opacity: 0.45; cursor: not-allowed; }
-        .rt-hint { font-size: 11px; color: var(--text-3); margin-bottom: 10px; line-height: 1.45; }
-        .rt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+        .rt-body { overflow: auto; flex: 1; padding: 12px 16px 16px; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .rt-body::-webkit-scrollbar { width: 6px; }
+        .rt-body::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+        .rt-body::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--border) 85%, var(--text-3)); border-radius: 6px; }
+        .rt-body::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+        .rt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .rt-table-wrap::-webkit-scrollbar { height: 6px; width: 6px; }
+        .rt-table-wrap::-webkit-scrollbar-track { background: transparent; }
+        .rt-table-wrap::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--border) 85%, var(--text-3)); border-radius: 6px; }
+        .rt-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+        .rt-table-wrap::-webkit-scrollbar-corner { background: transparent; }
         .rt-table { width: 100%; border-collapse: collapse; font-size: 11px; min-width: 560px; }
         .rt-table th { text-align: left; padding: 8px 8px; color: var(--text-3); font-weight: 600; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--border) 40%, transparent); white-space: nowrap; }
         .rt-table td { padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: middle; color: var(--text-2); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -132,7 +114,10 @@ export default function WBRouting({ onClose }: Props) {
         .rt-field { margin-bottom: 8px; }
         .rt-field label { display: block; font-size: 10px; color: var(--text-3); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
         .rt-field input, .rt-field select, .rt-field textarea { width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; font-family: inherit; }
-        .rt-field textarea { min-height: 52px; resize: vertical; }
+        .rt-field textarea { min-height: 52px; resize: vertical; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .rt-field textarea::-webkit-scrollbar { width: 6px; height: 6px; }
+        .rt-field textarea::-webkit-scrollbar-track { background: transparent; }
+        .rt-field textarea::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--border) 85%, var(--text-3)); border-radius: 6px; }
         .rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .rt-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
         .rt-btn { padding: 8px 16px; border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; }
@@ -149,7 +134,6 @@ export default function WBRouting({ onClose }: Props) {
             <IconRoute size={20} stroke={2} color="#6d6aac" />
             <div style={{ flex: 1 }}>
               <div className="rt-title">Маршрутизация WB</div>
-              <div className="rt-sub">Правила xray · как v2rayN / панель</div>
             </div>
             <button type="button" className="rt-close" onClick={onClose} aria-label="Закрыть">
               <IconX size={18} />
@@ -160,28 +144,6 @@ export default function WBRouting({ onClose }: Props) {
             {locked && (
               <div className="rt-locked">Туннель активен — правила применятся при следующем подключении.</div>
             )}
-
-            <div className="rt-presets">
-              {(Object.keys(PRESET_LABELS) as Exclude<WBRoutingPreset, 'custom'>[]).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  className={`rt-preset${preset === p ? ' rt-preset--active' : ''}`}
-                  disabled={locked}
-                  onClick={() => applyPreset(p)}
-                >
-                  {PRESET_LABELS[p]}
-                </button>
-              ))}
-              {preset === 'custom' && (
-                <span className="rt-preset rt-preset--active" style={{ cursor: 'default' }}>Custom</span>
-              )}
-            </div>
-
-            <p className="rt-hint">
-              Порядок сверху вниз. Signaling (stream.wb.ru, ICE) и финальное «всё → Proxy» добавляются автоматически.
-              Поддерживаются <code>geoip:ru</code>, <code>geosite:private</code>, CIDR, домены.
-            </p>
 
             <div className="rt-table-wrap">
               <table className="rt-table">

@@ -1,6 +1,5 @@
 import type { Server, AppSettings } from './types';
 import { DEFAULT_SETTINGS } from './types';
-import { DEFAULT_WB_ROUTING_RULES } from './wbRouting';
 
 const SERVERS_KEY = 'wdtt_servers';
 const SETTINGS_KEY = 'wdtt_settings';
@@ -67,8 +66,8 @@ export const settingsStore = {
     if (rm !== 'global' && rm !== 'bypass_lan' && rm !== 'ru_direct' && rm !== 'custom') {
       merged.wbRoutingMode = DEFAULT_SETTINGS.wbRoutingMode;
     }
-    if (!Array.isArray(merged.wbRoutingRules) || merged.wbRoutingRules.length === 0) {
-      merged.wbRoutingRules = [...DEFAULT_WB_ROUTING_RULES];
+    if (!Array.isArray(merged.wbRoutingRules)) {
+      merged.wbRoutingRules = [];
     }
     return merged;
   },

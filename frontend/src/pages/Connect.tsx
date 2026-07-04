@@ -312,7 +312,6 @@ export default function Connect() {
     }
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
-    logStore.push('INFO', 'Подключение WB Stream…');
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();

@@ -25,94 +25,6 @@ function splitList(s: string): string[] {
   return s.split(/[\n,;]+/).map(v => v.trim()).filter(Boolean);
 }
 
-/** Preset templates (user can edit after load). */
-export function presetRules(preset: Exclude<WBRoutingPreset, 'custom'>): WBRoutingRule[] {
-  const blockQuic: WBRoutingRule = {
-    id: newRuleId(),
-    enabled: true,
-    remark: 'Блок UDP/443 (QUIC)',
-    outboundTag: 'block',
-    domains: '',
-    ips: '',
-    port: '443',
-    network: 'udp',
-  };
-  switch (preset) {
-    case 'global':
-      return [blockQuic];
-    case 'bypass_lan':
-      return [
-        blockQuic,
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'Локальные IP',
-          outboundTag: 'direct',
-          domains: '',
-          ips: 'geoip:private',
-          port: '',
-          network: '',
-        },
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'Локальные домены',
-          outboundTag: 'direct',
-          domains: 'geosite:private',
-          ips: '',
-          port: '',
-          network: '',
-        },
-      ];
-    case 'ru_direct':
-      return [
-        blockQuic,
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'Локальные IP',
-          outboundTag: 'direct',
-          domains: '',
-          ips: 'geoip:private',
-          port: '',
-          network: '',
-        },
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'Локальные домены',
-          outboundTag: 'direct',
-          domains: 'geosite:private',
-          ips: '',
-          port: '',
-          network: '',
-        },
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'RU IP → direct',
-          outboundTag: 'direct',
-          domains: '',
-          ips: 'geoip:ru',
-          port: '',
-          network: '',
-        },
-        {
-          id: newRuleId(),
-          enabled: true,
-          remark: 'RU домены → direct',
-          outboundTag: 'direct',
-          domains: 'geosite:category-ru, geosite:ru',
-          ips: '',
-          port: '',
-          network: '',
-        },
-      ];
-  }
-}
-
-export const DEFAULT_WB_ROUTING_RULES = presetRules('global');
-
 export function ruleToXray(r: WBRoutingRule): Record<string, unknown> | null {
   if (!r.enabled) return null;
   const out: Record<string, unknown> = { type: 'field', outboundTag: r.outboundTag };
@@ -141,11 +53,11 @@ export interface WBRoutingConnectPayload {
   rules: WBRoutingRule[];
 }
 
-export function buildRoutingPayload(mode: WBRoutingPreset, rules: WBRoutingRule[]): string {
-  const active = rules.length ? rules : presetRules(mode === 'custom' ? 'global' : mode);
+export function buildRoutingPayload(_mode: WBRoutingPreset, rules: WBRoutingRule[]): string {
+  const xrayRules = JSON.parse(rulesToXrayJSON(rules)) as unknown[];
   return JSON.stringify({
-    mode: mode === 'custom' ? 'custom' : mode,
-    xrayRules: JSON.parse(rulesToXrayJSON(active)),
+    mode: xrayRules.length > 0 ? 'custom' : 'global',
+    xrayRules,
   });
 }
 
@@ -161,10 +73,4 @@ export const OUTBOUND_LABELS: Record<WBOutboundTag, string> = {
   proxy: 'Proxy (WB)',
   direct: 'Direct',
   block: 'Block',
-};
-
-export const PRESET_LABELS: Record<Exclude<WBRoutingPreset, 'custom'>, string> = {
-  global: 'Global',
-  bypass_lan: 'Bypass LAN',
-  ru_direct: 'RU direct',
 };

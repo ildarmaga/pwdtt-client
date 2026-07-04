@@ -1,5 +1,5 @@
 import { useState, useEffect, type CSSProperties } from 'react';
-import { IconSettings2, IconHash, IconChevronDown, IconCopy, IconCheck } from '@tabler/icons-react';
+import { IconSettings2, IconHash, IconChevronDown } from '@tabler/icons-react';
 import Hash from './Hash';
 import { settingsStore, serverStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
@@ -9,7 +9,7 @@ import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetProfile, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, GetAppVersion, CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
+import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
@@ -46,13 +46,10 @@ export default function Settings({ onClose }: Props) {
   const locked = tunnelState === 'connected' || tunnelState === 'connecting';
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedConfirm, setAdvancedConfirm] = useState(false);
-  const [deviceId, setDeviceId] = useState('');
-  const [idCopied, setIdCopied] = useState(false);
   const [vkCookies, setVkCookies] = useState('');
   const [vkStatus, setVkStatus] = useState<backend.VKCookiesStatus | null>(null);
   const [vkSaveMsg, setVkSaveMsg] = useState('');
   const [vkUseCookies, setVkUseCookies] = useState(false);
-  const [appVersion, setAppVersion] = useState('');
   const [updateMsg, setUpdateMsg] = useState('');
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<backend.UpdateInfo | null>(null);
@@ -88,10 +85,6 @@ export default function Settings({ onClose }: Props) {
   useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
 
   useEffect(() => {
-    GetAppVersion().then(v => setAppVersion(v || '')).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     const off = EventsOn('update_progress', (p: UpdateProgressEvent) => {
       setUpdateProgress(p?.percent ?? 0);
       setUpdateProgressMsg(p?.message ?? '');
@@ -111,23 +104,6 @@ export default function Settings({ onClose }: Props) {
       if (v !== settings.autoStart) update('autoStart', v);
     });
   }, [isMobile]);
-
-  // ID устройства привязан к профилю выбранного сервера — показываем его.
-  useEffect(() => {
-    const all = serverStore.getAll();
-    const srv = all.find(s => s.id === selectedServerStore.getId()) ?? all[0];
-    if (!srv) return;
-    GetProfile(srv.id)
-      .then(p => { if (p?.device_id) setDeviceId(p.device_id); })
-      .catch(() => {});
-  }, []);
-
-  const copyDeviceId = () => {
-    if (!deviceId) return;
-    navigator.clipboard?.writeText(deviceId).catch(() => {});
-    setIdCopied(true);
-    setTimeout(() => setIdCopied(false), 1500);
-  };
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings(s => ({ ...s, [key]: value }));
@@ -207,12 +183,6 @@ export default function Settings({ onClose }: Props) {
         .st-select { padding: 5px 8px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 13px; font-family: 'Geist', sans-serif; background: var(--input-bg); color: var(--text); outline: none; cursor: pointer; max-width: 130px; }
         .st-select:focus { border-color: var(--accent); }
         .st-hash-btn { width: 100%; margin-top: 10px; padding: 11px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; font-family: 'Geist', sans-serif; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .st-devid-block { padding: 8px 0; border-bottom: 1px solid var(--border-2); }
-        .st-devid-label { font-size: 14px; color: var(--text); margin-bottom: 6px; }
-        .st-devid { display: flex; align-items: flex-start; gap: 8px; width: 100%; box-sizing: border-box; background: var(--seg-bg); border: none; border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--text-2); font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; text-align: left; }
-        .st-devid:hover { color: var(--text); }
-        .st-devid-val { flex: 1; min-width: 0; line-height: 1.4; word-break: break-all; white-space: normal; overflow: visible; direction: ltr; }
-        .st-devid svg { flex-shrink: 0; margin-top: 1px; }
         .st-locked { opacity: 0.4; pointer-events: none; }
         .st-lock-hint { font-size: 11px; color: var(--text-3); margin-bottom: 4px; text-align: center; }
         .st-adv-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; border-top: 1px solid var(--border-2); padding: 8px 0 0; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-3); font-family: 'Geist', sans-serif; margin-top: 2px; }
@@ -296,20 +266,9 @@ export default function Settings({ onClose }: Props) {
             </select>
           </div>
 
-          {deviceId && (
-            <div className="st-devid-block">
-              <div className="st-devid-label">ID устройства</div>
-              <button className="st-devid" onClick={copyDeviceId} title="Скопировать ID устройства">
-                <span className="st-devid-val">{deviceId}</span>
-                {idCopied ? <IconCheck stroke={2} size={14} /> : <IconCopy stroke={2} size={14} />}
-              </button>
-            </div>
-          )}
-
           <div className="st-row st-row--stack">
             <div className="st-row-head">
-              <span>Версия</span>
-              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{appVersion || '…'}</span>
+              <span>Обновления</span>
             </div>
             <div className="st-vk-actions">
               <button
@@ -546,8 +505,7 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
             <span>Маршрутизация</span>
             <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {settings.wbRoutingMode === 'custom' ? 'Custom' : settings.wbRoutingMode.replace('_', ' ')}
-              · {settings.wbRoutingRules?.length ?? 0} правил — кнопка ↗ в sidebar
+              {settings.wbRoutingRules?.length ?? 0} правил — кнопка ↗ в sidebar
             </span>
           </div>
 

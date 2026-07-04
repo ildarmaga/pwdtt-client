@@ -35,7 +35,6 @@ export interface UpdateProgressEvent {
 
 import type { WBRoutingRule } from './wbRouting';
 export type { WBRoutingRule, WBRoutingPreset, WBOutboundTag } from './wbRouting';
-export { DEFAULT_WB_ROUTING_RULES } from './wbRouting';
 
 export interface AppSettings {
   bypassMode: 'РУЧ' | 'АВТ';
