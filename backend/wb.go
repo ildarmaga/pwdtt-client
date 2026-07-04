@@ -360,8 +360,10 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 				softCount < wbSoftRecoverMax &&
 				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
 			if canSoft {
+				// Zombie: KCP-only never restores data path — go straight to session
+				// rebind + SwapTunnel (joiner kept, iOS-style bypass auth).
 				forceSession := strings.Contains(reason, "zombie") ||
-					softCount%2 == 1 ||
+					softCount >= 1 ||
 					(!healthy.IsZero() && now.Sub(healthy) > wbDeadTimeout)
 				if forceSession {
 					m.emitLog("WARN", "[WB] Восстановление WebRTC-сессии без снятия VPN ("+reason+")…")

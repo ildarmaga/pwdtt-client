@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.125] — 2026-07-04
+
+### WB Stream — zombie recovery (iOS-style)
+- **Auth/signaling вне netstack**: `guest-register` и LiveKit dial идут по IP bypass-маршрута (как iOS `ResolveHost`), не через мёртвый gVisor при живом WDTT-WB.
+- **Joiner не убивается** при soft recovery — `SwapTunnel` на новом WebRTC carrier (как iOS «keeping SOCKS sessions»).
+- **Zombie → сразу session rebind**, без бесполезного KCP-only.
+
 ## [0.3.124] — 2026-07-04
 
 ### WB Stream — Windows TUN
