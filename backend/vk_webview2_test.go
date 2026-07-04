@@ -19,7 +19,3 @@ func TestVKRemixsidIsNew(t *testing.T) {
 		}
 	}
 }
-
-func vkRemixsidIsNew(found, baseline string) bool {
-	return found != "" && found != baseline
-}

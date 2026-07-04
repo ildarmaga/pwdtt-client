@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.118] — 2026-07-04
+
+### VK login (Windows)
+- Исправлена сборка v0.3.117 (helper `vkRemixsidIsNew` в общем пакете).
+
 ## [0.3.117] — 2026-07-04
 
 ### VK login (Windows)
