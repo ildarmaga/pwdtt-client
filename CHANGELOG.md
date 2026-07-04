@@ -1,6 +1,18 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.123] — 2026-07-04
+
+### WB Stream — реконнект при мёртвом VPN
+- **Direct DNS для bypass**: при живом, но мёртвом туннеле `stream.wb.ru` резолвится через 1.1.1.1/8.8.8.8 напрямую — больше нет 10+ минут `no such host` и бессмысленных retry.
+- **Stale cache**: если DNS временно недоступен, старые IP bypass-маршрутов сохраняются (не удаляются перед lookup).
+- **Эскалация soft recover**: zombie / RTT=0 → сразу WebRTC-сессия; иначе 1-я попытка KCP+smux, 2-я — session; cooldown 15 с когда RTT мёртв.
+- **Relay**: `RecoverRequest.ForceSession`, `RestartLink(force)` обходит debounce при watchdog.
+
+### VK login (Windows)
+- **Окно не закрывается при remount**: native WebView2 больше не убивается при размонтировании модалки (React Strict Mode).
+- Cookies сохраняются сразу в helper при `status=done`, не только при poll UI.
+
 ## [0.3.122] — 2026-07-04
 
 ### WB Stream — zombie tunnel + rebind fix

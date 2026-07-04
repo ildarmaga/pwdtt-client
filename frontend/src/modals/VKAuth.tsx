@@ -13,6 +13,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
   const [status, setStatus] = useState('Загрузка…');
   const [error, setError] = useState('');
   const pollRef = useRef(0);
+  const nativeRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -21,6 +22,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
         const res = await StartVKLogin();
         if (cancelled) return;
         if (res.native) {
+          nativeRef.current = true;
           setNativeWindow(true);
         } else {
           setUrl(res.url);
@@ -55,7 +57,11 @@ export default function VKAuth({ onClose, onDone }: Props) {
     return () => {
       cancelled = true;
       window.clearInterval(pollRef.current);
-      void StopVKLogin();
+      // Native WebView2 runs in a separate process — do not kill it on React
+      // remount (Strict Mode / parent re-render closes the login window early).
+      if (!nativeRef.current) {
+        void StopVKLogin();
+      }
     };
   }, [onClose, onDone]);
 

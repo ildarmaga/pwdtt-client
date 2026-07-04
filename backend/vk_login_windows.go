@@ -145,9 +145,14 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 			case "done":
 				if st.Done && st.Cookie != "" {
 					vkLoginWin.Lock()
-					vkLoginWin.done = true
-					vkLoginWin.cookie = st.Cookie
-					vkLoginWin.status = st.Message
+					if err := core.SaveVKCookiesJSON([]byte(st.Cookie)); err != nil {
+						vkLoginWin.errMsg = err.Error()
+					} else {
+						_ = core.SetVKUseCookies(true)
+						vkLoginWin.done = true
+						vkLoginWin.cookie = st.Cookie
+						vkLoginWin.status = st.Message
+					}
 					vkLoginWin.Unlock()
 				}
 				return

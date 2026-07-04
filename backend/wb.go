@@ -58,6 +58,7 @@ const (
 
 	wbSoftRecoverMax      = 3
 	wbSoftRecoverCooldown = 90 * time.Second
+	wbSoftRecoverCooldownDead = 15 * time.Second // RTT dead — retry faster
 )
 
 var wbProbeURLs = []string{
@@ -85,7 +86,7 @@ type WBManager struct {
 	lastLogRx    int64
 	lastLogTx    int64
 
-	recoverCh chan struct{}
+	recoverCh chan wbjrunner.RecoverRequest
 
 	lastTrafficAt    time.Time
 	lastTrafficBytes int64
@@ -143,7 +144,7 @@ func (m *WBManager) connect(room string) error {
 	m.probeGraceUntil = time.Time{}
 	m.softRecoverCount = 0
 	m.lastSoftRecover = time.Time{}
-	recoverCh := make(chan struct{}, 1)
+	recoverCh := make(chan wbjrunner.RecoverRequest, 1)
 	m.recoverCh = recoverCh
 	gen := m.runGen.Add(1)
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -357,16 +358,23 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 
 			canSoft := trySoft &&
 				softCount < wbSoftRecoverMax &&
-				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldown)
+				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
 			if canSoft {
-				m.emitLog("WARN", "[WB] Восстановление WebRTC без снятия VPN ("+reason+")…")
+				forceSession := strings.Contains(reason, "zombie") ||
+					softCount%2 == 1 ||
+					(!healthy.IsZero() && now.Sub(healthy) > wbDeadTimeout)
+				if forceSession {
+					m.emitLog("WARN", "[WB] Восстановление WebRTC-сессии без снятия VPN ("+reason+")…")
+				} else {
+					m.emitLog("WARN", "[WB] Восстановление KCP без снятия VPN ("+reason+")…")
+				}
 				m.mu.Lock()
 				m.softRecoverCount++
 				m.lastSoftRecover = now
 				m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
 				m.mu.Unlock()
 				probeFails = 0
-				m.softRecover()
+				m.softRecover(forceSession)
 				continue
 			}
 
@@ -378,7 +386,14 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 	}
 }
 
-func (m *WBManager) softRecover() {
+func wbSoftRecoverCooldownFor(lastHealthy, now time.Time) time.Duration {
+	if lastHealthy.IsZero() || now.Sub(lastHealthy) > wbDeadTimeout {
+		return wbSoftRecoverCooldownDead
+	}
+	return wbSoftRecoverCooldown
+}
+
+func (m *WBManager) softRecover(forceSession bool) {
 	m.mu.Lock()
 	ch := m.recoverCh
 	m.mu.Unlock()
@@ -386,7 +401,7 @@ func (m *WBManager) softRecover() {
 		return
 	}
 	select {
-	case ch <- struct{}{}:
+	case ch <- wbjrunner.RecoverRequest{ForceSession: forceSession}:
 	default:
 	}
 }
