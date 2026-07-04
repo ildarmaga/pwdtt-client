@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.131] — 2026-07-05
+
+### WB Stream xray — Windows маршруты
+- **xray 26 TUN config**: `gateway` + `autoSystemRoutingTable` + `autoOutboundsInterface` вместо устаревших `autoRoute`/`inet4_address` (на Windows они игнорировались — split routes не ставились).
+- **Fallback**: если xray не успел — `RouteShell` ставит `0.0.0.0/1` + `128.0.0.0/1` вручную.
+
 ## [0.3.130] — 2026-07-05
 
 ### WB Stream xray — egress IP fix
