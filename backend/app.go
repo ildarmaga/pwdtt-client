@@ -74,7 +74,9 @@ func (a *App) Reconnect() error              { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
 
 // ConnectWB поднимает WB Stream туннель (xray TUN + SOCKS joiner + WebRTC).
-func (a *App) ConnectWB(room string, routingPayload string) error { return a.wb.Connect(room, routingPayload) }
+func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int) error {
+	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch)
+}
 
 // DisconnectWB останавливает WB Stream туннель.
 func (a *App) DisconnectWB() { a.wb.Disconnect() }

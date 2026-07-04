@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.140] — 2026-07-05
+
+### WB Stream — VP8 настройки из UI
+- **FPS/Batch** передаются в `ConnectWB` (раньше игнорировались).
+- UI: FPS max 30, Batch max 48 — совпадает с лимитом TUN MTU.
+- Лог: `[wbt] vp8 batch capped N→48 (tun mtu)` при обрезке.
+
 ## [0.3.139] — 2026-07-05
 
 ### WB Stream xray — fix TUN hang / adapter timeout

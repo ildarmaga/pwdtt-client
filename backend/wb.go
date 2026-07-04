@@ -78,9 +78,11 @@ type WBManager struct {
 	stop   bool
 	runGen atomic.Uint64
 
-	room         string
+	room           string
 	routingMode    string
 	routingPayload string
+	vp8Fps         int
+	vp8Batch       int
 	reconnecting atomic.Bool
 	connectedAt  time.Time // when this run started
 	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
@@ -110,13 +112,15 @@ func (m *WBManager) IsRunning() bool {
 	return m.cancel != nil
 }
 
-func (m *WBManager) Connect(room string, routingPayload string) error {
+func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
 	}
 	m.mu.Lock()
 	m.stop = false // user explicitly asked to connect
+	m.vp8Fps = vp8Fps
+	m.vp8Batch = vp8Batch
 	m.mu.Unlock()
 	return m.connect(room, routingPayload)
 }
@@ -162,6 +166,7 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	done := make(chan struct{})
 	m.cancel = cancel
 	m.done = done
+	vp8Fps, vp8Batch := m.vp8Fps, m.vp8Batch
 	m.mu.Unlock()
 
 	if err := prepareWBTun(); err != nil {
@@ -189,14 +194,16 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	go func() {
 		defer close(done)
 		cfg := wbjrunner.Config{
-			Room:        room,
-			DisplayName: "WDTT",
-			UseTUN:      true,
-			UseXray:     useXray,
-			XrayBinary:  xrayBin,
-			RoutingMode: mode,
+			Room:              room,
+			DisplayName:       "WDTT",
+			UseTUN:            true,
+			UseXray:           useXray,
+			XrayBinary:        xrayBin,
+			RoutingMode:       mode,
 			CustomRoutingJSON: customRules,
-			RecoverCh:   recoverCh,
+			VP8FPS:            vp8Fps,
+			VP8Batch:          vp8Batch,
+			RecoverCh:         recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))
 			},
