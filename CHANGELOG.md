@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.108] — 2026-07-04
+
+### Обновления + VK login (Windows)
+- **Updater**: `schtasks` one-shot task (не дочерний процесс) — переживает выход wdtt; видимое окно «WDTT Update»; проверка размера файла; перезапуск PowerShell RunAs + explorer; лог `%LOCALAPPDATA%\\WDTT\\update\\apply.log`.
+- **VK de-elevation**: worker через `schtasks /RL LIMITED` — реальный medium integrity, Edge стартует.
+
 ## [0.3.107] — 2026-07-04
 
 ### VK login (Windows)

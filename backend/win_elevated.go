@@ -4,10 +4,10 @@ package backend
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -35,33 +35,45 @@ func isProcessElevated() bool {
 	return elev != 0
 }
 
-// runDeElevated starts exePath at medium integrity via explorer.exe (no CreateProcessAsUser).
+// runDeElevated starts exePath at medium integrity via scheduled task (/RL LIMITED).
 func runDeElevated(exePath string, args []string, workDir string) (uint32, error) {
-	cmdLine := windowsCmdLine(exePath, args)
-	vbsPath := filepath.Join(os.TempDir(), "wdtt-vk-launch.vbs")
-	vbs := fmt.Sprintf(
-		"CreateObject(\"WScript.Shell\").Run %s, 1, False\r\n",
-		vbsQuote(cmdLine),
-	)
-	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
+	taskName := fmt.Sprintf("WDTT_VK_%d", time.Now().UnixNano())
+	tr := windowsCmdLine(exePath, args)
+	if workDir != "" {
+		tr = fmt.Sprintf(`cmd /c "cd /d "%s" && %s"`, workDir, tr)
+	}
+	if err := runScheduledTask(taskName, tr, true); err != nil {
 		return 0, err
 	}
-
-	systemRoot := os.Getenv("SystemRoot")
-	if systemRoot == "" {
-		systemRoot = `C:\Windows`
-	}
-	explorer := filepath.Join(systemRoot, "explorer.exe")
-
-	cmd := execHidden(explorer, vbsPath)
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("explorer launch: %w", err)
-	}
-	// Worker PID is written to status.json by the subprocess.
+	go func() {
+		time.Sleep(2 * time.Minute)
+		_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+	}()
 	return 0, nil
+}
+
+// runScheduledTask creates a one-shot task and runs it immediately.
+// limited=true → /RL LIMITED (medium integrity, for VK worker de-elevation).
+func runScheduledTask(taskName, taskRun string, limited bool) error {
+	_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+
+	createArgs := []string{
+		"/Create", "/TN", taskName,
+		"/TR", taskRun,
+		"/SC", "ONCE", "/ST", "00:00",
+		"/F",
+	}
+	if limited {
+		createArgs = append(createArgs, "/RL", "LIMITED")
+	}
+	if err := execHidden("schtasks", createArgs...).Run(); err != nil {
+		return fmt.Errorf("schtasks create: %w", err)
+	}
+	if err := execHidden("schtasks", "/Run", "/TN", taskName).Run(); err != nil {
+		_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+		return fmt.Errorf("schtasks run: %w", err)
+	}
+	return nil
 }
 
 func vbsQuote(s string) string {
@@ -90,10 +102,9 @@ func killProcess(pid uint32) error {
 	return windows.TerminateProcess(h, 1)
 }
 
-// killProcessTree terminates pid and direct children (Edge/chromedp from VK worker).
 func killProcessTree(pid uint32) {
 	if pid == 0 {
 		return
 	}
-	_ = execHidden("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
+	_ = execHidden("taskkill", "/F", "/T", "/PID", strconv.Itoa(int(pid))).Run()
 }
