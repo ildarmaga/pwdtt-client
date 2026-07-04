@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.102] — 2026-07-04
+
+### WB Stream (стабильность после burst)
+- **KCP MTU 1200** (было 1400) — меньше фрагментации VP8/RTP после больших загрузок.
+- **VP8 batch 48** на creator (как у joiner UseTUN) — выравнивание размера кадров.
+- **Activity по carrier**: joiner считается online по VP8 keepalive, не только smux-трафику.
+- **KCP restart** только после реального tunnel lost, не при idle timeout (10 мин).
+
 ## [0.3.101] — 2026-07-04
 
 ### VK login (Windows, admin)
