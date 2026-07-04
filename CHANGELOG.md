@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.130] — 2026-07-05
+
+### WB Stream xray — egress IP fix
+- **Warmup ждёт xray TUN**: перед пробой IP — `WaitTunRoutingReady` (адаптер Up + split-default routes), не фиксированные 600 ms.
+- **Не «готов» на домашнем IP**: если пробный запрос возвращает pre-tun egress (как ICE srflx), повтор до смены IP или timeout.
+
 ## [0.3.129] — 2026-07-05
 
 ### WB Stream — UI и логи
