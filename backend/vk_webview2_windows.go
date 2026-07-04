@@ -20,7 +20,11 @@ const vkWebView2TimerID = 42
 type vkWebView2Session struct {
 	chromium *edge.Chromium
 	done     atomic.Bool
-	writeSt  func(vkLoginStatusFile)
+	navDone  atomic.Bool
+	// remixsid already in the WebView2 profile before this login attempt —
+	// harvesting it would close the window in ~1s without showing vk.com.
+	baselineRemixsid string
+	writeSt          func(vkLoginStatusFile)
 }
 
 // runVKWebView2Window opens a native window with WebView2 pointed at vk.com and
@@ -102,9 +106,13 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	_ = os.MkdirAll(dataDir, 0700)
 	chromium.SetErrorCallback(func(err error) {
 		writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: " + err.Error() + " — установите Microsoft Edge WebView2 Runtime"})
-		os.Exit(1)
+		win.PostQuitMessage(1)
 	})
 	chromium.NavigationCompletedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		if !s.navDone.Load() {
+			s.navDone.Store(true)
+			s.baselineRemixsid = s.readRemixsid()
+		}
 		s.tryHarvest()
 	}
 	s.chromium = chromium
@@ -139,17 +147,21 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	return nil
 }
 
-func (s *vkWebView2Session) tryHarvest() {
-	if s.done.Load() || s.chromium == nil {
-		return
+func (s *vkWebView2Session) readRemixsid() string {
+	remixsid, _ := s.readVKCookies()
+	return remixsid
+}
+
+func (s *vkWebView2Session) readVKCookies() (remixsid, pCookie string) {
+	if s.chromium == nil {
+		return "", ""
 	}
 	cm, err := s.chromium.GetCookieManager()
 	if err != nil {
-		return
+		return "", ""
 	}
 	defer cm.Release()
 
-	var remixsid, pCookie string
 	for _, uri := range []string{"https://vk.com/", "https://login.vk.com/", "https://id.vk.com/"} {
 		list, err := cm.GetCookies(uri)
 		if err != nil || list == nil {
@@ -178,7 +190,15 @@ func (s *vkWebView2Session) tryHarvest() {
 		}
 		list.Release()
 	}
-	if remixsid == "" {
+	return remixsid, pCookie
+}
+
+func (s *vkWebView2Session) tryHarvest() {
+	if s.done.Load() || s.chromium == nil || !s.navDone.Load() {
+		return
+	}
+	remixsid, pCookie := s.readVKCookies()
+	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
 		return
 	}
 	header := "remixsid=" + remixsid

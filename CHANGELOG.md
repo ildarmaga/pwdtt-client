@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.117] — 2026-07-04
+
+### VK login (Windows)
+- **Окно не закрывается через 2 секунды**: перед входом очищается профиль WebView2; cookies принимаются только после загрузки vk.com и только если `remixsid` **новый** (не из прошлой сессии). Раньше stale `remixsid` из `%APPDATA%/pwdtt/webview-vk/profile` сразу закрывал окно с белым экраном.
+
 ## [0.3.116] — 2026-07-04
 
 ### WB Stream — детект «мёртвого» data path

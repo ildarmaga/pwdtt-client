@@ -99,7 +99,14 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 	profile := filepath.Join(dataDir, "profile")
 	statusPath := filepath.Join(dataDir, "status.json")
 	_ = os.MkdirAll(dataDir, 0700)
+
+	// Kill orphaned worker and wipe WebView2 profile so stale remixsid from a
+	// previous session cannot auto-close the window in ~1s (blank page, no login).
+	if st, err := readVKLoginStatus(statusPath); err == nil && st.Pid > 0 {
+		killProcessTree(uint32(st.Pid))
+	}
 	_ = os.Remove(statusPath)
+	_ = os.RemoveAll(profile)
 
 	cmd := execDetachedUI(exe, vkLoginWorkerFlag, "-status", statusPath, "-data", profile)
 	cmd.Dir = filepath.Dir(exe)
