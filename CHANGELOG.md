@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.133] — 2026-07-05
+
+### WB Stream xray — ghost adapter fix
+- **Remove-NetAdapter** вместо только Disable: зависший WDTT-WB (169.254.x) больше не блокирует xray «file already exists».
+- **Retry**: при timeout — cleanup + повторный старт xray.
+- **Shutdown**: полное удаление адаптера после отключения.
+
 ## [0.3.132] — 2026-07-05
 
 ### WB Stream xray — быстрый подъём TUN
