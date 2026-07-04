@@ -17,6 +17,23 @@ const workersPerGroup = 9
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
 const WorkersPerGroup = workersPerGroup
 
+const maxWorkers = 108
+
+// NormalizeWorkers rounds the requested worker count to a valid group size (9…108).
+func NormalizeWorkers(workers int) int {
+	n := workers
+	if n <= 0 {
+		n = workersPerGroup
+	}
+	if n > maxWorkers {
+		n = maxWorkers
+	}
+	if n < workersPerGroup {
+		n = workersPerGroup
+	}
+	return (n / workersPerGroup) * workersPerGroup
+}
+
 // groupPhaseOffset — фазовый сдвиг старта между группами. VK гасит ВСЕ аллокации
 // под одним call-credential пачкой при его истечении (~60–90 c). Сдвиг ~полжизни
 // креда между группами, чтобы пока одна пересоздаётся, другая держит туннель.

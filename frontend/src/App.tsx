@@ -81,7 +81,7 @@ function useWailsEvents() {
           tunnelStore.set('connecting');
         }
       }),
-      EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
+      EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, assignedWorkers: unknown, connectedAtMs: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
         const rxN = Number(rx) || 0;
         const txN = Number(tx) || 0;
         if (rxN === 0 && txN === 0 && Number(workers) === 0) {
@@ -92,6 +92,8 @@ function useWailsEvents() {
           rxBytes: rxN,
           txBytes: txN,
           workers: Number(workers) || 0,
+          assignedWorkers: Number(assignedWorkers) || 0,
+          connectedAtMs: Number(connectedAtMs) || 0,
           turnRttMs: Number(turnRtt) || 0,
           dtlsHsMs: Number(dtlsHs) || 0,
           internetRttMs: Number(internetRtt) || 0,

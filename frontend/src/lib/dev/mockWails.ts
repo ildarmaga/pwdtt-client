@@ -37,13 +37,13 @@ function startDevTunnelStats() {
   devStatsTimer = window.setInterval(() => {
     devStatsRx += 180_000 + Math.random() * 120_000;
     devStatsTx += 45_000 + Math.random() * 35_000;
-    emitDevEvent('tunnel_stats', devStatsRx, devStatsTx, 9, 142 + Math.random() * 40, 68 + Math.random() * 30, 28 + Math.random() * 20);
+    emitDevEvent('tunnel_stats', devStatsRx, devStatsTx, 9, 36, Date.now(), 142 + Math.random() * 40, 68 + Math.random() * 30, 28 + Math.random() * 20);
   }, 2000);
 }
 
 function stopDevTunnelStats() {
   window.clearInterval(devStatsTimer);
-  emitDevEvent('tunnel_stats', 0, 0, 0, 0, 0, 0);
+  emitDevEvent('tunnel_stats', 0, 0, 0, 0, 0, 0, 0, 0);
 }
 
 function installRuntimeMock() {

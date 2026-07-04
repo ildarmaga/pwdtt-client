@@ -62,6 +62,7 @@ type WBManager struct {
 	room         string
 	reconnecting atomic.Bool
 	connectedAt  time.Time // when this run started
+	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
 	lastHealthy  time.Time // last stats callback with rtt > 0
 
 	lastStatsLog time.Time
@@ -106,6 +107,7 @@ func (m *WBManager) connect(room string) error {
 	}
 	m.room = room
 	m.connectedAt = time.Now()
+	m.sessionStartedAt = time.Time{}
 	m.lastHealthy = time.Time{}
 	m.lastStatsLog = time.Time{}
 	m.lastLogRx = 0
@@ -152,7 +154,7 @@ func (m *WBManager) connect(room string) error {
 		}
 
 		setTrayStatus(false, 0, 0, 0)
-		runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
+		runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 		if stopped {
 			return
 		}
@@ -334,7 +336,7 @@ func (m *WBManager) Disconnect() {
 	// UI must not block on gVisor/WebRTC teardown (can take 10–20s with active flows).
 	runtime.EventsEmit(m.ctx, "state_changed", "stopped")
 	setTrayStatus(false, 0, 0, 0)
-	runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
+	runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 
 	if cancel != nil {
 		cancel()
@@ -400,12 +402,14 @@ func (m *WBManager) onStatus(code string) {
 		runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 	case "TRAFFIC_READY":
 		m.emitLog("INFO", "[WB] Пробный запрос через туннель успешен")
+		m.markSessionStarted()
 		runtime.EventsEmit(m.ctx, "state_changed", "running")
 		setTrayStatus(true, 0, 0, 1)
 	case "TUN_ACTIVE":
 		m.emitLog("INFO", "[WB] Полный VPN активен — весь трафик через WB Stream")
 	case "WARMUP_FAILED":
 		m.emitLog("WARN", "[WB] Пробный запрос не прошёл — проверьте трафик вручную")
+		m.markSessionStarted()
 		runtime.EventsEmit(m.ctx, "state_changed", "running")
 		setTrayStatus(true, 0, 0, 1)
 	case "TUN_UNAVAILABLE":
@@ -422,8 +426,29 @@ func (m *WBManager) logRelay(raw string) {
 	m.emitLog(level, msg)
 }
 
+func (m *WBManager) markSessionStarted() {
+	m.mu.Lock()
+	if m.sessionStartedAt.IsZero() {
+		m.sessionStartedAt = time.Now()
+	}
+	m.mu.Unlock()
+}
+
+func (m *WBManager) sessionStartedMs() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.sessionStartedAt.IsZero() {
+		return m.sessionStartedAt.UnixMilli()
+	}
+	if !m.connectedAt.IsZero() {
+		return m.connectedAt.UnixMilli()
+	}
+	return 0
+}
+
 func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
-	runtime.EventsEmit(m.ctx, "tunnel_stats", rx, tx, 1, rtt, fps, rtt)
+	startedMs := m.sessionStartedMs()
+	runtime.EventsEmit(m.ctx, "tunnel_stats", rx, tx, int32(1), int32(0), startedMs, float64(rtt), float64(fps), float64(rtt))
 	setTrayStatus(true, tx, rx, 1)
 
 	m.mu.Lock()

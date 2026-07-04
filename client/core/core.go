@@ -153,15 +153,7 @@ func (c *Core) Start() (<-chan Event, error) {
 	}
 
 	// Нормализуем количество воркеров
-	maxWorkers := 108
-	n := c.cfg.Workers
-	if n > maxWorkers {
-		n = maxWorkers
-	}
-	if n < workersPerGroup {
-		n = workersPerGroup
-	}
-	n = (n / workersPerGroup) * workersPerGroup
+	n := NormalizeWorkers(c.cfg.Workers)
 
 	tp := &TurnParams{
 		Host:    c.cfg.TurnHost,

@@ -61,7 +61,7 @@ import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import { activeServerStore } from '../lib/stores/activeServerStore';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
-import { tunnelStatsStore, formatRate, formatMs, type TunnelStats } from '../lib/stores/tunnelStatsStore';
+import { tunnelStatsStore, formatRate, formatMs, formatDuration, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
@@ -366,6 +366,22 @@ export default function Connect() {
   };
 
   const [reconnectAt, setReconnectAt] = useState(0); // timestamp когда можно снова подключиться
+  const [connectingSince, setConnectingSince] = useState<number | null>(null);
+  const [, setDurationTick] = useState(0);
+
+  useEffect(() => {
+    if (tunnelState === 'connecting') {
+      setConnectingSince(Date.now());
+    } else if (tunnelState === 'idle') {
+      setConnectingSince(null);
+    }
+  }, [tunnelState]);
+
+  useEffect(() => {
+    if (tunnelState !== 'connecting' && tunnelState !== 'connected') return;
+    const id = window.setInterval(() => setDurationTick(t => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [tunnelState]);
 
   const handleTunnel = async () => {
     if (!selected) return;
@@ -466,6 +482,25 @@ export default function Connect() {
   const isVkProtocol = tunnelProtocol === 'vk';
   // Для WB VP8-строка показывает кадры/с (бэкенд кладёт fps в dtlsHsMs).
   const vp8Display = statsLive && sessionStats!.dtlsHsMs > 0 ? `${sessionStats!.dtlsHsMs} fps` : '—';
+  const durationSec = (() => {
+    if (tunnelState === 'connecting' && connectingSince) {
+      return (Date.now() - connectingSince) / 1000;
+    }
+    if (tunnelState === 'connected') {
+      if (sessionStats?.connectedAtMs) {
+        return (Date.now() - sessionStats.connectedAtMs) / 1000;
+      }
+      if (connectingSince) {
+        return (Date.now() - connectingSince) / 1000;
+      }
+    }
+    return 0;
+  })();
+  const durationLabel = tunnelState === 'connecting' ? 'Подключение' : 'Подключено';
+  const durationDisplay = durationSec > 0 ? formatDuration(durationSec) : '—';
+  const workersDisplay = statsLive && isVkProtocol && sessionStats!.assignedWorkers > 0
+    ? `${sessionStats!.workers}/${sessionStats!.assignedWorkers}`
+    : null;
   const latencyRows = isVkProtocol
     ? [
         { label: 'TURN', value: turnDisplay, title: 'TURN Allocate RTT' },
@@ -675,6 +710,17 @@ export default function Connect() {
         .session-stats--idle .session-stat-sub,
         .session-stats--idle .session-latency strong { color: var(--text-4); }
         .session-stats--idle .session-stat-sub { color: var(--text-4); }
+        .session-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 10px;
+          font-size: 12px;
+          color: var(--text-3);
+        }
+        .session-meta strong { color: var(--text); font-weight: 600; }
+        .session-meta--idle { color: var(--text-4); }
         .session-stats-grid { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
         .session-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
         .session-stat--right { align-items: flex-end; text-align: right; }
@@ -779,6 +825,12 @@ export default function Connect() {
           </div>
 
           <div className={`session-stats${statsLive ? '' : ' session-stats--idle'}`}>
+          <div className={`session-meta${tunnelState === 'connecting' || tunnelState === 'connected' ? '' : ' session-meta--idle'}`}>
+            <span>{durationLabel}: <strong>{durationDisplay}</strong></span>
+            {workersDisplay != null && (
+              <span title="Активные TURN-воркеры из назначенных">Воркеры: <strong>{workersDisplay}</strong></span>
+            )}
+          </div>
           <div className="session-stats-grid">
             <div className="session-stat">
               <span className="session-stat-label">↓ Загружено</span>

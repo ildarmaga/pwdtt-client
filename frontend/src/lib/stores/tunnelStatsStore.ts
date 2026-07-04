@@ -7,6 +7,8 @@ export interface TunnelStats {
   dtlsHsMs: number;
   internetRttMs: number;
   workers: number;
+  assignedWorkers: number;
+  connectedAtMs: number;
 }
 
 type Listener = (stats: TunnelStats | null) => void;
@@ -39,6 +41,17 @@ export function formatMs(ms: number): string {
   return `${Math.round(ms)} ms`;
 }
 
+export function formatDuration(totalSec: number): string {
+  const sec = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export const tunnelStatsStore = {
   subscribe(fn: Listener) {
     listeners.add(fn);
@@ -57,6 +70,8 @@ export const tunnelStatsStore = {
     rxBytes: number;
     txBytes: number;
     workers: number;
+    assignedWorkers: number;
+    connectedAtMs: number;
     turnRttMs: number;
     dtlsHsMs: number;
     internetRttMs: number;
@@ -83,6 +98,8 @@ export const tunnelStatsStore = {
       dtlsHsMs: raw.dtlsHsMs,
       internetRttMs: raw.internetRttMs,
       workers: raw.workers,
+      assignedWorkers: raw.assignedWorkers,
+      connectedAtMs: raw.connectedAtMs,
     };
     emit();
   },

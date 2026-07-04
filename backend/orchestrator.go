@@ -245,6 +245,8 @@ type Orchestrator struct {
 	trafficWatchStop     chan struct{}
 	internetProbeFails   int
 	lastWorkers          int32
+	assignedWorkers      int32
+	connectedAt          time.Time
 	preserveOnSessionEnd bool
 	sessionWatchUntil    time.Time
 	netWatchStop         chan struct{}
@@ -555,6 +557,16 @@ func (o *Orchestrator) internetRTT() float64 {
 	return o.internetRTTMs
 }
 
+func (o *Orchestrator) tunnelStatsMeta() (assigned int32, connectedAtMs int64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	assigned = o.assignedWorkers
+	if !o.connectedAt.IsZero() {
+		connectedAtMs = o.connectedAt.UnixMilli()
+	}
+	return assigned, connectedAtMs
+}
+
 func (o *Orchestrator) waitSessionEnd(timeout time.Duration) {
 	o.mu.Lock()
 	sess := o.sess
@@ -577,6 +589,8 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		return fmt.Errorf("уже подключено")
 	}
 	o.lastParams = p
+	o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
+	o.connectedAt = time.Time{}
 	// VK через туннель — всегда включено нативно (тумблер убран из настроек).
 	vkThroughTunnel.Store(true)
 	o.resetWorkersLostState()
@@ -624,7 +638,7 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		return nil, err
 	}
 
-	workers := p.Workers
+	workers := core.NormalizeWorkers(p.Workers)
 	if workers <= 0 {
 		workers = 9
 	}
@@ -676,8 +690,9 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 			if o.onTray != nil {
 				o.onTray(connected, ev.RxBytes, ev.TxBytes, ev.Workers)
 			}
+			assigned, connectedAtMs := o.tunnelStatsMeta()
 			runtime.EventsEmit(o.appCtx, "tunnel_stats",
-				ev.RxBytes, ev.TxBytes, ev.Workers,
+				ev.RxBytes, ev.TxBytes, ev.Workers, assigned, connectedAtMs,
 				ev.TurnRTTMs, ev.DTLSHSMs, o.internetRTT(),
 			)
 		case core.EventLog:
@@ -718,6 +733,9 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 						o.sessionWatchUntil = time.Now().Add(sessionWatchAfterConnect)
 					}
 					o.resetWorkersLostState()
+					if o.connectedAt.IsZero() {
+						o.connectedAt = time.Now()
+					}
 					if o.pingStop == nil {
 						o.startInternetPing()
 					}
@@ -757,7 +775,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		o.stopNetworkWatch()
 		teardownWG()
 		o.stopInternetPing()
-		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), float64(0), float64(0), float64(0))
+		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 	} else {
 		runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VPN-интерфейс сохранён, перезапуск TURN-воркеров…")
 	}
