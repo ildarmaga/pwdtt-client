@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.105] — 2026-07-04
+
+### VK login (Windows, admin)
+- **De-elevation через explorer.exe**: VBS запускается через shell explorer (medium integrity) — без `CreateProcessAsUser` / `WTSQueryUserToken`, которые требуют привилегий.
+- **Stop VK**: worker PID в status.json, остановка через `taskkill /T`.
+
 ## [0.3.104] — 2026-07-04
 
 ### Обновления (Windows)

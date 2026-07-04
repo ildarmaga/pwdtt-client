@@ -4,6 +4,8 @@ package backend
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -33,161 +35,37 @@ func isProcessElevated() bool {
 	return elev != 0
 }
 
+// runDeElevated starts exePath at medium integrity via explorer.exe (no CreateProcessAsUser).
 func runDeElevated(exePath string, args []string, workDir string) (uint32, error) {
-	var errs []string
-	if pid, err := runDeElevatedWTS(exePath, args, workDir); err == nil {
-		return pid, nil
-	} else {
-		errs = append(errs, err.Error())
-	}
-	if pid, err := runDeElevatedExplorer(exePath, args, workDir); err == nil {
-		return pid, nil
-	} else {
-		errs = append(errs, err.Error())
-	}
-	return 0, fmt.Errorf("de-elevation failed: %s", strings.Join(errs, "; "))
-}
-
-func runDeElevatedWTS(exePath string, args []string, workDir string) (uint32, error) {
-	sessionID := windows.WTSGetActiveConsoleSessionId()
-	if sessionID == 0xFFFFFFFF {
-		return 0, fmt.Errorf("no active session")
-	}
-
-	var userToken windows.Token
-	if err := windows.WTSQueryUserToken(sessionID, &userToken); err != nil {
-		return 0, fmt.Errorf("WTSQueryUserToken: %w", err)
-	}
-	defer userToken.Close()
-
-	var primaryToken windows.Token
-	if err := windows.DuplicateTokenEx(
-		userToken,
-		windows.MAXIMUM_ALLOWED,
-		nil,
-		windows.SecurityIdentification,
-		windows.TokenPrimary,
-		&primaryToken,
-	); err != nil {
-		return 0, fmt.Errorf("DuplicateTokenEx: %w", err)
-	}
-	defer primaryToken.Close()
-
-	return createProcessAsUserToken(primaryToken, exePath, args, workDir)
-}
-
-func runDeElevatedExplorer(exePath string, args []string, workDir string) (uint32, error) {
-	hwnd := windows.GetShellWindow()
-	if hwnd == 0 {
-		return 0, fmt.Errorf("GetShellWindow: окно оболочки не найдено")
-	}
-
-	var explorerPID uint32
-	windows.GetWindowThreadProcessId(hwnd, &explorerPID)
-	if explorerPID == 0 {
-		return 0, fmt.Errorf("explorer.exe не найден")
-	}
-
-	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, false, explorerPID)
-	if err != nil {
-		return 0, fmt.Errorf("OpenProcess: %w", err)
-	}
-	defer windows.CloseHandle(hProc)
-
-	var hToken windows.Token
-	if err := windows.OpenProcessToken(hProc, windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY|windows.TOKEN_ASSIGN_PRIMARY, &hToken); err != nil {
-		return 0, fmt.Errorf("OpenProcessToken: %w", err)
-	}
-	defer hToken.Close()
-
-	var hDupToken windows.Token
-	if err := windows.DuplicateTokenEx(
-		hToken,
-		windows.MAXIMUM_ALLOWED,
-		nil,
-		windows.SecurityImpersonation,
-		windows.TokenPrimary,
-		&hDupToken,
-	); err != nil {
-		return 0, fmt.Errorf("DuplicateTokenEx: %w", err)
-	}
-	defer hDupToken.Close()
-
-	return createProcessAsUserToken(hDupToken, exePath, args, workDir)
-}
-
-func createProcessAsUserToken(token windows.Token, exePath string, args []string, workDir string) (uint32, error) {
-	_ = enableTokenPrivilege("SeIncreaseQuotaPrivilege")
-	_ = enableTokenPrivilege("SeAssignPrimaryTokenPrivilege")
-
-	var envBlock *uint16
-	if err := windows.CreateEnvironmentBlock(&envBlock, token, false); err != nil {
-		return 0, fmt.Errorf("CreateEnvironmentBlock: %w", err)
-	}
-	defer windows.DestroyEnvironmentBlock(envBlock)
-
 	cmdLine := windowsCmdLine(exePath, args)
-	cmdLineUTF16, err := windows.UTF16PtrFromString(cmdLine)
-	if err != nil {
+	vbsPath := filepath.Join(os.TempDir(), "wdtt-vk-launch.vbs")
+	vbs := fmt.Sprintf(
+		"CreateObject(\"WScript.Shell\").Run %s, 0, False\r\n",
+		vbsQuote(cmdLine),
+	)
+	if err := os.WriteFile(vbsPath, []byte(vbs), 0600); err != nil {
 		return 0, err
 	}
 
-	var workDirPtr *uint16
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	explorer := filepath.Join(systemRoot, "explorer.exe")
+
+	cmd := execHidden(explorer, vbsPath)
 	if workDir != "" {
-		workDirPtr, err = windows.UTF16PtrFromString(workDir)
-		if err != nil {
-			return 0, err
-		}
+		cmd.Dir = workDir
 	}
-
-	si := &windows.StartupInfo{}
-	si.Cb = uint32(unsafe.Sizeof(*si))
-	var pi windows.ProcessInformation
-
-	if err := windows.CreateProcessAsUser(
-		token,
-		nil,
-		cmdLineUTF16,
-		nil,
-		nil,
-		false,
-		windows.CREATE_UNICODE_ENVIRONMENT,
-		envBlock,
-		workDirPtr,
-		si,
-		&pi,
-	); err != nil {
-		return 0, fmt.Errorf("CreateProcessAsUser: %w", err)
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("explorer launch: %w", err)
 	}
-
-	windows.CloseHandle(pi.Thread)
-	windows.CloseHandle(pi.Process)
-	return pi.ProcessId, nil
+	// Worker PID is written to status.json by the subprocess.
+	return 0, nil
 }
 
-func enableTokenPrivilege(name string) error {
-	var token windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token); err != nil {
-		return err
-	}
-	defer token.Close()
-
-	var luid windows.LUID
-	namePtr, err := windows.UTF16PtrFromString(name)
-	if err != nil {
-		return err
-	}
-	if err := windows.LookupPrivilegeValue(nil, namePtr, &luid); err != nil {
-		return err
-	}
-
-	tp := windows.Tokenprivileges{
-		PrivilegeCount: 1,
-		Privileges: [1]windows.LUIDAndAttributes{
-			{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED},
-		},
-	}
-	return windows.AdjustTokenPrivileges(token, false, &tp, 0, nil, nil)
+func vbsQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func windowsCmdLine(exe string, args []string) string {
@@ -210,4 +88,12 @@ func killProcess(pid uint32) error {
 	}
 	defer windows.CloseHandle(h)
 	return windows.TerminateProcess(h, 1)
+}
+
+// killProcessTree terminates pid and direct children (Edge/chromedp from VK worker).
+func killProcessTree(pid uint32) {
+	if pid == 0 {
+		return
+	}
+	_ = execHidden("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
 }

@@ -33,11 +33,17 @@ func MaybeRunVKLoginWorker(args []string) (bool, error) {
 }
 
 func runVKLoginWorker(statusPath, profile string) error {
-	writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
+	workerPid := os.Getpid()
+	writeSt := func(st vkLoginStatusFile) {
+		st.Pid = workerPid
+		writeVKLoginStatus(statusPath, st)
+	}
+
+	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
 
 	edge := findEdgeBrowser()
 	if edge == "" {
-		writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "error", Message: "Microsoft Edge не найден"})
+		writeSt(vkLoginStatusFile{Status: "error", Message: "Microsoft Edge не найден"})
 		return fmt.Errorf("edge not found")
 	}
 
@@ -45,7 +51,7 @@ func runVKLoginWorker(statusPath, profile string) error {
 		profile = filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
 	}
 	if err := os.MkdirAll(profile, 0700); err != nil {
-		writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "error", Message: err.Error()})
+		writeSt(vkLoginStatusFile{Status: "error", Message: err.Error()})
 		return err
 	}
 	clearEdgeProfileLocks(profile)
@@ -60,10 +66,10 @@ func runVKLoginWorker(statusPath, profile string) error {
 	defer cancelCtx()
 
 	if err := chromedp.Run(ctx, chromedp.Navigate("https://vk.com/")); err != nil {
-		writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "error", Message: "Не удалось открыть vk.com: " + err.Error()})
+		writeSt(vkLoginStatusFile{Status: "error", Message: "Не удалось открыть vk.com: " + err.Error()})
 		return err
 	}
-	writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически"})
+	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически"})
 
 	var done atomic.Bool
 	ticker := time.NewTicker(1200 * time.Millisecond)
@@ -73,7 +79,7 @@ func runVKLoginWorker(statusPath, profile string) error {
 		select {
 		case <-ctx.Done():
 			if !done.Load() {
-				writeVKLoginStatus(statusPath, vkLoginStatusFile{Status: "cancelled", Message: "Вход отменён"})
+				writeSt(vkLoginStatusFile{Status: "cancelled", Message: "Вход отменён"})
 			}
 			return ctx.Err()
 		case <-ticker.C:
@@ -82,7 +88,7 @@ func runVKLoginWorker(statusPath, profile string) error {
 				continue
 			}
 			done.Store(true)
-			writeVKLoginStatus(statusPath, vkLoginStatusFile{
+			writeSt(vkLoginStatusFile{
 				Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header,
 			})
 			return nil

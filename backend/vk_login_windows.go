@@ -33,6 +33,7 @@ type vkLoginStatusFile struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 	Cookie  string `json:"cookie,omitempty"`
+	Pid     int    `json:"pid,omitempty"`
 }
 
 func findEdgeBrowser() string {
@@ -109,7 +110,12 @@ func (a *App) StopVKLogin() {
 		cancel()
 	}
 	if pid != 0 {
-		_ = killProcess(pid)
+		killProcessTree(pid)
+		return
+	}
+	statusPath := filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "status.json")
+	if st, err := readVKLoginStatus(statusPath); err == nil && st.Pid > 0 {
+		killProcessTree(uint32(st.Pid))
 	}
 }
 
@@ -163,6 +169,13 @@ func (a *App) runVKLoginHelper(ctx context.Context) {
 			st, err := readVKLoginStatus(statusPath)
 			if err != nil {
 				continue
+			}
+			if st.Pid > 0 && vkLoginWin.helperPid == 0 {
+				vkLoginWin.Lock()
+				if vkLoginWin.helperPid == 0 {
+					vkLoginWin.helperPid = uint32(st.Pid)
+				}
+				vkLoginWin.Unlock()
 			}
 			switch st.Status {
 			case "error":
