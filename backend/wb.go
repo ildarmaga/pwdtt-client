@@ -42,6 +42,20 @@ const (
 	wbProbeFailLimit = 3
 	wbProbeInterval  = 10 * time.Second
 	wbProbeTimeout   = 5 * time.Second
+
+	// Don't treat probe failures as fatal while traffic is still moving (large
+	// downloads can starve the small generate_204 probe without killing the path).
+	wbTrafficActiveWindow  = 30 * time.Second
+	wbTrafficActiveMinDelta = int64(8192) // 8 KiB moved in window = alive
+	wbTrafficStallWindow   = 45 * time.Second // no byte growth for this long = stalled
+
+	// After carrier rebind the data path can be quiet for tens of seconds while
+	// KCP/smux settles — skip probe-based recovery during this grace period.
+	wbProbeGraceAfterRebind = 90 * time.Second
+
+	// Try in-place WebRTC/KCP recovery (TUN stays up) before full teardown.
+	wbSoftRecoverMax      = 2
+	wbSoftRecoverCooldown = 120 * time.Second
 )
 
 var wbProbeURLs = []string{
@@ -68,6 +82,14 @@ type WBManager struct {
 	lastStatsLog time.Time
 	lastLogRx    int64
 	lastLogTx    int64
+
+	recoverCh chan struct{}
+
+	lastTrafficAt    time.Time
+	lastTrafficBytes int64
+	probeGraceUntil  time.Time
+	softRecoverCount int
+	lastSoftRecover  time.Time
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
@@ -112,6 +134,13 @@ func (m *WBManager) connect(room string) error {
 	m.lastStatsLog = time.Time{}
 	m.lastLogRx = 0
 	m.lastLogTx = 0
+	m.lastTrafficAt = time.Time{}
+	m.lastTrafficBytes = 0
+	m.probeGraceUntil = time.Time{}
+	m.softRecoverCount = 0
+	m.lastSoftRecover = time.Time{}
+	recoverCh := make(chan struct{}, 1)
+	m.recoverCh = recoverCh
 	gen := m.runGen.Add(1)
 	ctx, cancel := context.WithCancel(m.ctx)
 	done := make(chan struct{})
@@ -133,6 +162,7 @@ func (m *WBManager) connect(room string) error {
 			Room:        room,
 			DisplayName: "WDTT",
 			UseTUN:      true,
+			RecoverCh:   recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))
 			},
@@ -171,21 +201,54 @@ func (m *WBManager) connect(room string) error {
 // wbTunnelDead is the watchdog decision: rebuild the tunnel when either the
 // KCP link reports no healthy rtt for too long, a fresh connect never became
 // healthy, or the active HTTP probe through the tunnel failed too many times
-// in a row (rtt can stay alive while the data path is dead).
-func wbTunnelDead(now, started, lastHealthy time.Time, probeFails int) (bool, string) {
+// in a row while traffic has actually stalled (rtt can stay alive while the
+// data path is dead, but probe alone must not kill an active download).
+func wbTunnelDead(now, started, lastHealthy, lastTraffic time.Time, lastTrafficBytes int64, probeFails int, probeGraceUntil time.Time) (dead bool, reason string, softRecover bool) {
+	if !probeGraceUntil.IsZero() && now.Before(probeGraceUntil) {
+		return false, "", false
+	}
+	trafficActive := wbTrafficActive(now, lastTraffic, lastTrafficBytes)
+	trafficStalled := wbTrafficStalled(now, lastTraffic, lastTrafficBytes)
+
 	if probeFails >= wbProbeFailLimit {
-		return true, "интернет через туннель не отвечает"
+		if trafficActive {
+			return false, "", false
+		}
+		if !trafficStalled {
+			return false, "", false
+		}
+		return true, "интернет через туннель не отвечает", true
 	}
 	if lastHealthy.IsZero() {
 		if now.Sub(started) > wbConnectTimeout {
-			return true, "туннель не поднялся"
+			return true, "туннель не поднялся", false
 		}
-		return false, ""
+		return false, "", false
 	}
 	if now.Sub(lastHealthy) > wbDeadTimeout {
-		return true, "нет живого RTT"
+		if trafficActive {
+			return false, "", false
+		}
+		return true, "нет живого RTT", true
 	}
-	return false, ""
+	return false, "", false
+}
+
+func wbTrafficActive(now, lastTraffic time.Time, lastBytes int64) bool {
+	if lastTraffic.IsZero() || lastBytes < wbTrafficActiveMinDelta {
+		return false
+	}
+	return now.Sub(lastTraffic) <= wbTrafficActiveWindow
+}
+
+func wbTrafficStalled(now, lastTraffic time.Time, lastBytes int64) bool {
+	if lastTraffic.IsZero() {
+		return true
+	}
+	if lastBytes < wbTrafficActiveMinDelta {
+		return now.Sub(lastTraffic) > wbTrafficStallWindow
+	}
+	return now.Sub(lastTraffic) > wbTrafficStallWindow
 }
 
 // wbProbeDataPath does a real HTTP request; with full-VPN routes up it goes
@@ -241,30 +304,74 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			stopped := m.stop
 			healthy := m.lastHealthy
 			started := m.connectedAt
+			lastTraffic := m.lastTrafficAt
+			lastTrafficBytes := m.lastTrafficBytes
+			probeGrace := m.probeGraceUntil
+			softCount := m.softRecoverCount
+			lastSoft := m.lastSoftRecover
 			m.mu.Unlock()
 			if stale || stopped {
 				return
 			}
 
+			now := time.Now()
+			inGrace := !probeGrace.IsZero() && now.Before(probeGrace)
+
 			// Active probe only after the tunnel was healthy at least once
 			// (otherwise we'd count failures during normal connect).
-			if !healthy.IsZero() && time.Since(lastProbe) >= wbProbeInterval {
-				lastProbe = time.Now()
+			if !healthy.IsZero() && !inGrace && time.Since(lastProbe) >= wbProbeInterval {
+				lastProbe = now
 				if wbProbeDataPath() {
 					probeFails = 0
 				} else {
-					probeFails++
-					m.emitLog("WARN", fmt.Sprintf("[WB] Проверка трафика через туннель не прошла (%d/%d)", probeFails, wbProbeFailLimit))
+					if wbTrafficActive(now, lastTraffic, lastTrafficBytes) {
+						// Download in progress — probe starved, not a dead tunnel.
+						probeFails = 0
+					} else {
+						probeFails++
+						m.emitLog("WARN", fmt.Sprintf("[WB] Проверка трафика через туннель не прошла (%d/%d)", probeFails, wbProbeFailLimit))
+					}
 				}
 			}
 
-			if dead, reason := wbTunnelDead(time.Now(), started, healthy, probeFails); dead {
-				m.emitLog("WARN", "[WB] Туннель мёртв ("+reason+") — пересоздаю подключение…")
-				runtime.EventsEmit(m.ctx, "state_changed", "connecting")
-				m.reconnect(gen)
-				return
+			dead, reason, trySoft := wbTunnelDead(now, started, healthy, lastTraffic, lastTrafficBytes, probeFails, probeGrace)
+			if !dead {
+				continue
 			}
+
+			canSoft := trySoft &&
+				softCount < wbSoftRecoverMax &&
+				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldown)
+			if canSoft {
+				m.emitLog("WARN", "[WB] Восстановление WebRTC без снятия VPN ("+reason+")…")
+				m.mu.Lock()
+				m.softRecoverCount++
+				m.lastSoftRecover = now
+				m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
+				m.mu.Unlock()
+				probeFails = 0
+				m.softRecover()
+				continue
+			}
+
+			m.emitLog("WARN", "[WB] Туннель мёртв ("+reason+") — пересоздаю подключение…")
+			runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+			m.reconnect(gen)
+			return
 		}
+	}
+}
+
+func (m *WBManager) softRecover() {
+	m.mu.Lock()
+	ch := m.recoverCh
+	m.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 
@@ -398,8 +505,10 @@ func (m *WBManager) onStatus(code string) {
 	case "TUNNEL_CONNECTED":
 		m.emitLog("INFO", "[WB] WebRTC готов · поднимаю VPN…")
 	case "TUNNEL_RECONNECTING":
-		m.emitLog("WARN", "[WB] Переподключение туннеля…")
-		runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+		m.emitLog("WARN", "[WB] Переподключение WebRTC без снятия VPN…")
+		m.mu.Lock()
+		m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+		m.mu.Unlock()
 	case "TRAFFIC_READY":
 		m.emitLog("INFO", "[WB] Пробный запрос через туннель успешен")
 		m.markSessionStarted()
@@ -419,6 +528,11 @@ func (m *WBManager) onStatus(code string) {
 }
 
 func (m *WBManager) logRelay(raw string) {
+	if strings.Contains(raw, "carrier rebind") || strings.Contains(raw, "carrier rebound") {
+		m.mu.Lock()
+		m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+		m.mu.Unlock()
+	}
 	level, msg, ok := classifyWBLog(raw)
 	if !ok {
 		return
@@ -455,6 +569,11 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 	now := time.Now()
 	if rtt > 0 {
 		m.lastHealthy = now
+	}
+	total := rx + tx
+	if total > m.lastTrafficBytes+1024 {
+		m.lastTrafficAt = now
+		m.lastTrafficBytes = total
 	}
 	shouldLog := now.Sub(m.lastStatsLog) >= wbStatsLogInterval
 	if shouldLog {

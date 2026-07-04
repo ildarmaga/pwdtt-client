@@ -8,11 +8,15 @@ import (
 func TestWBTunnelDead(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
-		name        string
-		started     time.Time
-		lastHealthy time.Time
-		probeFails  int
-		wantDead    bool
+		name              string
+		started           time.Time
+		lastHealthy       time.Time
+		lastTraffic       time.Time
+		lastTrafficBytes  int64
+		probeFails        int
+		probeGraceUntil   time.Time
+		wantDead          bool
+		wantSoft          bool
 	}{
 		{
 			name:        "healthy rtt just now",
@@ -25,6 +29,7 @@ func TestWBTunnelDead(t *testing.T) {
 			started:     now.Add(-5 * time.Minute),
 			lastHealthy: now.Add(-wbDeadTimeout - time.Second),
 			wantDead:    true,
+			wantSoft:    true,
 		},
 		{
 			name:     "connecting, still within connect timeout",
@@ -44,23 +49,60 @@ func TestWBTunnelDead(t *testing.T) {
 			wantDead:    false,
 		},
 		{
-			name:        "probe failures at limit kill tunnel even with healthy rtt",
-			started:     now.Add(-5 * time.Minute),
-			lastHealthy: now.Add(-time.Second), // KCP alive, data path dead
-			probeFails:  wbProbeFailLimit,
-			wantDead:    true,
+			name:             "probe at limit with stalled traffic triggers soft recover",
+			started:          now.Add(-5 * time.Minute),
+			lastHealthy:      now.Add(-time.Second),
+			lastTraffic:      now.Add(-wbTrafficStallWindow - time.Second),
+			lastTrafficBytes: 1024 * 1024,
+			probeFails:       wbProbeFailLimit,
+			wantDead:         true,
+			wantSoft:         true,
+		},
+		{
+			name:             "probe at limit ignored while traffic active",
+			started:          now.Add(-5 * time.Minute),
+			lastHealthy:      now.Add(-time.Second),
+			lastTraffic:      now.Add(-5 * time.Second),
+			lastTrafficBytes: 50 * 1024 * 1024,
+			probeFails:       wbProbeFailLimit,
+			wantDead:         false,
+		},
+		{
+			name:            "probe skipped during rebind grace",
+			started:         now.Add(-5 * time.Minute),
+			lastHealthy:     now.Add(-time.Second),
+			lastTraffic:     now.Add(-wbTrafficStallWindow - time.Second),
+			probeFails:      wbProbeFailLimit,
+			probeGraceUntil: now.Add(30 * time.Second),
+			wantDead:        false,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dead, reason := wbTunnelDead(now, c.started, c.lastHealthy, c.probeFails)
+			dead, reason, soft := wbTunnelDead(now, c.started, c.lastHealthy, c.lastTraffic, c.lastTrafficBytes, c.probeFails, c.probeGraceUntil)
 			if dead != c.wantDead {
-				t.Fatalf("wbTunnelDead() = %v (%q), want %v", dead, reason, c.wantDead)
+				t.Fatalf("wbTunnelDead() dead = %v (%q), want %v", dead, reason, c.wantDead)
+			}
+			if soft != c.wantSoft {
+				t.Fatalf("wbTunnelDead() soft = %v, want %v", soft, c.wantSoft)
 			}
 			if dead && reason == "" {
 				t.Fatalf("dead tunnel must include a reason")
 			}
 		})
+	}
+}
+
+func TestWBTrafficActive(t *testing.T) {
+	now := time.Now()
+	if !wbTrafficActive(now, now.Add(-10*time.Second), 1024*1024) {
+		t.Fatal("expected active traffic")
+	}
+	if wbTrafficActive(now, now.Add(-10*time.Second), 1024) {
+		t.Fatal("expected inactive below min delta")
+	}
+	if wbTrafficActive(now, now.Add(-wbTrafficActiveWindow-time.Second), 1024*1024) {
+		t.Fatal("expected inactive after window")
 	}
 }
