@@ -3,12 +3,7 @@
 package backend
 
 import (
-	"fmt"
-	"os"
 	"strconv"
-	"strings"
-	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -34,75 +29,6 @@ func isProcessElevated() bool {
 		return false
 	}
 	return elev != 0
-}
-
-// runDeElevated starts exePath at medium integrity via scheduled task (/RL LIMITED /RU user).
-func runDeElevated(exePath string, args []string, workDir string) (uint32, error) {
-	taskName := fmt.Sprintf("WDTT_VK_%d", time.Now().UnixNano())
-	tr := windowsCmdLine(exePath, args)
-	if workDir != "" {
-		tr = fmt.Sprintf(`cmd /c "cd /d "%s" && %s"`, workDir, tr)
-	}
-	if err := runScheduledTask(taskName, tr, true); err != nil {
-		return 0, err
-	}
-	go func() {
-		time.Sleep(2 * time.Minute)
-		_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
-	}()
-	return 0, nil
-}
-
-func runScheduledTask(taskName, taskRun string, limited bool) error {
-	_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
-
-	user := os.Getenv("USERNAME")
-	if user == "" {
-		user = os.Getenv("USER")
-	}
-
-	createArgs := []string{
-		"/Create", "/TN", taskName,
-		"/TR", taskRun,
-		"/SC", "ONCE", "/ST", "00:00",
-		"/F",
-	}
-	if user != "" {
-		createArgs = append(createArgs, "/RU", user)
-	}
-	if limited {
-		createArgs = append(createArgs, "/RL", "LIMITED")
-	}
-	if out, err := execHidden("schtasks", createArgs...).CombinedOutput(); err != nil {
-		return fmt.Errorf("schtasks create: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	if out, err := execHidden("schtasks", "/Run", "/TN", taskName).CombinedOutput(); err != nil {
-		_ = execHidden("schtasks", "/Delete", "/TN", taskName, "/F").Run()
-		return fmt.Errorf("schtasks run: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func windowsCmdLine(exe string, args []string) string {
-	var b strings.Builder
-	b.WriteString(syscall.EscapeArg(exe))
-	for _, a := range args {
-		b.WriteByte(' ')
-		b.WriteString(syscall.EscapeArg(a))
-	}
-	return b.String()
-}
-
-func killProcess(pid uint32) error {
-	if pid == 0 {
-		return nil
-	}
-	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, pid)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(h)
-	return windows.TerminateProcess(h, 1)
 }
 
 func killProcessTree(pid uint32) {

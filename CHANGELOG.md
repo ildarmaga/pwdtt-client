@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.111] — 2026-07-04
+
+### VK login (Windows) — как на iOS
+- **Нативное окно WebView2** вместо Edge/chromedp: тот же exe в режиме `--vk-login-worker` открывает окно с `https://vk.com/` (как WKWebView на iOS в vk-turn-proxy-ios).
+- Cookies (`remixsid`, `p`, включая HttpOnly) читаются через `ICoreWebView2CookieManager` — **не нужен DevTools-attach**, работает и под администратором.
+- Убраны chromedp / `--no-sandbox` / schtasks-деэлевация — больше нет `about:blank`, «chrome failed to start» и мигающей консоли.
+- Требуется Microsoft Edge WebView2 Runtime (в Windows 10/11 предустановлен).
+
 ## [0.3.110] — 2026-07-04
 
 ### VK login (Windows)
