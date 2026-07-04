@@ -152,7 +152,7 @@ func runUpdateApply(pid int, dest string) {
 		if _, err := os.Stat(dest); err != nil {
 			if err := os.Rename(dest+".old", dest); err == nil {
 				logln("restored old exe")
-				_ = execDetached(dest).Start()
+				_ = execDetached(dest, ShowWindowFlag).Start()
 			}
 		}
 		return
@@ -160,8 +160,8 @@ func runUpdateApply(pid int, dest string) {
 	_ = os.Remove(dest + ".old")
 	logln("copy ok")
 
-	// 3. Relaunch. We are elevated (inherited), so the new app starts without UAC.
-	if err := execDetached(dest).Start(); err != nil {
+	// 3. Relaunch with --show-window so the app opens visibly, not only in tray.
+	if err := execDetached(dest, ShowWindowFlag).Start(); err != nil {
 		logln("FAIL: relaunch: %v", err)
 		return
 	}

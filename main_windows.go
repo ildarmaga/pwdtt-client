@@ -31,6 +31,9 @@ func main() {
 
 	backend.InitWintun(wintunDLL)
 	app := backend.NewApp(trayIcon)
+	if backend.WantsShowWindow(os.Args[1:]) {
+		app.SetShowOnStartup(true)
+	}
 
 	err := wails.Run(&options.App{
 		Title:         "WDTT",

@@ -8,21 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
-	ctx         context.Context
-	orch        *Orchestrator
-	wb          *WBManager
-	trayEnabled atomic.Bool
-	quitting    atomic.Bool
-	trayIcon    []byte
+	ctx           context.Context
+	orch          *Orchestrator
+	wb            *WBManager
+	trayEnabled   atomic.Bool
+	quitting      atomic.Bool
+	showOnStartup bool
+	trayIcon      []byte
 }
 
 func NewApp(trayIcon []byte) *App { return &App{trayIcon: trayIcon} }
+
+func (a *App) SetShowOnStartup(v bool) { a.showOnStartup = v }
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
@@ -40,6 +44,15 @@ func (a *App) Startup(ctx context.Context) {
 		},
 		func() { a.quitting.Store(true); a.orch.Stop(); a.wb.Disconnect(); os.Exit(0) },
 	)
+	if a.showOnStartup {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			runtime.WindowUnminimise(ctx)
+			runtime.WindowShow(ctx)
+			runtime.WindowCenter(ctx)
+			bringMainWindowToFront()
+		}()
+	}
 }
 
 func (a *App) updateTray(connected bool, rx, tx int64, workers int32) {
