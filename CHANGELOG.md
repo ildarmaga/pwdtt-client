@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.141] — 2026-07-05
+
+### Fix
+- CI Windows: `defaultIPv4Gateway` compile error (undefined `gw`).
+
 ## [0.3.140] — 2026-07-05
 
 ### WB Stream — VP8 настройки из UI
