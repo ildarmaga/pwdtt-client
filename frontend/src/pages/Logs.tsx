@@ -19,9 +19,8 @@ export default function Logs() {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [search, setSearch] = useState('');
   const [entries, setEntries] = useState<LogEntry[]>(() => logStore.getAll());
-  const [stickToBottom, setStickToBottom] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
-  const userInteracting = useRef(false);
+  const autoScroll = useRef(true);
 
   useEffect(() => logStore.subscribe(setEntries), []);
 
@@ -31,38 +30,15 @@ export default function Logs() {
     el.scrollTop = el.scrollHeight;
   }, []);
 
-  // On first open of Logs tab, pin to latest entries.
   useLayoutEffect(() => {
-    scrollToBottom();
-  }, [scrollToBottom]);
-
-  const updateStickToBottom = useCallback(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    setStickToBottom(atBottom);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!stickToBottom || userInteracting.current) return;
-    scrollToBottom();
-  }, [entries, filter, search, scrollToBottom, stickToBottom]);
+    if (autoScroll.current) scrollToBottom();
+  }, [entries, filter, search, scrollToBottom]);
 
   const onScroll = useCallback(() => {
-    updateStickToBottom();
-  }, [updateStickToBottom]);
-
-  const onPointerDown = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    if (!atBottom) userInteracting.current = true;
+    autoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   }, []);
-
-  const onPointerUp = useCallback(() => {
-    userInteracting.current = false;
-    updateStickToBottom();
-  }, [updateStickToBottom]);
 
   const visible = entries.filter(e => {
     if (filter !== 'ALL' && e.level !== filter) return false;
@@ -101,16 +77,9 @@ export default function Logs() {
         .icon-btn { width: 32px; height: 32px; border: 0.5px solid var(--border); border-radius: 8px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background 0.12s, border-color 0.12s, color 0.12s; flex-shrink: 0; }
         .logs-toolbar--compact .icon-btn { width: 28px; height: 28px; border-radius: 7px; }
         .icon-btn:hover { background: var(--bg-3); border-color: var(--text-3); color: var(--text); }
-        .logs-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0; scrollbar-gutter: stable; scrollbar-color: var(--border) var(--bg-2); }
-        .logs-list::-webkit-scrollbar { width: 8px; }
-        .logs-list::-webkit-scrollbar-track { background: var(--bg-2); }
-        .logs-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-        .logs-list::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
-        .logs-list-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
-        .logs-jump-bottom { position: absolute; right: 14px; bottom: 10px; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,.35); z-index: 2; }
-        .logs-jump-bottom:hover { background: var(--bg-3); color: var(--text); }
-        .log-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 10px; font-size: 12px; line-height: 1.35; }
-        .logs-card--compact .log-row { padding: 2px 8px; font-size: 11px; gap: 6px; line-height: 1.3; }
+        .logs-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0; }
+        .log-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 10px; font-size: 12px; line-height: 1.45; }
+        .logs-card--compact .log-row { padding: 3px 8px; font-size: 11px; gap: 6px; }
         .log-row:hover { background: var(--bg-2); }
         .log-time { color: var(--text-4); flex-shrink: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
         .logs-card--compact .log-time { font-size: 10px; }
@@ -169,39 +138,15 @@ export default function Logs() {
           {visible.length === 0 ? (
             <div className="logs-empty">{entries.length === 0 ? 'Логи появятся здесь...' : 'Ничего не найдено'}</div>
           ) : (
-            <div className="logs-list-wrap">
-              <div
-                className="logs-list"
-                ref={listRef}
-                onScroll={onScroll}
-                onPointerDown={onPointerDown}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-                onWheel={onScroll}
-              >
-                {visible.map(e => (
-                  <div key={e.id} className="log-row">
-                    <span className="log-time">{e.time}</span>
-                    <span className="log-level" style={{ color: LEVEL_COLOR[e.level] }}>{e.level}</span>
-                    <span className="log-msg">{e.message}</span>
-                    {e.count > 1 && <span className="log-count">×{e.count}</span>}
-                  </div>
-                ))}
-              </div>
-              {!stickToBottom && (
-                <button
-                  type="button"
-                  className="logs-jump-bottom"
-                  title="В конец"
-                  aria-label="В конец лога"
-                  onClick={() => {
-                    setStickToBottom(true);
-                    scrollToBottom();
-                  }}
-                >
-                  ↓
-                </button>
-              )}
+            <div className="logs-list" ref={listRef} onScroll={onScroll}>
+              {visible.map(e => (
+                <div key={e.id} className="log-row">
+                  <span className="log-time">{e.time}</span>
+                  <span className="log-level" style={{ color: LEVEL_COLOR[e.level] }}>{e.level}</span>
+                  <span className="log-msg">{e.message}</span>
+                  {e.count > 1 && <span className="log-count">×{e.count}</span>}
+                </div>
+              ))}
             </div>
           )}
         </div>
