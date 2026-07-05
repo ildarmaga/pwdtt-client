@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.146] — 2026-07-05
+
+### Fix — WB TUN: адаптер Up, но с локализованным именем
+- **Корень бага 0x800700B7**: xray **успешно** создаёт wintun-адаптер (Up, `InterfaceDescription=Xray Tunnel`), но Windows даёт ему локализованный alias (`Подключение по локальной сети`), а не `WDTT-WB`. Детект по имени не находил → мы сносили рабочий адаптер → пересоздание падало с «file already exists».
+- **`EnsureTunAdapterReady`** — находит live Xray/Wintun netdev по `InterfaceDescription` и **переименовывает** в `WDTT-WB` (`Rename-NetAdapter` по ifIndex), не снося адаптер.
+- Детект готовности TUN теперь через rename, а не строгое совпадение имени.
+
 ## [0.3.145] — 2026-07-05
 
 ### Fix — WB connect hang (45s+ before SOCKS/xray)
