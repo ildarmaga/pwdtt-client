@@ -79,6 +79,7 @@ type WBManager struct {
 	room           string
 	vp8Fps         int
 	vp8Batch       int
+	vp8DualTrack   bool
 	reconnecting atomic.Bool
 	connectedAt  time.Time // when this run started
 	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
@@ -109,7 +110,7 @@ func (m *WBManager) IsRunning() bool {
 	return m.cancel != nil
 }
 
-func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int) error {
+func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int, dualTrack bool) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -118,6 +119,7 @@ func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int) error {
 	m.stop = false // user explicitly asked to connect
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
+	m.vp8DualTrack = dualTrack
 	m.mu.Unlock()
 	return m.connect(room)
 }
@@ -157,6 +159,7 @@ func (m *WBManager) connect(room string) error {
 	m.cancel = cancel
 	m.done = done
 	vp8Fps, vp8Batch := m.vp8Fps, m.vp8Batch
+	vp8DualTrack := m.vp8DualTrack
 	m.mu.Unlock()
 
 	if err := prepareWBTun(); err != nil {
@@ -175,6 +178,7 @@ func (m *WBManager) connect(room string) error {
 			UseTUN:      true,
 			VP8FPS:      vp8Fps,
 			VP8Batch:    vp8Batch,
+			DualTrack:   vp8DualTrack,
 			RecoverCh:   recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))

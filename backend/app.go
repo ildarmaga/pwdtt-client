@@ -82,13 +82,13 @@ func (a *App) Reconnect() error { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool  { return a.orch.IsRunning() }
 
 // ConnectWB поднимает WB Stream туннель (gVisor netstack + WebRTC/KCP).
-func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int) error {
+func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool) error {
 	// Ensure the VK/orch tunnel is stopped before starting WB so the two
 	// don't coexist and fight over routes / produce a peer-restart storm.
 	if a.orch.IsRunning() {
 		a.orch.Stop()
 	}
-	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch)
+	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch, dualTrack)
 }
 
 // DisconnectWB останавливает WB Stream туннель.

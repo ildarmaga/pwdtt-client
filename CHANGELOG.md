@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.159] — 2026-07-05
+
+### WB Stream — Dual VP8 track + игры (UDP)
+- **Dual-track end-to-end**: настройка «Dual VP8 track» из UI → `tracks=2` в логах, KCP `SendRaw` round-robin по cam + screenshare.
+- **Сервер (wbcreator)**: creator публикует 2 VP8-трека для download.
+- **UDP для игр (CS2/Dota)**: туннель переведён с request/response на **двусторонний streaming** — Steam SDR / Dota ping получают unsolicited datagrams от сервера (раньше все UDP ответы терялись → «Latency: ERROR» / «Failed to reach official servers»).
+
 ## [0.3.158] — 2026-07-05
 
 ### WB Stream — плавнее speedtest (меньше рывков скорости)

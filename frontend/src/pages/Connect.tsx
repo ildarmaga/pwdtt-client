@@ -314,7 +314,7 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
-      await WailsConnectWB(room, '', s.wbFps, s.wbBatch);
+      await WailsConnectWB(room, '', s.wbFps, s.wbBatch, s.wbDualTrack);
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);
