@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.156] — 2026-07-05
+
+### WB Stream — скорость и VP8 без искусственных лимитов
+- **FPS/Batch**: сняты потолки 30/48 в клиенте и wbjrunner — настройки из UI передаются как на iOS (до 120 fps / 256 batch).
+- **KCP**: окна snd=2048 / rcv=4096 для высокого RTT (мобильный интернет ~300 ms).
+- **VP8 coalesce**: max plaintext 1200 байт на sample (было 960).
+- **Дефолты**: fps=30, batch=64 (как iOS).
+- **Сервер (wbcreator)**: creator pacing 60/128 — быстрее download через туннель после обновления wdtt на VPS.
+
 ## [0.3.155] — 2026-07-05
 
 ### Fix — CI/build после pre-xray restore

@@ -525,7 +525,7 @@ export default function Settings({ onClose }: Props) {
             <span>FPS</span>
             <Stepper
               value={settings.wbFps}
-              min={1} max={30} step={1}
+              min={1} max={120} step={1}
               disabled={locked}
               onChange={v => update('wbFps', v)}
             />
@@ -534,14 +534,14 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
             <span>Batch</span>
             <Stepper
-              value={Math.min(settings.wbBatch, 48)}
-              min={1} max={48} step={1}
+              value={settings.wbBatch}
+              min={1} max={256} step={1}
               disabled={locked}
               onChange={v => update('wbBatch', v)}
             />
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '-4px 0 8px', paddingLeft: 2 }}>
-            VPN (TUN): FPS ≤30, batch ≤48 — лимит MTU туннеля
+            VP8 pacing: выше FPS/batch — больше полоса, выше нагрузка на CPU. На мобильном при RTT &gt;200 ms попробуйте batch 64–128.
           </div>
 
           <div className="st-section-title">Proxy</div>

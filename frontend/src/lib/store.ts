@@ -53,11 +53,11 @@ export const settingsStore = {
     if (merged.tunnelProtocol !== 'vk' && merged.tunnelProtocol !== 'wb') {
       merged.tunnelProtocol = DEFAULT_SETTINGS.tunnelProtocol;
     }
-    if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 30) {
-      merged.wbFps = Math.min(DEFAULT_SETTINGS.wbFps, 30);
+    if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 120) {
+      merged.wbFps = DEFAULT_SETTINGS.wbFps;
     }
-    if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 48) {
-      merged.wbBatch = Math.min(DEFAULT_SETTINGS.wbBatch, 48);
+    if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 256) {
+      merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
     }
     if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
       merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;
