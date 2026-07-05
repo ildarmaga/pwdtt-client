@@ -28,7 +28,7 @@ type wailsLogWriter struct {
 	file *os.File
 }
 
-const maxLogBuf = 500
+const maxLogBuf = 10000
 
 type logEntry struct{ level, msg string }
 
