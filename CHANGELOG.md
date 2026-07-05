@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.161] — 2026-07-05
+
+### Fix — zombie-туннель после idle (стабильность как VK)
+- **Zombie-детект по download**: туннель считается «зависшим» только когда **RX не растёт 35+ с** и probe падает — upload-trickle (keepalive) больше не маскирует мёртвый download.
+- **Post-recovery verify**: если WebRTC rebind не восстановил TCP за 25 с → **полное переподключение** (не бесконечный rebound с 0 B/s).
+- **Сервер**: creator rejoin после tunnel lost — 1 с вместо 3 с (быстрее resync KCP после client recovery).
+
 ## [0.3.160] — 2026-07-05
 
 ### Fix — таймер сессии + iOS ошибки

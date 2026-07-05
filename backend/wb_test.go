@@ -13,6 +13,7 @@ func TestWBTunnelDead(t *testing.T) {
 		lastHealthy      time.Time
 		lastTraffic      time.Time
 		lastFast         time.Time
+		lastRxAt         time.Time
 		lastTrafficBytes int64
 		probeFails       int
 		probeGraceUntil  time.Time
@@ -54,10 +55,21 @@ func TestWBTunnelDead(t *testing.T) {
 			started:          now.Add(-5 * time.Minute),
 			lastHealthy:      now.Add(-time.Second),
 			lastTraffic:      now.Add(-5 * time.Second),
+			lastRxAt:         now.Add(-wbDownloadStallWindow - time.Second),
 			lastTrafficBytes: 128 * 1024 * 1024,
 			probeFails:       wbZombieProbeLimit,
 			wantDead:         true,
 			wantSoft:         true,
+		},
+		{
+			name:             "upload trickle but download still moving — keep tunnel",
+			started:          now.Add(-5 * time.Minute),
+			lastHealthy:      now.Add(-time.Second),
+			lastTraffic:      now.Add(-5 * time.Second),
+			lastRxAt:         now.Add(-5 * time.Second),
+			lastTrafficBytes: 128 * 1024 * 1024,
+			probeFails:       wbZombieProbeLimit,
+			wantDead:         false,
 		},
 		{
 			name:             "probe at limit ignored during meaningful download",
@@ -65,6 +77,7 @@ func TestWBTunnelDead(t *testing.T) {
 			lastHealthy:      now.Add(-time.Second),
 			lastTraffic:      now.Add(-5 * time.Second),
 			lastFast:         now.Add(-5 * time.Second),
+			lastRxAt:         now.Add(-5 * time.Second),
 			lastTrafficBytes: 50 * 1024 * 1024,
 			probeFails:       wbProbeFailLimit,
 			wantDead:         false,
@@ -82,7 +95,7 @@ func TestWBTunnelDead(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dead, reason, soft := wbTunnelDead(now, c.started, c.lastHealthy, c.lastTraffic, c.lastFast, c.lastTrafficBytes, c.probeFails, c.probeGraceUntil)
+			dead, reason, soft := wbTunnelDead(now, c.started, c.lastHealthy, c.lastTraffic, c.lastFast, c.lastRxAt, c.lastTrafficBytes, c.probeFails, c.probeGraceUntil)
 			if dead != c.wantDead {
 				t.Fatalf("wbTunnelDead() dead = %v (%q), want %v", dead, reason, c.wantDead)
 			}
