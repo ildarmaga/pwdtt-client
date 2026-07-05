@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.145] — 2026-07-05
+
+### Fix — WB connect hang (45s+ before SOCKS/xray)
+- **Тройной тяжёлый wintun cleanup** на каждый connect (await 25s + prepareWBTun + EnsureWintunPoolFree с pnputil) — убран.
+- **Fast path**: QuickReleaseWintunPool (~300ms) на первой попытке; deep cleanup + pnputil только на retry после exit 23.
+- **awaitShutdown** 25s → 8s, emergency cleanup сразу при reconnect.
+- **prepareWBTun** — только extract wintun.dll, без PowerShell на connect.
+
 ## [0.3.144] — 2026-07-05
 
 ### Fix — WB Stream TUN (Windows), ghost Xray Tunnel

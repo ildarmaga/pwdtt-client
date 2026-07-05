@@ -23,7 +23,7 @@ const (
 	// new connection before the old adapter's split-default routes are gone
 	// sends guest-register auth into the dead tunnel → TLS handshake timeout on
 	// every reconnect. Wait long enough for a full serial teardown (iOS-style).
-	wbShutdownWait = 25 * time.Second
+	wbShutdownWait = 8 * time.Second
 
 	// Liveness: healthy stats report rtt > 0 (~90-140ms). After "tunnel lost"
 	// the runner keeps emitting stats with rtt == 0 while its internal
@@ -539,8 +539,10 @@ func (m *WBManager) awaitShutdown(max time.Duration) {
 	}
 
 	deadline := time.After(max)
-	tick := time.NewTicker(2 * time.Second)
+	tick := time.NewTicker(1 * time.Second)
 	defer tick.Stop()
+
+	emergencyStopWBTun()
 
 	for {
 		select {
