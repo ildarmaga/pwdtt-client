@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.162] — 2026-07-05
+
+### Fix — страницы не грузятся во время download
+- **KCP ordering**: dual-track `SendRaw` больше не round-robin — один VP8-трек для KCP (reorder между треками ломал smux).
+- **Congestion flush**: мелкие пакеты и глубокая очередь → flush 1 ms вместо 3 ms batch.
+- **smux**: буфер stream 512 KB (было 2 MB) — bulk download не съедает весь pipe.
+
 ## [0.3.161] — 2026-07-05
 
 ### Fix — zombie-туннель после idle (стабильность как VK)
