@@ -388,14 +388,7 @@ export default function Settings({ onClose }: Props) {
 
           <div className={`st-vk-block${locked ? ' st-locked' : ''}`}>
             <div className="st-row" style={{ marginBottom: 10 }}>
-              <div>
-                <span>VK cookies (remixsid)</span>
-                <div className="st-vk-hint" style={{ marginTop: 4 }}>
-                  {vkUseCookies
-                    ? 'Только cookie-path. Не работает — выключите тумблер для анонимного входа.'
-                    : 'Анонимный вход. Cookies на диске не используются, пока тумблер выключен.'}
-                </div>
-              </div>
+              <span>VK cookies (remixsid)</span>
               <button
                 className={`st-toggle st-toggle--${vkUseCookies ? 'on' : 'off'}`}
                 disabled={locked}
@@ -411,9 +404,13 @@ export default function Settings({ onClose }: Props) {
                 }}
               />
             </div>
-            <div className={`st-vk-status${vkStatus?.ok ? ' st-vk-status--ok' : vkStatus?.expired ? ' st-vk-status--bad' : ''}`}>
-              {vkStatus?.hint ?? 'Проверка…'}
-            </div>
+            {vkStatus === null ? (
+              <div className="st-vk-status">Проверка…</div>
+            ) : vkStatus.hint ? (
+              <div className={`st-vk-status${vkStatus.ok ? ' st-vk-status--ok' : vkStatus.expired ? ' st-vk-status--bad' : ''}`}>
+                {vkStatus.hint}
+              </div>
+            ) : null}
             {vkStatus?.path && (
               <div className="st-vk-hint" style={{ marginBottom: 8 }}>{vkStatus.path}</div>
             )}
@@ -539,9 +536,6 @@ export default function Settings({ onClose }: Props) {
               disabled={locked}
               onChange={v => update('wbBatch', v)}
             />
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '-4px 0 8px', paddingLeft: 2 }}>
-            VP8 pacing: выше FPS/batch — больше полоса, выше нагрузка на CPU. На мобильном при RTT &gt;200 ms попробуйте batch 64–128.
           </div>
 
           <div className="st-section-title">Proxy</div>

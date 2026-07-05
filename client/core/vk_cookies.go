@@ -110,17 +110,17 @@ func VKCookiesStatus() (ok bool, hint string) {
 			if err := vkCookiesLiveValid(header); err != nil {
 				return false, vkCookieExpiredHint
 			}
-			return true, "Cookies сохранены. Анонимный вход. Включите тумблер для только-cookies."
+			return true, ""
 		}
-		return false, "Анонимный вход (VK Calls). Включите «VK cookies» если нужен вход по remixsid."
+		return false, ""
 	}
 	if !hasCookies {
-		return false, "VK cookies включены — вставьте remixsid ниже."
+		return false, ""
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
 		return false, vkCookieExpiredHint
 	}
-	return true, "VK cookies действительны (только cookie-path)."
+	return true, ""
 }
 
 // VKCookiesPathForUI returns the path shown in settings.

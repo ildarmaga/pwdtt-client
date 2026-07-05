@@ -79,11 +79,22 @@ func TestVKUseCookiesToggleOffAfterOn(t *testing.T) {
 	}
 }
 
-func TestVKCookiesStatusAnonymousHint(t *testing.T) {
+func TestVKCookiesStatusAnonymousNoHint(t *testing.T) {
+	dir := t.TempDir()
+	oldSettings := vkSettingsPath
+	oldCookies := vkCookiesPath
+	vkSettingsPath = func() string { return filepath.Join(dir, "settings", "vk-auth.json") }
+	vkCookiesPath = func() string { return filepath.Join(dir, "secrets", "cookies-vk.json") }
+	defer func() {
+		vkSettingsPath = oldSettings
+		vkCookiesPath = oldCookies
+		resetVKAuthSettings()
+	}()
+
 	resetVKAuthSettings()
 	_, hint := VKCookiesStatus()
-	if hint == "" {
-		t.Fatal("expected hint")
+	if hint != "" {
+		t.Fatalf("expected empty hint, got %q", hint)
 	}
 }
 

@@ -202,9 +202,7 @@ function installGoMock() {
               ok,
               expired: !ok,
               useCookies,
-              hint: ok
-                ? 'VK cookies действительны (dev mock, только cookie-path).'
-                : 'remixsid не найден — проверьте формат cookies',
+              hint: ok ? '' : 'remixsid не найден — проверьте формат cookies',
               path: 'localStorage · pwdtt_vk_cookies_raw',
             };
           }
@@ -212,7 +210,7 @@ function installGoMock() {
             ok: false,
             expired: false,
             useCookies,
-            hint: 'Анонимный вход. Cookies на диске не используются, пока тумблер выключен.',
+            hint: '',
             path: 'localStorage · pwdtt_vk_cookies_raw',
           };
         },
