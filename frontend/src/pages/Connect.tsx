@@ -366,16 +366,7 @@ export default function Connect() {
   };
 
   const [reconnectAt, setReconnectAt] = useState(0); // timestamp когда можно снова подключиться
-  const [connectingSince, setConnectingSince] = useState<number | null>(null);
   const [, setDurationTick] = useState(0);
-
-  useEffect(() => {
-    if (tunnelState === 'connecting') {
-      setConnectingSince(Date.now());
-    } else if (tunnelState === 'idle') {
-      setConnectingSince(null);
-    }
-  }, [tunnelState]);
 
   useEffect(() => {
     if (tunnelState !== 'connecting' && tunnelState !== 'connected') return;
@@ -482,17 +473,11 @@ export default function Connect() {
   const isVkProtocol = tunnelProtocol === 'vk';
   // Для WB VP8-строка показывает кадры/с (бэкенд кладёт fps в dtlsHsMs).
   const vp8Display = statsLive && sessionStats!.dtlsHsMs > 0 ? `${sessionStats!.dtlsHsMs} fps` : '—';
+  const sessionAnchorMs = sessionStats?.connectedAtMs || tunnelStore.getConnectingSince() || 0;
   const durationSec = (() => {
-    if (tunnelState === 'connecting' && connectingSince) {
-      return (Date.now() - connectingSince) / 1000;
-    }
-    if (tunnelState === 'connected') {
-      if (sessionStats?.connectedAtMs) {
-        return (Date.now() - sessionStats.connectedAtMs) / 1000;
-      }
-      if (connectingSince) {
-        return (Date.now() - connectingSince) / 1000;
-      }
+    if (tunnelState !== 'connecting' && tunnelState !== 'connected') return 0;
+    if (sessionAnchorMs > 0) {
+      return (Date.now() - sessionAnchorMs) / 1000;
     }
     return 0;
   })();

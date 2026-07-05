@@ -89,7 +89,9 @@ function useWailsEvents() {
       EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, assignedWorkers: unknown, connectedAtMs: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
         const rxN = Number(rx) || 0;
         const txN = Number(tx) || 0;
+        const tunnelUp = tunnelStore.get() === 'connected' || tunnelStore.get() === 'connecting';
         if (rxN === 0 && txN === 0 && Number(workers) === 0) {
+          if (tunnelUp) return;
           tunnelStatsStore.reset();
           return;
         }

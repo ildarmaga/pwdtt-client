@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+
+## [0.3.160] — 2026-07-05
+
+### Fix — таймер сессии + iOS ошибки
+- **PC**: uptime не сбрасывается при переходе Connect ↔ Logs (`connectingSince` в store, `connectedAtMs` не затирается нулём).
+- **iOS 0.4.8**: красный текст ошибки на экране подключения; таймер сессии; VK — явные сообщения при неполном профиле / нет hash.
+
 ## [0.3.159] — 2026-07-05
 
 ### WB Stream — Dual VP8 track + игры (UDP)

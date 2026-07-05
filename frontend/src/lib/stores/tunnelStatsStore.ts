@@ -89,6 +89,8 @@ export const tunnelStatsStore = {
     prevRx = raw.rxBytes;
     prevTx = raw.txBytes;
     prevAt = now;
+    const prevConnectedAt = current?.connectedAtMs ?? 0;
+    const connectedAtMs = raw.connectedAtMs > 0 ? raw.connectedAtMs : prevConnectedAt;
     current = {
       rxBytes: raw.rxBytes,
       txBytes: raw.txBytes,
@@ -99,7 +101,7 @@ export const tunnelStatsStore = {
       internetRttMs: raw.internetRttMs,
       workers: raw.workers,
       assignedWorkers: raw.assignedWorkers,
-      connectedAtMs: raw.connectedAtMs,
+      connectedAtMs,
     };
     emit();
   },
