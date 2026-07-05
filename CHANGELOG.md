@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.148] — 2026-07-05
+
+### Fix — уникальное имя wintun-адаптера + ifIndex-настройка
+- **Корень 0x800700B7**: фиксированное имя `WDTT-WB` коллизилось с зависшим wintun-pool от прошлой сессии → xray падал, а мы «находили» мёртвый leftover-адаптер. Теперь имя **уникальное на запуск** (`WDTT-WB-<rand>`) — CreateAdapter всегда чистый. Детект/настройка по ifIndex+описанию, поэтому имя не важно.
+- **`Enable-NetAdapter -InterfaceIndex`** — у cmdlet нет такого параметра; теперь через `Get-NetAdapter -InterfaceIndex | Enable-NetAdapter`.
+- **`WaitAdapterUp` по имени убран** из setup (падал на локализованном alias) — проверка готовности по ifIndex внутри FinishTunSetup.
+- **Детект ifIndex** — предпочитает live `Status=Up` Xray/Wintun устройство (не stale ghost).
+
 ## [0.3.147] — 2026-07-05
 
 ### Fix — WB TUN настраивается по ifIndex, не по alias
