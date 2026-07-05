@@ -33,9 +33,6 @@ export interface UpdateProgressEvent {
   message?: string;
 }
 
-import type { WBRoutingRule } from './wbRouting';
-export type { WBRoutingRule, WBRoutingPreset, WBOutboundTag } from './wbRouting';
-
 export interface AppSettings {
   bypassMode: 'РУЧ' | 'АВТ';
   power: number;
@@ -59,9 +56,6 @@ export interface AppSettings {
   wbProxyAuth: 'auto' | 'manual';
   wbProxyUser: string;
   wbProxyPass: string;
-  /** WB Stream xray routing preset (v2rayN-style) */
-  wbRoutingMode: 'global' | 'bypass_lan' | 'ru_direct' | 'custom';
-  wbRoutingRules: WBRoutingRule[];
 }
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
@@ -84,8 +78,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wbProxyAuth: 'auto',
   wbProxyUser: '',
   wbProxyPass: '',
-  wbRoutingMode: 'global',
-  wbRoutingRules: [],
 };
 
 export const METRICS_REFRESH_OPTIONS: { value: number; label: string }[] = [

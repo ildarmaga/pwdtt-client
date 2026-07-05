@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ildarmaga/whitelist-bypass/relay/wbjrunner"
-	"github.com/ildarmaga/whitelist-bypass/relay/wbxray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -139,8 +138,7 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
-	// Routing UI removed — always global (all traffic through tunnel).
-	m.routingMode = string(wbxray.RoutingGlobal)
+	m.routingMode = "global"
 	m.routingPayload = ""
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
@@ -182,7 +180,6 @@ func (m *WBManager) connect(room, routingPayload string) error {
 			DisplayName: "WDTT",
 			UseTUN:      true,
 			UseXray:     useXray,
-			RoutingMode: wbxray.RoutingGlobal,
 			VP8FPS:            vp8Fps,
 			VP8Batch:          vp8Batch,
 			RecoverCh:         recoverCh,

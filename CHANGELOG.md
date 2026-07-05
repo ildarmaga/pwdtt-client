@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.153] — 2026-07-05
+
+### Rollback — полное удаление xray из клиента
+- **Аудит v0.3.152**: в логах уже был `mode=wbt (netstack)` и `direct netstack up` — xray **не запускался**, но оставался в бинарнике (~52 MB embed: xray.exe, geoip.dat, geosite.dat).
+- **Удалено**: embed xray, `InitXray`, `prepareWBXray`, CI `fetch-xray-assets.sh`, UI/типы маршрутизации (`WBRouting`, `wbRouting.ts`).
+- **wbstream-wbt**: адаптер снова фиксированный `WDTT-WB` (не `WDTT-WB-<random>` — это было для xray pool collision).
+- WB = только gVisor netstack + tun2socks + WebRTC/KCP, как до v0.3.126.
+
 ## [0.3.152] — 2026-07-05
 
 ### Rollback — xray TUN → gVisor netstack, убрана маршрутизация WB
