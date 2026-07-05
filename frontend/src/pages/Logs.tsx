@@ -28,11 +28,13 @@ export default function Logs() {
   const scrollToBottom = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (dist < 48) {
-      el.scrollTop = el.scrollHeight;
-    }
+    el.scrollTop = el.scrollHeight;
   }, []);
+
+  // On first open of Logs tab, pin to latest entries.
+  useLayoutEffect(() => {
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   const updateStickToBottom = useCallback(() => {
     const el = listRef.current;
@@ -107,8 +109,8 @@ export default function Logs() {
         .logs-list-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
         .logs-jump-bottom { position: absolute; right: 14px; bottom: 10px; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,.35); z-index: 2; }
         .logs-jump-bottom:hover { background: var(--bg-3); color: var(--text); }
-        .log-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 10px; font-size: 12px; line-height: 1.45; }
-        .logs-card--compact .log-row { padding: 3px 8px; font-size: 11px; gap: 6px; }
+        .log-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 10px; font-size: 12px; line-height: 1.35; }
+        .logs-card--compact .log-row { padding: 2px 8px; font-size: 11px; gap: 6px; line-height: 1.3; }
         .log-row:hover { background: var(--bg-2); }
         .log-time { color: var(--text-4); flex-shrink: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
         .logs-card--compact .log-time { font-size: 10px; }
