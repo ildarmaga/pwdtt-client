@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -140,13 +139,9 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
-	mode, customRules, err := wbxray.ParseConnectPayload(routingPayload)
-	if err != nil {
-		m.mu.Unlock()
-		return fmt.Errorf("маршрутизация: %w", err)
-	}
-	m.routingMode = string(mode)
-	m.routingPayload = routingPayload
+	// Routing UI removed — always global (all traffic through tunnel).
+	m.routingMode = string(wbxray.RoutingGlobal)
+	m.routingPayload = ""
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
 	m.lastHealthy = time.Time{}
@@ -173,20 +168,9 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		m.finishRun(cancel, done)
 		return fmt.Errorf("wintun.dll: %w", err)
 	}
-	useXray := goruntime.GOOS == "windows"
-	var xrayBin string
-	if useXray {
-		if err := prepareWBXray(); err != nil {
-			m.finishRun(cancel, done)
-			return fmt.Errorf("xray: %w", err)
-		}
-		var err error
-		xrayBin, err = xrayBinaryPath()
-		if err != nil {
-			m.finishRun(cancel, done)
-			return err
-		}
-	}
+	// gVisor netstack + tun2socks — faster than xray TUN on Windows.
+	// xray added routing/sniffing overhead and regressed throughput (~30→7 MB/s).
+	useXray := false
 
 	m.emitLog("INFO", "Подключение WB Stream…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
@@ -194,13 +178,11 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	go func() {
 		defer close(done)
 		cfg := wbjrunner.Config{
-			Room:              room,
-			DisplayName:       "WDTT",
-			UseTUN:            true,
-			UseXray:           useXray,
-			XrayBinary:        xrayBin,
-			RoutingMode:       mode,
-			CustomRoutingJSON: customRules,
+			Room:        room,
+			DisplayName: "WDTT",
+			UseTUN:      true,
+			UseXray:     useXray,
+			RoutingMode: wbxray.RoutingGlobal,
 			VP8FPS:            vp8Fps,
 			VP8Batch:          vp8Batch,
 			RecoverCh:         recoverCh,

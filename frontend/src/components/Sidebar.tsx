@@ -4,7 +4,6 @@ import {
   IconPlugConnected,
   IconTerminal2,
   IconSettings2,
-  IconRoute,
 } from '@tabler/icons-react';
 import { useMobileUI } from '../lib/useMobileUI';
 import { serverStore } from '../lib/store';
@@ -24,11 +23,10 @@ const NAV = [
 
 interface Props {
   onSettings?: () => void;
-  onRouting?: () => void;
   pathname?: string;
 }
 
-export default function Sidebar({ onSettings, onRouting, pathname: pathnameProp }: Props) {
+export default function Sidebar({ onSettings, pathname: pathnameProp }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const pathname = pathnameProp ?? location.pathname;
@@ -102,11 +100,6 @@ export default function Sidebar({ onSettings, onRouting, pathname: pathnameProp 
           ))}
         </div>
         <div className="sidebar-bottom">
-          {onRouting && (
-            <button className="nav-btn" onClick={onRouting} title="Маршрутизация WB">
-              <IconRoute stroke={2} size={compact ? 18 : 22} />
-            </button>
-          )}
           <button className="nav-btn" onClick={onSettings}>
             <IconSettings2 stroke={2} size={compact ? 18 : 22} />
           </button>

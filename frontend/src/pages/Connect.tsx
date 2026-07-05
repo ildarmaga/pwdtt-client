@@ -71,7 +71,6 @@ import { DeleteProfile, GetProfile } from '../../wailsjs/go/backend/App';
 import { saveServerProfile } from '../lib/utils/profileSync';
 import type { Server, TunnelState, TunnelProtocol } from '../lib/types';
 import { resolveConnectHashes } from '../lib/resolveConnectHashes';
-import { buildRoutingPayload } from '../lib/wbRouting';
 import { logStore } from '../lib/stores/logStore';
 import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB } from '../../wailsjs/go/backend/App';
 
@@ -315,7 +314,7 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
-      await WailsConnectWB(room, buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules), s.wbFps, s.wbBatch);
+      await WailsConnectWB(room, '', s.wbFps, s.wbBatch);
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);

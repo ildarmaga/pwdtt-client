@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.152] — 2026-07-05
+
+### Rollback — xray TUN → gVisor netstack, убрана маршрутизация WB
+- **Симптом**: скорость упала с ~30 МБ/с до 5–7 МБ/с после перехода на xray TUN + routing/sniffing.
+- **Откат**: Windows WB снова использует **gVisor netstack + tun2socks** (`UseXray=false`), как до v0.3.x xray-ветки.
+- **UI**: убрана кнопка «Маршрутизация WB» и редактор правил — весь трафик идёт через туннель (global).
+- xray-бинарник больше не стартует при WB-подключении на Windows.
+
 ## [0.3.151] — 2026-07-05
 
 ### Fix — WB не отключался при переключении на VK (и наоборот)

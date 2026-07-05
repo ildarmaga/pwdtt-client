@@ -502,13 +502,6 @@ export default function Settings({ onClose }: Props) {
             <>
           <div className="st-section-title">WB Stream · WebRTC</div>
 
-          <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
-            <span>Маршрутизация</span>
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-              {settings.wbRoutingRules?.length ?? 0} правил — кнопка ↗ в sidebar
-            </span>
-          </div>
-
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <span>Dual-track</span>
             <button
