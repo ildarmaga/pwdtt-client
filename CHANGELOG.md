@@ -1,6 +1,17 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.154] — 2026-07-05
+
+### Rollback — полный откат WB-кода до pre-xray (v0.3.125)
+- **Проблема**: v0.3.152–153 отключали xray в runtime, но wbstream-wbt оставался с xray-эра изменениями (random adapter `WDTT-WB-*`, RouteShell, тяжёлый prepare). Скорость ~1.5 MB/s вместо прежних значений.
+- **Fix**: восстановлены **исходники до xray** из git:
+  - `wbjrunner/runner.go`, `bypass.go`, `warmup.go` — netstack-only, фиксированный адаптер `WDTT-WB`
+  - `desktoptun/prepare_windows.go`, `routes_windows.go`, `emergency_windows.go` — pre-xray
+  - `backend/wb.go` — pre-xray (25s shutdown wait, без UseXray/routing)
+- **Disconnect**: фоновый `awaitShutdown` — снимает зависший WDTT-WB из трея Windows после отключения.
+- xray embed/UI по-прежнему удалены (v0.3.153).
+
 ## [0.3.153] — 2026-07-05
 
 ### Rollback — полное удаление xray из клиента

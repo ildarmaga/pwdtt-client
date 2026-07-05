@@ -21,7 +21,7 @@ const (
 	// new connection before the old adapter's split-default routes are gone
 	// sends guest-register auth into the dead tunnel → TLS handshake timeout on
 	// every reconnect. Wait long enough for a full serial teardown (iOS-style).
-	wbShutdownWait = 8 * time.Second
+	wbShutdownWait = 25 * time.Second
 
 	// Liveness: healthy stats report rtt > 0 (~90-140ms). After "tunnel lost"
 	// the runner keeps emitting stats with rtt == 0 while its internal
@@ -77,8 +77,6 @@ type WBManager struct {
 	runGen atomic.Uint64
 
 	room           string
-	routingMode    string
-	routingPayload string
 	vp8Fps         int
 	vp8Batch       int
 	reconnecting atomic.Bool
@@ -110,7 +108,7 @@ func (m *WBManager) IsRunning() bool {
 	return m.cancel != nil
 }
 
-func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int) error {
+func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -120,12 +118,12 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
 	m.mu.Unlock()
-	return m.connect(room, routingPayload)
+	return m.connect(room)
 }
 
 // connect dials without resetting the user-stop flag, so a user Disconnect
 // racing with auto-reconnect always wins.
-func (m *WBManager) connect(room, routingPayload string) error {
+func (m *WBManager) connect(room string) error {
 	m.awaitShutdown(wbShutdownWait)
 
 	m.mu.Lock()
@@ -138,8 +136,6 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
-	m.routingMode = "global"
-	m.routingPayload = ""
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
 	m.lastHealthy = time.Time{}
@@ -166,9 +162,6 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		m.finishRun(cancel, done)
 		return fmt.Errorf("wintun.dll: %w", err)
 	}
-	// gVisor netstack + tun2socks — faster than xray TUN on Windows.
-	// xray added routing/sniffing overhead and regressed throughput (~30→7 MB/s).
-	useXray := false
 
 	m.emitLog("INFO", "Подключение WB Stream…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
@@ -179,10 +172,9 @@ func (m *WBManager) connect(room, routingPayload string) error {
 			Room:        room,
 			DisplayName: "WDTT",
 			UseTUN:      true,
-			UseXray:     useXray,
-			VP8FPS:            vp8Fps,
-			VP8Batch:          vp8Batch,
-			RecoverCh:         recoverCh,
+			VP8FPS:      vp8Fps,
+			VP8Batch:    vp8Batch,
+			RecoverCh:   recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))
 			},
@@ -437,7 +429,6 @@ func (m *WBManager) reconnect(gen uint64) {
 		return
 	}
 	room := m.room
-	payload := m.routingPayload
 	cancel := m.cancel
 	m.mu.Unlock()
 
@@ -454,7 +445,7 @@ func (m *WBManager) reconnect(gen uint64) {
 	}
 
 	m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
-	if err := m.connect(room, payload); err != nil {
+	if err := m.connect(room); err != nil {
 		m.mu.Lock()
 		stopped = m.stop
 		m.mu.Unlock()
@@ -496,6 +487,9 @@ func (m *WBManager) Disconnect() {
 
 	if cancel != nil {
 		cancel()
+		go m.awaitShutdown(wbShutdownWait)
+	} else {
+		go emergencyStopWBTun()
 	}
 }
 
@@ -518,10 +512,8 @@ func (m *WBManager) awaitShutdown(max time.Duration) {
 	}
 
 	deadline := time.After(max)
-	tick := time.NewTicker(1 * time.Second)
+	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
-
-	emergencyStopWBTun()
 
 	for {
 		select {
@@ -574,7 +566,7 @@ func (m *WBManager) onStatus(code string) {
 		setTrayStatus(true, 0, 0, 1)
 	case "TUN_UNAVAILABLE":
 		runtime.EventsEmit(m.ctx, "state_changed", "error")
-		m.emitLog("ERROR", "[WB] TUN недоступен — перезапустите WDTT от администратора; удалите зависший «Xray Tunnel» / WDTT-WB в «Сетевые подключения»")
+		m.emitLog("ERROR", "[WB] TUN недоступен — перезапустите WDTT от администратора; проверьте wintun.dll рядом с exe и удалите зависший адаптер WDTT-WB в «Сетевые подключения»")
 	}
 }
 
