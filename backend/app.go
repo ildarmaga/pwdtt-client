@@ -68,13 +68,26 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 	return false
 }
 
-func (a *App) Connect(p ConnectParams) error { return a.orch.Start(p) }
-func (a *App) Disconnect()                   { a.orch.Stop() }
-func (a *App) Reconnect() error              { return a.orch.Reconnect() }
-func (a *App) IsRunning() bool               { return a.orch.IsRunning() }
+func (a *App) Connect(p ConnectParams) error {
+	// Ensure WB is fully stopped before bringing up the VK tunnel.
+	// Without this, switching protocol in Settings while WB is connected
+	// leaves WB alive in the same room alongside the new VK session.
+	if a.wb.IsRunning() {
+		a.wb.Disconnect()
+	}
+	return a.orch.Start(p)
+}
+func (a *App) Disconnect()  { a.orch.Stop() }
+func (a *App) Reconnect() error { return a.orch.Reconnect() }
+func (a *App) IsRunning() bool  { return a.orch.IsRunning() }
 
 // ConnectWB поднимает WB Stream туннель (xray TUN + SOCKS joiner + WebRTC).
 func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int) error {
+	// Ensure the VK/orch tunnel is stopped before starting WB so the two
+	// don't coexist and fight over routes / produce a peer-restart storm.
+	if a.orch.IsRunning() {
+		a.orch.Stop()
+	}
 	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch)
 }
 
