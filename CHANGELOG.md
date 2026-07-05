@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.147] — 2026-07-05
+
+### Fix — WB TUN настраивается по ifIndex, не по alias
+- v0.3.146 `Rename-NetAdapter` молча падал (alias `WDTT-WB` зарезервирован скрытым ghost-устройством) → TUN так и не находился по имени.
+- **Настройка TUN по `InterfaceIndex`**: IP/маршруты/metric/MTU/DNS через `New-NetIPAddress`/`New-NetRoute`/`Set-NetIPInterface` по ifIndex — не зависит от локализованного alias.
+- **Детект готовности** — по live Xray/Wintun netdev (описание), а не по строгому имени.
+- **Purge ghost** — удаление non-present (`Status ≠ OK`) Xray/Wintun PnP-устройств, освобождает alias; rename в `WDTT-WB` теперь best-effort (для UI), функционал от него не зависит.
+
 ## [0.3.146] — 2026-07-05
 
 ### Fix — WB TUN: адаптер Up, но с локализованным именем
