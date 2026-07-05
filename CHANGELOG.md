@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.157] — 2026-07-05
+
+### WB Stream — стабильный канал на мобильном + throughput
+- **KCP→VP8 batching**: несколько KCP-сегментов в одном VP8 sample (меньше WriteSample/s, выше Mbps).
+- **RTT-adaptive KCP**: interval/window подстраиваются под RTT (40–50 ms interval при RTT>250 ms — меньше ложных retransmit).
+- **smux**: stream buffer 2 MB, keepalive 15s/60s (быстрее детект NAT-dead на мобильном).
+- **Proactive recovery**: авто KCP+smux restart при RTT>700 ms >10s; nudge recovery при RTT=0.
+- **Probe**: интервал health-check 14–22s при высоком RTT — меньше ложных переподключений.
+
 ## [0.3.156] — 2026-07-05
 
 ### WB Stream — скорость и VP8 без искусственных лимитов

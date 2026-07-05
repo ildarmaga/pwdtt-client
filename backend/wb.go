@@ -96,6 +96,7 @@ type WBManager struct {
 	probeGraceUntil  time.Time
 	softRecoverCount int
 	lastSoftRecover  time.Time
+	lastRTT          int64 // ms — adaptive probe interval on mobile
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
@@ -334,6 +335,7 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			probeGrace := m.probeGraceUntil
 			softCount := m.softRecoverCount
 			lastSoft := m.lastSoftRecover
+			lastRTT := m.lastRTT
 			m.mu.Unlock()
 			if stale || stopped {
 				return
@@ -344,7 +346,8 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 
 			// Active probe only after the tunnel was healthy at least once
 			// (otherwise we'd count failures during normal connect).
-			if !healthy.IsZero() && !inGrace && time.Since(lastProbe) >= wbProbeInterval {
+			probeInterval := wbProbeIntervalForRTT(lastRTT)
+			if !healthy.IsZero() && !inGrace && time.Since(lastProbe) >= probeInterval {
 				lastProbe = now
 				if wbProbeDataPath() {
 					probeFails = 0
@@ -400,6 +403,20 @@ func wbSoftRecoverCooldownFor(lastHealthy, now time.Time) time.Duration {
 		return wbSoftRecoverCooldownDead
 	}
 	return wbSoftRecoverCooldown
+}
+
+// wbProbeIntervalForRTT — on high RTT mobile, probe less often to avoid false zombie detection.
+func wbProbeIntervalForRTT(rttMs int64) time.Duration {
+	switch {
+	case rttMs > 400:
+		return 22 * time.Second
+	case rttMs > 250:
+		return 18 * time.Second
+	case rttMs > 150:
+		return 14 * time.Second
+	default:
+		return wbProbeInterval
+	}
 }
 
 func (m *WBManager) softRecover(forceSession bool) {
@@ -612,6 +629,7 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 	now := time.Now()
 	if rtt > 0 {
 		m.lastHealthy = now
+		m.lastRTT = rtt
 	}
 	total := rx + tx
 	if total > m.lastTrafficBytes+1024 {
