@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.144] — 2026-07-05
+
+### Fix — WB Stream TUN (Windows), ghost Xray Tunnel
+- **`0x800700B7` / exit 23** — xray не мог создать `WDTT-WB`: kernel pool занят, NetAdapter — disconnected `Xray Tunnel` с локализованным именем.
+- **`EnsureWintunPoolFree`** — OpenAdapter+Close с retry, probe CreateAdapter, `pnputil` для зависших PnP-устройств.
+- **Cleanup по InterfaceIndex** — удаление Xray/Wintun netdev без привязки к имени `WDTT-WB`.
+- **Быстрый retry** — при раннем exit xray (exit 23) сразу prep+retry, без слепого ожидания 20s.
+
 ## [0.3.143] — 2026-07-05
 
 ### Fix — WB Stream TUN (Windows)

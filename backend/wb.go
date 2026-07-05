@@ -593,7 +593,7 @@ func (m *WBManager) onStatus(code string) {
 		setTrayStatus(true, 0, 0, 1)
 	case "TUN_UNAVAILABLE":
 		runtime.EventsEmit(m.ctx, "state_changed", "error")
-		m.emitLog("ERROR", "[WB] TUN недоступен — перезапустите WDTT от администратора; проверьте wintun.dll рядом с exe и удалите зависший адаптер WDTT-WB в «Сетевые подключения»")
+		m.emitLog("ERROR", "[WB] TUN недоступен — перезапустите WDTT от администратора; удалите зависший «Xray Tunnel» / WDTT-WB в «Сетевые подключения»")
 	}
 }
 
