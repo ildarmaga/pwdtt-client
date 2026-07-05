@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.155] — 2026-07-05
+
+### Fix — CI/build после pre-xray restore
+- wbstream: восстановлены `routes_windows.defaultIPv4Egress` и helper-функции в `prepare_windows` (нужны для сборки wbxray/routeshell, хотя runtime — netstack-only).
+- `PrepareBeforeStart` — лёгкий pre-xray вариант (без xray pool cleanup).
+
 ## [0.3.154] — 2026-07-05
 
 ### Rollback — полный откат WB-кода до pre-xray (v0.3.125)
