@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.183] — 2026-07-07
+
+### Fix — WB download 0 B при dualTrack (главная причина «сайты не грузятся»)
+- Reorder-буфер dual-track синхронизируется по первому кадру (отправитель не сбрасывает счётчик seq при KCP restart).
+- Ресинхрон при большом скачке seq (перезапуск счётчика отправителя) вместо застревания всех кадров в pending.
+- Устраняет `↓ 0 B` / warmup ipify timeout при активном dual-track.
+
 ## [0.3.182] — 2026-07-06
 
 ### Fix — WB smux desync (трафик не идёт после connect)
