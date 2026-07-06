@@ -13,7 +13,7 @@ type Listener = (entries: LogEntry[]) => void;
 let seq = 0;
 let entries: LogEntry[] = [];
 const listeners = new Set<Listener>();
-const MAX_ENTRIES = 10000;
+const MAX_ENTRIES = 500;
 
 function notify() {
   listeners.forEach(fn => fn([...entries]));
