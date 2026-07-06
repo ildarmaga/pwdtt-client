@@ -107,6 +107,8 @@ type WBManager struct {
 	softRecoverCount int
 	lastSoftRecover  time.Time
 	lastRTT          int64 // ms — adaptive probe interval on mobile
+	tunnelErrBurst   int
+	lastTunnelErrLog time.Time
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
@@ -175,6 +177,8 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	m.recoverVerifyUntil = time.Time{}
 	m.softRecoverCount = 0
 	m.lastSoftRecover = time.Time{}
+	m.tunnelErrBurst = 0
+	m.lastTunnelErrLog = time.Time{}
 	recoverCh := make(chan wbjrunner.RecoverRequest, 1)
 	m.recoverCh = recoverCh
 	gen := m.runGen.Add(1)
@@ -658,16 +662,13 @@ func (m *WBManager) onStatus(code string) {
 		m.mu.Unlock()
 	case "TRAFFIC_READY":
 		m.emitLog("INFO", "[WB] Пробный запрос через туннель успешен")
-		m.markSessionStarted()
-		runtime.EventsEmit(m.ctx, "state_changed", "running")
-		setTrayStatus(true, 0, 0, 1)
+		m.markConnectedUI()
 	case "TUN_ACTIVE":
 		m.emitLog("INFO", "[WB] Полный VPN активен — весь трафик через WB Stream")
+		m.markConnectedUI()
 	case "WARMUP_FAILED":
 		m.emitLog("WARN", "[WB] Пробный запрос не прошёл — проверьте трафик вручную")
-		m.markSessionStarted()
-		runtime.EventsEmit(m.ctx, "state_changed", "running")
-		setTrayStatus(true, 0, 0, 1)
+		m.markConnectedUI()
 	case "TUN_UNAVAILABLE":
 		runtime.EventsEmit(m.ctx, "state_changed", "error")
 		m.emitLog("ERROR", "[WB] TUN недоступен — перезапустите WDTT от администратора; проверьте wintun.dll рядом с exe и удалите зависший адаптер WDTT-WB в «Сетевые подключения»")
@@ -679,6 +680,20 @@ func (m *WBManager) logRelay(raw string) {
 		m.mu.Lock()
 		m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
 		m.mu.Unlock()
+	}
+	if strings.Contains(raw, "OpenStream:") || strings.Contains(raw, "remote not ready") {
+		m.mu.Lock()
+		now := time.Now()
+		if now.Sub(m.lastTunnelErrLog) > 5*time.Second {
+			m.tunnelErrBurst = 0
+		}
+		m.tunnelErrBurst++
+		m.lastTunnelErrLog = now
+		burst := m.tunnelErrBurst
+		m.mu.Unlock()
+		if burst > 5 {
+			return
+		}
 	}
 	level, msg, ok := classifyWBLog(raw)
 	if !ok {
@@ -693,6 +708,22 @@ func (m *WBManager) markSessionStarted() {
 		m.sessionStartedAt = time.Now()
 	}
 	m.mu.Unlock()
+}
+
+// markConnectedUI switches the frontend to "connected" once VPN routes are up.
+// Warmup ipify runs in the background and no longer blocks the UI.
+func (m *WBManager) markConnectedUI() {
+	m.mu.Lock()
+	already := !m.sessionStartedAt.IsZero()
+	if !already {
+		m.sessionStartedAt = time.Now()
+	}
+	m.mu.Unlock()
+	if already {
+		return
+	}
+	runtime.EventsEmit(m.ctx, "state_changed", "running")
+	setTrayStatus(true, 0, 0, 1)
 }
 
 func (m *WBManager) sessionStartedMs() int64 {
