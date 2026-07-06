@@ -2,6 +2,12 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.182] — 2026-07-06
+
+### Fix — WB smux desync (трафик не идёт после connect)
+- **Creator** больше не делает KCP-restart на ICE sub-offer (только joiner) — устраняет рассинхрон smux.
+- **Joiner**: отложенный rebind если sub-offer пришёл до старта KCP; sync KCP+smux перед поднятием VPN.
+
 ## [0.3.181] — 2026-07-06
 
 ### Fix — WB трафик не идёт после connect (KCP restart storm)
