@@ -506,19 +506,13 @@ export default function Settings({ onClose }: Props) {
             <>
           <div className="st-section-title">WB Stream · WebRTC</div>
 
-          <div className={`st-row st-row--stack${locked ? ' st-locked' : ''}`}>
-            <div className="st-row-head">
-              <span>Dual-track</span>
-              <button
-                className={`st-toggle st-toggle--${settings.wbDualTrack ? 'on' : 'off'}`}
-                disabled={locked}
-                onClick={() => update('wbDualTrack', !settings.wbDualTrack)}
-              />
-            </div>
-            <div className="st-row-hint">
-              Второй VP8-трек. KCP-данные идут только по первому треку — на скорость не влияет,
-              а второй трек тратит канал SFU и CPU. Держите выключенным.
-            </div>
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
+            <span>Dual-track</span>
+            <button
+              className={`st-toggle st-toggle--${settings.wbDualTrack ? 'on' : 'off'}`}
+              disabled={locked}
+              onClick={() => update('wbDualTrack', !settings.wbDualTrack)}
+            />
           </div>
 
           <div className="st-row">

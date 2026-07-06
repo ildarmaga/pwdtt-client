@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.178] — 2026-07-06
+
+### Fix — dual-track + WBT latency display
+- **Dual-track**: round-robin по двум VP8-трекам с reorder-буфером (seq) — bandwidth ×2 без ломания KCP.
+- **WBT RTT**: сглаженный EWMA в UI (без скачков 3000 ms при speedtest), cap tuning 250 ms.
+- Убрана ошибочная подсказка «держите dual-track выключенным»; дефолт снова **on**.
+
 ## [0.3.177] — 2026-07-06
 
 ### Fix — обновление при активном VPN
