@@ -2,12 +2,20 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.173] — 2026-07-06
+
+### Perf — WB Stream / xray протокол (Windows)
+- **VP8 carrier**: дефолт fps 60 / batch 128, coalesce 1400 B — выше потолок пропускной (~70 Mbps теор.).
+- **Windows timer**: `TimeBeginPeriod(1)` — pacing не сбивается в пачки по 15 ms (jitter → потери KCP).
+- **xray split**: `IPIfNonMatch` вместо `IPOnDemand` — без лишнего DNS; sniff только http/tls.
+- **xray**: loglevel error, access log не гоняется через relay/CPU.
+- **Probe**: выключен в split-режимах (custom/ru_direct/bypass_lan).
+
 ## [0.3.172] — 2026-07-06
 
-### Fix — обновление и отзывчивость UI
-- **Обновление**: прогресс в глобальном store — не теряется при закрытии Настроек; нельзя запустить второе скачивание.
-- **Disconnect → Install**: после отключения WB обновление доступно сразу (не ждать 25 с teardown).
-- **Логи**: xray access log (`accepted tcp/udp`) больше не заливает UI — WebView не тормозит.
+### Fix — обновление UI
+- Прогресс обновления в global store; нельзя запустить второе скачивание.
+- Disconnect → Install без ожидания 25 с teardown.
 
 ## [0.3.171] — 2026-07-06
 

@@ -422,7 +422,15 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			// Active probe only after the tunnel was healthy at least once
 			// (otherwise we'd count failures during normal connect).
 			probeInterval := wbProbeIntervalForRTT(lastRTT)
-			if !healthy.IsZero() && !inGrace && time.Since(lastProbe) >= probeInterval {
+			skipProbe := false
+			m.mu.Lock()
+			rm := m.routingMode
+			m.mu.Unlock()
+			switch rm {
+			case "custom", "ru_direct", "bypass_lan":
+				skipProbe = true
+			}
+			if !healthy.IsZero() && !inGrace && !skipProbe && time.Since(lastProbe) >= probeInterval {
 				lastProbe = now
 				if wbProbeDataPath() {
 					probeFails = 0

@@ -20,7 +20,7 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 	if strings.Contains(raw, "[lk-video] recv vp8 frame") {
 		return "", "", false
 	}
-	// xray access log — one line per connection; freezes UI when logs are open.
+	// xray access log — filtered in wbxray/runner.go before relay; drop here too if leaked.
 	if strings.Contains(raw, "[xray]") && strings.Contains(raw, " accepted ") {
 		return "", "", false
 	}
