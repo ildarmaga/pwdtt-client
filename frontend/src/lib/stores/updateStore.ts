@@ -1,6 +1,6 @@
 import type { UpdateProgressEvent } from '../types';
 
-export type UpdatePhase = 'idle' | 'downloading' | 'applying' | 'error';
+export type UpdatePhase = 'idle' | 'downloading' | 'applying' | 'ready' | 'error';
 
 type Snapshot = {
   phase: UpdatePhase;
@@ -37,6 +37,10 @@ export const updateStore = {
       phase = 'applying';
       percent = p?.percent ?? 100;
       message = p?.message ?? 'Установка…';
+    } else if (evPhase === 'ready') {
+      phase = 'ready';
+      percent = p?.percent ?? 100;
+      message = p?.message ?? 'Скачано — установится при отключении VPN';
     } else if (evPhase === 'error') {
       phase = 'error';
       message = p?.message ?? 'Ошибка';

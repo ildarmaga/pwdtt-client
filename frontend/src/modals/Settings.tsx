@@ -60,6 +60,7 @@ export default function Settings({ onClose }: Props) {
   const [updateSnap, setUpdateSnap] = useState(() => updateStore.get());
   useEffect(() => updateStore.subscribe(setUpdateSnap), []);
   const updateApplying = updateSnap.phase === 'downloading' || updateSnap.phase === 'applying';
+  const updateReady = updateSnap.phase === 'ready';
   const updateProgress = updateSnap.percent;
   const updateProgressMsg = updateSnap.message;
   const [vkAuthOpen, setVkAuthOpen] = useState(false);
@@ -311,12 +312,8 @@ export default function Settings({ onClose }: Props) {
                 <button
                   type="button"
                   className="st-vk-btn st-vk-btn--primary"
-                  disabled={updateApplying}
+                  disabled={updateApplying || updateReady}
                   onClick={async () => {
-                    if (locked) {
-                      setUpdateMsg('Сначала отключитесь — нажмите кнопку питания на главном экране');
-                      return;
-                    }
                     if (updateStore.isActive()) {
                       setUpdateMsg('Обновление уже скачивается');
                       return;
@@ -337,11 +334,11 @@ export default function Settings({ onClose }: Props) {
                     }
                   }}
                 >
-                  {updateApplying ? (updateProgress > 0 ? `${updateProgress}%` : 'Скачивание…') : `Установить ${updateInfo.latest}`}
+                  {updateReady ? 'Ждёт отключения VPN' : updateApplying ? (updateProgress > 0 ? `${updateProgress}%` : 'Скачивание…') : (locked ? `Скачать ${updateInfo.latest}` : `Установить ${updateInfo.latest}`)}
                 </button>
               )}
             </div>
-            {updateApplying && (
+            {(updateApplying || updateReady) && (
               <div className="st-upd-progress">
                 <div className="st-upd-progress-track">
                   <div className="st-upd-progress-bar" style={{ width: `${Math.max(updateProgress, 2)}%` }} />

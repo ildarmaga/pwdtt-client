@@ -58,6 +58,15 @@ func (a *App) Startup(ctx context.Context) {
 			bringMainWindowToFront()
 		}()
 	}
+	go func() {
+		time.Sleep(2 * time.Second)
+		if a.quitting.Load() || a.IsTunnelRunning() {
+			return
+		}
+		if a.HasPendingUpdate() {
+			_ = a.TryApplyPendingUpdate()
+		}
+	}()
 }
 
 func (a *App) updateTray(connected bool, rx, tx int64, workers int32) {
@@ -82,7 +91,10 @@ func (a *App) Connect(p ConnectParams) error {
 	}
 	return a.orch.Start(p)
 }
-func (a *App) Disconnect()  { a.orch.Stop() }
+func (a *App) Disconnect() {
+	a.orch.Stop()
+	a.schedulePendingUpdateApply()
+}
 func (a *App) Reconnect() error { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool  { return a.orch.IsRunning() }
 
@@ -97,7 +109,10 @@ func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int
 }
 
 // DisconnectWB останавливает WB Stream туннель.
-func (a *App) DisconnectWB() { a.wb.Disconnect() }
+func (a *App) DisconnectWB() {
+	a.wb.Disconnect()
+	a.schedulePendingUpdateApply()
+}
 
 // SetVKThroughTunnel переключает маршрутизацию VK (веб/API) через туннель на лету.
 // Применяется немедленно, если туннель активен; иначе — при следующем подключении.

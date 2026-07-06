@@ -27,6 +27,7 @@ export default function UpdateBanner() {
   }, []);
   const locked = tunnelState === 'connected' || tunnelState === 'connecting' || tunnelState === 'disconnecting';
   const applying = updateSnap.phase === 'downloading' || updateSnap.phase === 'applying';
+  const ready = updateSnap.phase === 'ready';
   const progress = updateSnap.percent;
   const progressMsg = updateSnap.message;
 
@@ -47,10 +48,6 @@ export default function UpdateBanner() {
   if (!info?.hasUpdate || dismissed) return null;
 
   const installUpdate = async () => {
-    if (locked) {
-      setHint('Сначала отключитесь — нажмите кнопку питания на главном экране');
-      return;
-    }
     if (updateStore.isActive()) {
       setHint('Обновление уже скачивается — откройте Настройки');
       return;
@@ -62,6 +59,8 @@ export default function UpdateBanner() {
       if (!res.ok) {
         setHint(res.message || 'Ошибка обновления');
         updateStore.finish();
+      } else if (res.message?.includes('Отключите VPN')) {
+        setHint(res.message);
       }
     } catch (e) {
       setHint(String(e));
@@ -92,15 +91,15 @@ export default function UpdateBanner() {
           <div className="upd-banner__text">
             Доступна новая версия <strong>{info.latest}</strong> (у вас {info.current})
           </div>
-          <button type="button" className="upd-banner__btn" disabled={applying} onClick={installUpdate}>
+          <button type="button" className="upd-banner__btn" disabled={applying || ready} onClick={installUpdate}>
             <IconDownload size={15} />
-            {applying ? (progress > 0 ? `${progress}%` : '…') : 'Установить'}
+            {ready ? 'Ждёт отключения' : applying ? (progress > 0 ? `${progress}%` : '…') : (locked ? 'Скачать' : 'Установить')}
           </button>
           <button type="button" className="upd-banner__close" aria-label="Скрыть" onClick={dismiss}>
             <IconX size={16} />
           </button>
         </div>
-        {applying && (
+        {(applying || ready) && (
           <>
             <div className="upd-banner__progress">
               <div className="upd-banner__progress-bar" style={{ width: `${Math.max(progress, 2)}%` }} />

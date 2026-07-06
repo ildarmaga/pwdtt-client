@@ -13,3 +13,11 @@ func (a *App) IsTunnelRunning() bool {
 func (a *App) GetUpdateDownloadState() UpdateProgress { return UpdateProgress{} }
 
 func (a *App) IsUpdateDownloading() bool { return false }
+
+func (a *App) HasPendingUpdate() bool { return false }
+
+func (a *App) TryApplyPendingUpdate() UpdateApplyResult {
+	return UpdateApplyResult{Message: "in-app update only on Windows"}
+}
+
+func (a *App) schedulePendingUpdateApply() {}

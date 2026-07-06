@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -37,13 +38,11 @@ func (a *App) IsUpdateDownloading() bool {
 	return a.updateActive
 }
 
-// DownloadAndApplyUpdate downloads the latest Windows exe and schedules replace+restart.
+// DownloadAndApplyUpdate downloads the latest Windows exe; applies immediately when
+// VPN is off, otherwise stores the package and installs on disconnect.
 func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	if a.IsUpdateDownloading() {
 		return UpdateApplyResult{Message: "Обновление уже скачивается"}
-	}
-	if a.IsTunnelRunning() {
-		return UpdateApplyResult{Message: "Сначала отключитесь — нажмите кнопку питания на главном экране"}
 	}
 
 	info := a.CheckForUpdate()
@@ -56,11 +55,106 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		}
 		return UpdateApplyResult{Message: "Обновлений нет"}
 	}
-	url := strings.TrimSpace(info.DownloadURL)
-	if url == "" {
+	rawURL := strings.TrimSpace(info.DownloadURL)
+	if rawURL == "" {
 		return UpdateApplyResult{Message: "Нет ссылки на скачивание"}
 	}
 
+	updateDir, err := ensureUpdateDir()
+	if err != nil {
+		return UpdateApplyResult{Message: err.Error()}
+	}
+	newExe := filepath.Join(updateDir, pendingUpdateExe)
+
+	a.setUpdateActive(true)
+	defer func() {
+		a.updateMu.Lock()
+		phase := a.updateProgress.Phase
+		a.updateMu.Unlock()
+		if phase != "ready" && phase != "applying" {
+			a.setUpdateActive(false)
+		}
+	}()
+
+	if err := a.downloadFileWithProgress(rawURL, newExe); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
+		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
+	}
+	if err := verifyWindowsExe(newExe); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
+		return UpdateApplyResult{Message: "Скачанный файл повреждён: " + err.Error()}
+	}
+	if err := savePendingUpdate(info.Latest); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
+		return UpdateApplyResult{Message: err.Error()}
+	}
+
+	if a.IsTunnelRunning() {
+		a.emitUpdateProgress(UpdateProgress{
+			Phase:   "ready",
+			Percent: 100,
+			Message: "Скачано — установится при отключении VPN",
+		})
+		return UpdateApplyResult{
+			OK:      true,
+			Message: "Обновление скачано. Отключите VPN — установка начнётся автоматически.",
+		}
+	}
+	return a.applyDownloadedUpdate(newExe, info.Latest)
+}
+
+// HasPendingUpdate reports whether a verified update package waits for install.
+func (a *App) HasPendingUpdate() bool {
+	return hasPendingUpdate()
+}
+
+// TryApplyPendingUpdate installs a downloaded package when VPN is off.
+func (a *App) TryApplyPendingUpdate() UpdateApplyResult {
+	if a.IsTunnelRunning() {
+		return UpdateApplyResult{Message: "VPN активен"}
+	}
+	if !hasPendingUpdate() {
+		return UpdateApplyResult{Message: "Нет скачанного обновления"}
+	}
+	updateDir, err := ensureUpdateDir()
+	if err != nil {
+		return UpdateApplyResult{Message: err.Error()}
+	}
+	newExe := filepath.Join(updateDir, pendingUpdateExe)
+	version := readPendingVersion()
+	return a.applyDownloadedUpdate(newExe, version)
+}
+
+func (a *App) schedulePendingUpdateApply() {
+	if !hasPendingUpdate() {
+		return
+	}
+	go func() {
+		deadline := time.Now().Add(45 * time.Second)
+		for time.Now().Before(deadline) {
+			if a.quitting.Load() {
+				return
+			}
+			if !a.IsTunnelRunning() {
+				time.Sleep(600 * time.Millisecond)
+				if a.quitting.Load() || a.IsTunnelRunning() {
+					return
+				}
+				res := a.TryApplyPendingUpdate()
+				if res.OK {
+					return
+				}
+				if res.Message != "VPN активен" && res.Message != "Нет скачанного обновления" {
+					a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: res.Message})
+				}
+				return
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}()
+}
+
+func (a *App) applyDownloadedUpdate(newExe, version string) UpdateApplyResult {
 	exePath, err := os.Executable()
 	if err != nil {
 		return UpdateApplyResult{Message: err.Error()}
@@ -70,46 +164,109 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 
-	updateDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "WDTT", "update")
-	if err := os.MkdirAll(updateDir, 0700); err != nil {
-		return UpdateApplyResult{Message: err.Error()}
-	}
-	newExe := filepath.Join(updateDir, "wdtt-new.exe")
-	a.setUpdateActive(true)
-	defer a.setUpdateActive(false)
-	if err := a.downloadFileWithProgress(url, newExe); err != nil {
-		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
-		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
-	}
-	if err := verifyWindowsExe(newExe); err != nil {
-		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
-		return UpdateApplyResult{Message: "Скачанный файл повреждён: " + err.Error()}
-	}
-
 	a.emitUpdateProgress(UpdateProgress{Phase: "applying", Percent: 100, Message: "Установка…"})
 
-	// The downloaded exe applies the update itself: waits for us to exit,
-	// copies itself over the old exe and relaunches it. No cmd/vbs/powershell —
-	// nothing to flash a console, and elevation is inherited (no second UAC).
+	updateDir, _ := ensureUpdateDir()
 	cmd := execDetached(newExe, updateApplyFlag,
 		"-pid", strconv.Itoa(os.Getpid()),
 		"-dest", exePath,
 	)
 	cmd.Dir = updateDir
 	if err := cmd.Start(); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
 		return UpdateApplyResult{Message: "Не удалось запустить обновление: " + err.Error()}
 	}
 
+	clearPendingUpdate()
 	a.quitting.Store(true)
 	a.orch.Stop()
 	a.wb.Disconnect()
 	time.Sleep(150 * time.Millisecond)
 	os.Exit(0)
 
-	return UpdateApplyResult{OK: true, Message: fmt.Sprintf("Обновление до %s…", info.Latest)}
+	msg := "Обновление…"
+	if version != "" {
+		msg = fmt.Sprintf("Обновление до %s…", version)
+	}
+	return UpdateApplyResult{OK: true, Message: msg}
 }
 
 const updateApplyFlag = "--apply-update"
+
+const (
+	pendingUpdateExe     = "wdtt-new.exe"
+	pendingUpdateMetaFile = "pending.json"
+)
+
+type pendingUpdateRecord struct {
+	Version      string `json:"version"`
+	DownloadedAt string `json:"downloadedAt"`
+}
+
+func ensureUpdateDir() (string, error) {
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "WDTT", "update")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func savePendingUpdate(version string) error {
+	dir, err := ensureUpdateDir()
+	if err != nil {
+		return err
+	}
+	meta := pendingUpdateRecord{
+		Version:      strings.TrimSpace(version),
+		DownloadedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, pendingUpdateMetaFile+".tmp")
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, pendingUpdateMetaFile))
+}
+
+func clearPendingUpdate() {
+	dir, err := ensureUpdateDir()
+	if err != nil {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, pendingUpdateMetaFile))
+	_ = os.Remove(filepath.Join(dir, pendingUpdateExe))
+}
+
+func readPendingVersion() string {
+	dir, err := ensureUpdateDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, pendingUpdateMetaFile))
+	if err != nil {
+		return ""
+	}
+	var meta pendingUpdateRecord
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return ""
+	}
+	return meta.Version
+}
+
+func hasPendingUpdate() bool {
+	dir, err := ensureUpdateDir()
+	if err != nil {
+		return false
+	}
+	exe := filepath.Join(dir, pendingUpdateExe)
+	if err := verifyWindowsExe(exe); err != nil {
+		return false
+	}
+	return true
+}
 
 // MaybeRunUpdateApply handles the hidden self-update mode: this (new) exe was
 // started from the update dir and must replace the old exe and relaunch it.
@@ -277,9 +434,10 @@ func (a *App) setUpdateActive(active bool) {
 func (a *App) emitUpdateProgress(p UpdateProgress) {
 	a.updateMu.Lock()
 	a.updateProgress = p
-	if p.Phase == "downloading" || p.Phase == "applying" {
+	switch p.Phase {
+	case "downloading", "applying":
 		a.updateActive = true
-	} else if p.Phase == "error" {
+	case "error", "ready":
 		a.updateActive = false
 	}
 	a.updateMu.Unlock()
