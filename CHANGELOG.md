@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.174] — 2026-07-06
+
+### Fix — скачивание обновления через VPN / после disconnect
+- GitHub (`api.github.com`, `release-assets…`) — **bypass /32** мимо TUN, напрямую через Wi‑Fi.
+- TLS handshake timeout 90 s, 3 повтора; bind на LAN IP.
+- Работает даже если split-маршруты TUN ещё не сняты после отключения.
+
 ## [0.3.173] — 2026-07-06
 
 ### Perf — WB Stream / xray протокол (Windows)

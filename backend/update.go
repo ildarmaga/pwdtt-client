@@ -56,7 +56,8 @@ func (a *App) CheckForUpdate() UpdateInfo {
 		return out
 	}
 
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := newUpdateHTTPClient(12 * time.Second)
+	defer withUpdateDirectEgress()()
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/latest", nil)
 	if err != nil {
 		out.Error = err.Error()

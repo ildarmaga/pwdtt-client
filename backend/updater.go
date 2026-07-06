@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -288,15 +289,43 @@ func (a *App) emitUpdateProgress(p UpdateProgress) {
 	runtime.EventsEmit(a.ctx, "update_progress", p)
 }
 
-func (a *App) downloadFileWithProgress(url, dest string) error {
-	client := &http.Client{Timeout: 10 * time.Minute}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func (a *App) downloadFileWithProgress(rawURL, dest string) error {
+	host := ""
+	if u, err := url.Parse(rawURL); err == nil {
+		host = u.Hostname()
+	}
+	cleanup := withUpdateDirectEgress(host)
+	defer cleanup()
+
+	client := newUpdateHTTPClient(15 * time.Minute)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			a.emitUpdateProgress(UpdateProgress{
+				Phase:   "downloading",
+				Percent: 0,
+				Message: fmt.Sprintf("Повтор %d/3…", attempt),
+			})
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+		lastErr = a.downloadOnce(client, rawURL, dest, attempt == 1)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
+}
+
+func (a *App) downloadOnce(client *http.Client, rawURL, dest string, emitStart bool) error {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "WDTT-Desktop-updater")
 
-	a.emitUpdateProgress(UpdateProgress{Phase: "downloading", Percent: 0, Message: "Скачивание…"})
+	if emitStart {
+		a.emitUpdateProgress(UpdateProgress{Phase: "downloading", Percent: 0, Message: "Скачивание…"})
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -314,7 +343,7 @@ func (a *App) downloadFileWithProgress(url, dest string) error {
 		return err
 	}
 
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, 64*1024)
 	var written int64
 	lastEmit := time.Now()
 
