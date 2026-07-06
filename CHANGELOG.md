@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.171] — 2026-07-06
+
+### Fix — WB direct egress on Cyrillic Wi‑Fi (Windows)
+- xray: `autoOutboundsInterface` больше не `"auto"` — bind по **ifIndex** физического адаптера (кириллические имена Wi‑Fi ломали direct).
+- Direct outbound: `sockopt.interface` = ifIndex когда alias non-ASCII; убирает `Failed to find matching adapter name`.
+- Warmup: ipify помечен как proxy egress (не показатель direct-маршрута).
+
 ## [0.3.170] — 2026-07-06
 
 ### Fix — WB xray routing: direct (geosite/geoip) actually bypasses tunnel
