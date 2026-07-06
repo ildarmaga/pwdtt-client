@@ -125,3 +125,72 @@ func TestWBTrafficActive(t *testing.T) {
 		t.Fatal("expected active traffic")
 	}
 }
+
+// A shutdown watcher for run N must not clear (or emergency-stop) run N+1:
+// the user can reconnect while the old run is still tearing down.
+func TestAwaitShutdownRunSupersededGeneration(t *testing.T) {
+	m := &WBManager{}
+	oldGen := m.runGen.Add(1)
+	oldDone := make(chan struct{}) // old run never finishes in time
+
+	// A new run took over.
+	m.runGen.Add(1)
+	newCancel := func() {}
+	m.mu.Lock()
+	m.cancel = newCancel
+	m.done = make(chan struct{})
+	m.mu.Unlock()
+
+	finished := make(chan struct{})
+	go func() {
+		m.awaitShutdownRun(oldDone, oldGen, 10*time.Millisecond)
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("awaitShutdownRun did not return after deadline")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cancel == nil || m.done == nil {
+		t.Fatal("superseded watcher must not clear the new run's state")
+	}
+}
+
+func TestAwaitShutdownRunClearsOwnGeneration(t *testing.T) {
+	m := &WBManager{}
+	gen := m.runGen.Add(1)
+	done := make(chan struct{})
+	m.mu.Lock()
+	m.cancel = func() {}
+	m.done = done
+	m.mu.Unlock()
+
+	close(done) // run exits cleanly
+	m.awaitShutdownRun(done, gen, time.Second)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cancel != nil || m.done != nil {
+		t.Fatal("watcher must clear state of its own finished run")
+	}
+}
+
+func TestClearRunStaleGeneration(t *testing.T) {
+	m := &WBManager{}
+	oldGen := m.runGen.Add(1)
+	m.runGen.Add(1)
+	m.mu.Lock()
+	m.cancel = func() {}
+	m.mu.Unlock()
+
+	m.clearRun(oldGen)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cancel == nil {
+		t.Fatal("clearRun with stale generation must be a no-op")
+	}
+}

@@ -1,6 +1,19 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.188] — 2026-07-07
+
+### Fix — обновление не скачивается при активном VPN
+- **DirectBypassHosts** больше не берёт шлюз из текущего default route (при VPN это TUN `10.99.0.1`). Используется LAN-шлюз, сохранённый до поднятия туннеля (`RouteShell.Prepare` / `desktoptun.Start`), с fallback на non-TUN default route.
+- Скачивание exe с GitHub при подключённом VPN снова идёт мимо туннеля.
+
+### Fix — шторм реконнектов (smux desync `ack=0x7b`, «egress still direct»)
+- **awaitShutdown generation-scoped**: аварийный стоп «зависшего» старого рана больше не убивает свежеподнятый туннель (в логе: «принудительная остановка» через 6 с после успешного warmup). Watcher захватывает done/gen своего рана и не трогает новый.
+- **Run-exit handler не плодит реконнекты**: при отменённом ctx (Disconnect / reconnect / быстрый повторный Connect) выходящий ран больше не запускает параллельный dial поверх пользовательского.
+- **Авторетрай реконнекта** уступает, если пользовательский Connect уже поднял новый ран (`cancel != nil`).
+- **wbjrunner: setupGate** — teardown ждёт завершения bring-up xray (до 8 с), чтобы не снимать адаптер посреди запуска (оставался живой xray + split-маршруты для следующего рана).
+- **Одноразовый сброс legacy VP8-настроек** (`wbVp8Rev=2`): сохранённые `dualTrack=true` / 60/128 со старых версий сбрасываются на 30/64 dual-off — асимметрия с creator (30/64 dual-off) перегружала TURN и рвала туннель.
+- Диагностика: `remote not ready: ack=[123] err=%!w(<nil>)` → `smux desync ack=0x7b` (joiner прочитал байт JSON-запроса вместо ack — рассинхрон, а не занятый сервер).
 
 ## [0.3.187] — 2026-07-07
 

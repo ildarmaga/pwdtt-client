@@ -53,6 +53,8 @@ export interface AppSettings {
   tunnelProtocol: TunnelProtocol;
   /** WB Stream: dual-track (экран + камера) */
   wbDualTrack: boolean;
+  /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
+  wbVp8Rev: number;
   /** WB Stream: показывать вкладку логов */
   wbShowLogs: boolean;
   wbFps: number;
@@ -79,6 +81,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vkThroughTunnel: true,
   tunnelProtocol: 'vk',
   wbDualTrack: false,
+  wbVp8Rev: 2,
   wbShowLogs: true,
   wbFps: 30,
   wbBatch: 64,

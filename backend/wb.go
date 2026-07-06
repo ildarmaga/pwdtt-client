@@ -252,6 +252,13 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		if stopped {
 			return
 		}
+		// ctx canceled = deliberate teardown (Disconnect or reconnect), not a
+		// crash. A quick user re-Connect resets stop=false before this old run
+		// finishes exiting — without this check the handler would spawn a
+		// second dial racing the user's one (reconnect storm).
+		if ctx.Err() != nil {
+			return
+		}
 		// Tunnel died without user action — rebuild it from scratch.
 		m.emitLog("WARN", "[WB] Туннель завершился — пересоздаю подключение…")
 		runtime.EventsEmit(m.ctx, "state_changed", "connecting")
@@ -564,9 +571,10 @@ func (m *WBManager) reconnect(gen uint64) {
 		time.Sleep(5 * time.Second)
 		m.mu.Lock()
 		stopped = m.stop
+		active := m.cancel != nil // a user Connect won the race — leave it alone
 		cur := m.runGen.Load()
 		m.mu.Unlock()
-		if !stopped {
+		if !stopped && !active {
 			go m.reconnect(cur)
 		}
 	}
@@ -586,6 +594,12 @@ func (m *WBManager) Disconnect() {
 	// and the user's disconnect must abort it.
 	m.stop = true
 	cancel := m.cancel
+	// Capture the run being stopped under the same lock: if the user quickly
+	// reconnects, m.done/m.runGen will already belong to the NEW run by the
+	// time the watcher goroutine below starts — waiting on those would
+	// emergency-stop a healthy fresh tunnel at the deadline.
+	done := m.done
+	gen := m.runGen.Load()
 	m.mu.Unlock()
 
 	// UI must not block on gVisor/WebRTC teardown (can take 10–20s with active flows).
@@ -595,27 +609,36 @@ func (m *WBManager) Disconnect() {
 
 	if cancel != nil {
 		cancel()
-		go m.awaitShutdown(wbShutdownWait)
+		go m.awaitShutdownRun(done, gen, wbShutdownWait)
 	} else {
 		go emergencyStopWBTun()
 	}
 }
 
-// awaitShutdown waits for the runner goroutine to exit after Disconnect (or crash).
+// awaitShutdown waits for the current runner goroutine to exit (used before
+// dialing a new session).
 func (m *WBManager) awaitShutdown(max time.Duration) {
 	m.mu.Lock()
-	done := m.done
 	if m.cancel == nil {
 		m.mu.Unlock()
 		return
 	}
+	done := m.done
+	gen := m.runGen.Load()
 	m.mu.Unlock()
+	m.awaitShutdownRun(done, gen, max)
+}
 
+// awaitShutdownRun waits for a specific run (identified by its done channel and
+// generation) to exit. All teardown actions are generation-scoped: once a newer
+// run exists, this watcher must not touch shared TUN state — emergencyStopWBTun
+// is global and would kill the new tunnel.
+func (m *WBManager) awaitShutdownRun(done chan struct{}, gen uint64, max time.Duration) {
 	if done == nil {
-		emergencyStopWBTun()
-		m.mu.Lock()
-		m.cancel = nil
-		m.mu.Unlock()
+		if m.runGen.Load() == gen {
+			emergencyStopWBTun()
+			m.clearRun(gen)
+		}
 		return
 	}
 
@@ -626,23 +649,33 @@ func (m *WBManager) awaitShutdown(max time.Duration) {
 	for {
 		select {
 		case <-done:
-			m.mu.Lock()
-			m.cancel = nil
-			m.done = nil
-			m.mu.Unlock()
+			m.clearRun(gen)
 			return
 		case <-deadline:
+			if m.runGen.Load() != gen {
+				return // superseded by a newer run — never emergency-stop it
+			}
 			m.emitLog("WARN", "WB: принудительная остановка туннеля")
 			emergencyStopWBTun()
-			m.mu.Lock()
-			m.cancel = nil
-			m.done = nil
-			m.mu.Unlock()
+			m.clearRun(gen)
 			return
 		case <-tick.C:
+			if m.runGen.Load() != gen {
+				return
+			}
 			m.emitLog("INFO", "[WB] Ожидание завершения предыдущего подключения…")
 		}
 	}
+}
+
+// clearRun resets cancel/done only if gen is still the active generation.
+func (m *WBManager) clearRun(gen uint64) {
+	m.mu.Lock()
+	if m.runGen.Load() == gen {
+		m.cancel = nil
+		m.done = nil
+	}
+	m.mu.Unlock()
 }
 
 func (m *WBManager) onStatus(code string) {
