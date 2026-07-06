@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.170] — 2026-07-06
+
+### Fix — WB xray routing: direct (geosite/geoip) actually bypasses tunnel
+- **Правила UI**: domain + IP в одной строке → два xray-правила (ИЛИ), не AND — иначе `geosite:yandex` + `geoip:ru` не матчились без SNI.
+- **xray**: `domainMatcher: hybrid`, Loyalsoldier `geosite.dat`, direct outbound без bind на кириллический Wi‑Fi (`sendThrough` only).
+- В логе xray: `rules=N` и `[tun-in -> direct]` для yandex.ru после переподключения.
+
 ## [0.3.169] — 2026-07-06
 
 ### Feat — WB маршрутизация через xray TUN (Windows)

@@ -179,7 +179,7 @@ export default function WBRouting({ onClose }: Props) {
             </div>
 
             <p className="rt-hint">
-              Порядок сверху вниз. Signaling (stream.wb.ru, ICE) и финальное «всё → Proxy» добавляются автоматически.
+              Порядок сверху вниз. Domain и IP в одной строке UI → два правила (ИЛИ). Signaling и «всё → Proxy» — автоматически.
               Поддерживаются <code>geoip:ru</code>, <code>geosite:private</code>, CIDR, домены.
             </p>
 

@@ -113,25 +113,46 @@ export function presetRules(preset: Exclude<WBRoutingPreset, 'custom'>): WBRouti
 
 export const DEFAULT_WB_ROUTING_RULES = presetRules('global');
 
-export function ruleToXray(r: WBRoutingRule): Record<string, unknown> | null {
-  if (!r.enabled) return null;
-  const out: Record<string, unknown> = { type: 'field', outboundTag: r.outboundTag };
+export function ruleToXrayList(r: WBRoutingRule): Record<string, unknown>[] {
+  if (!r.enabled) return [];
   const domains = splitList(r.domains);
   const ips = splitList(r.ips);
+  const port = r.port.trim();
+  const network = r.network;
+  if (!domains.length && !ips.length && !port && !network) return [];
+
+  const base = (): Record<string, unknown> => {
+    const out: Record<string, unknown> = { type: 'field', outboundTag: r.outboundTag };
+    if (port) out.port = port;
+    if (network) out.network = network;
+    return out;
+  };
+
+  // xray ANDs domain+ip in one rule — split so geosite OR geoip works (v2rayN-style).
+  if (domains.length && ips.length) {
+    const d = base();
+    d.domain = domains;
+    const i = base();
+    i.ip = ips;
+    return [d, i];
+  }
+  const out = base();
   if (domains.length) out.domain = domains;
   if (ips.length) out.ip = ips;
-  if (r.port.trim()) out.port = r.port.trim();
-  if (r.network) out.network = r.network;
-  if (!domains.length && !ips.length && !r.port.trim() && !r.network) return null;
-  return out;
+  return [out];
+}
+
+/** @deprecated use ruleToXrayList */
+export function ruleToXray(r: WBRoutingRule): Record<string, unknown> | null {
+  const list = ruleToXrayList(r);
+  return list.length === 1 ? list[0] : list.length > 1 ? list[0] : null;
 }
 
 /** JSON array for wbxray CustomRulesJSON (signaling + default proxy added by backend). */
 export function rulesToXrayJSON(rules: WBRoutingRule[]): string {
   const arr: Record<string, unknown>[] = [];
   for (const r of rules) {
-    const x = ruleToXray(r);
-    if (x) arr.push(x);
+    arr.push(...ruleToXrayList(r));
   }
   return JSON.stringify(arr);
 }
