@@ -20,6 +20,10 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 	if strings.Contains(raw, "[lk-video] recv vp8 frame") {
 		return "", "", false
 	}
+	// xray access log — one line per connection; freezes UI when logs are open.
+	if strings.Contains(raw, "[xray]") && strings.Contains(raw, " accepted ") {
+		return "", "", false
+	}
 
 	if strings.Contains(raw, "guests cannot create rooms") {
 		return "ERROR", "[WB] Сервер не вещает в комнату — owner/creator offline, обратитесь к админу", true

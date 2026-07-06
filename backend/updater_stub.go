@@ -9,3 +9,7 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 func (a *App) IsTunnelRunning() bool {
 	return a.orch.IsRunning() || a.wb.IsRunning()
 }
+
+func (a *App) GetUpdateDownloadState() UpdateProgress { return UpdateProgress{} }
+
+func (a *App) IsUpdateDownloading() bool { return false }

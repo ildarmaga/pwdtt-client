@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,10 @@ type App struct {
 	quitting      atomic.Bool
 	showOnStartup bool
 	trayIcon      []byte
+
+	updateMu       sync.Mutex
+	updateProgress UpdateProgress
+	updateActive   bool
 }
 
 func NewApp(trayIcon []byte) *App { return &App{trayIcon: trayIcon} }

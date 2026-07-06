@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.172] — 2026-07-06
+
+### Fix — обновление и отзывчивость UI
+- **Обновление**: прогресс в глобальном store — не теряется при закрытии Настроек; нельзя запустить второе скачивание.
+- **Disconnect → Install**: после отключения WB обновление доступно сразу (не ждать 25 с teardown).
+- **Логи**: xray access log (`accepted tcp/udp`) больше не заливает UI — WebView не тормозит.
+
 ## [0.3.171] — 2026-07-06
 
 ### Fix — WB direct egress on Cyrillic Wi‑Fi (Windows)

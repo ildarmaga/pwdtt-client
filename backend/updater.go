@@ -22,8 +22,25 @@ func (a *App) IsTunnelRunning() bool {
 	return a.orch.IsRunning() || a.wb.IsRunning()
 }
 
+// GetUpdateDownloadState returns the last emitted update progress (for UI re-sync).
+func (a *App) GetUpdateDownloadState() UpdateProgress {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	return a.updateProgress
+}
+
+// IsUpdateDownloading reports whether a download/apply is in progress.
+func (a *App) IsUpdateDownloading() bool {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	return a.updateActive
+}
+
 // DownloadAndApplyUpdate downloads the latest Windows exe and schedules replace+restart.
 func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
+	if a.IsUpdateDownloading() {
+		return UpdateApplyResult{Message: "Обновление уже скачивается"}
+	}
 	if a.IsTunnelRunning() {
 		return UpdateApplyResult{Message: "Сначала отключитесь — нажмите кнопку питания на главном экране"}
 	}
@@ -57,6 +74,8 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 		return UpdateApplyResult{Message: err.Error()}
 	}
 	newExe := filepath.Join(updateDir, "wdtt-new.exe")
+	a.setUpdateActive(true)
+	defer a.setUpdateActive(false)
 	if err := a.downloadFileWithProgress(url, newExe); err != nil {
 		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
 		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
@@ -245,7 +264,24 @@ func verifyWindowsExe(path string) error {
 	return nil
 }
 
+func (a *App) setUpdateActive(active bool) {
+	a.updateMu.Lock()
+	a.updateActive = active
+	if !active && a.updateProgress.Phase == "downloading" {
+		a.updateProgress = UpdateProgress{}
+	}
+	a.updateMu.Unlock()
+}
+
 func (a *App) emitUpdateProgress(p UpdateProgress) {
+	a.updateMu.Lock()
+	a.updateProgress = p
+	if p.Phase == "downloading" || p.Phase == "applying" {
+		a.updateActive = true
+	} else if p.Phase == "error" {
+		a.updateActive = false
+	}
+	a.updateMu.Unlock()
 	if a.ctx == nil {
 		return
 	}

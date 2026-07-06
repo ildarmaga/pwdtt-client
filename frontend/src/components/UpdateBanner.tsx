@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { IconDownload, IconX } from '@tabler/icons-react';
-import { CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { CheckForUpdate, DownloadAndApplyUpdate, GetUpdateDownloadState, IsUpdateDownloading } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
-import type { UpdateProgressEvent } from '../lib/types';
+import { updateStore } from '../lib/stores/updateStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 
 const DISMISS_KEY = 'pwdtt_update_dismiss';
@@ -11,13 +10,25 @@ const DISMISS_KEY = 'pwdtt_update_dismiss';
 export default function UpdateBanner() {
   const [info, setInfo] = useState<backend.UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [progressMsg, setProgressMsg] = useState('');
+  const [updateSnap, setUpdateSnap] = useState(() => updateStore.get());
   const [hint, setHint] = useState('');
   const [tunnelState, setTunnelState] = useState(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
-  const locked = tunnelState === 'connected' || tunnelState === 'connecting';
+  useEffect(() => updateStore.subscribe(setUpdateSnap), []);
+  useEffect(() => {
+    void (async () => {
+      try {
+        if (await IsUpdateDownloading()) {
+          const st = await GetUpdateDownloadState();
+          updateStore.syncFromBackend(st);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, []);
+  const locked = tunnelState === 'connected' || tunnelState === 'connecting' || tunnelState === 'disconnecting';
+  const applying = updateSnap.phase === 'downloading' || updateSnap.phase === 'applying';
+  const progress = updateSnap.percent;
+  const progressMsg = updateSnap.message;
 
   useEffect(() => {
     void CheckForUpdate().then(res => {
@@ -33,15 +44,6 @@ export default function UpdateBanner() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    const off = EventsOn('update_progress', (p: UpdateProgressEvent) => {
-      setProgress(p?.percent ?? 0);
-      setProgressMsg(p?.message ?? '');
-      if (p?.phase === 'error') setApplying(false);
-    });
-    return () => { off?.(); };
-  }, []);
-
   if (!info?.hasUpdate || dismissed) return null;
 
   const installUpdate = async () => {
@@ -49,19 +51,21 @@ export default function UpdateBanner() {
       setHint('Сначала отключитесь — нажмите кнопку питания на главном экране');
       return;
     }
+    if (updateStore.isActive()) {
+      setHint('Обновление уже скачивается — откройте Настройки');
+      return;
+    }
     setHint('');
-    setApplying(true);
-    setProgress(0);
-    setProgressMsg('Скачивание…');
+    updateStore.startDownload();
     try {
       const res = await DownloadAndApplyUpdate();
       if (!res.ok) {
         setHint(res.message || 'Ошибка обновления');
-        setApplying(false);
+        updateStore.finish();
       }
     } catch (e) {
       setHint(String(e));
-      setApplying(false);
+      updateStore.finish();
     }
   };
 

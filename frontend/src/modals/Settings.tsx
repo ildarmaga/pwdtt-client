@@ -4,13 +4,17 @@ import Hash from './Hash';
 import { settingsStore, serverStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
-import type { AppSettings, TunnelProtocol, Server, UpdateProgressEvent } from '../lib/types';
+import { updateStore } from '../lib/stores/updateStore';
+import type { AppSettings, TunnelProtocol, Server } from '../lib/types';
 import { METRICS_REFRESH_OPTIONS } from '../lib/types';
 import { useMobileUI } from '../lib/useMobileUI';
 import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
-import { SetTrayEnabled, SetAutoStart, GetAutoStart, GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies, CheckForUpdate, DownloadAndApplyUpdate } from '../../wailsjs/go/backend/App';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import {
+  SetTrayEnabled, SetAutoStart, GetAutoStart,
+  GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
+  CheckForUpdate, DownloadAndApplyUpdate, GetUpdateDownloadState, IsUpdateDownloading,
+} from '../../wailsjs/go/backend/App';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
 
@@ -43,7 +47,7 @@ export default function Settings({ onClose }: Props) {
   const mtuValid = (() => { const n = Number(mtuRaw); return Number.isInteger(n) && n >= 576 && n <= 1500; })();
   const [tunnelState, setTunnelState] = useState(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
-  const locked = tunnelState === 'connected' || tunnelState === 'connecting';
+  const locked = tunnelState === 'connected' || tunnelState === 'connecting' || tunnelState === 'disconnecting';
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedConfirm, setAdvancedConfirm] = useState(false);
   const [vkCookies, setVkCookies] = useState('');
@@ -53,9 +57,11 @@ export default function Settings({ onClose }: Props) {
   const [updateMsg, setUpdateMsg] = useState('');
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<backend.UpdateInfo | null>(null);
-  const [updateApplying, setUpdateApplying] = useState(false);
-  const [updateProgress, setUpdateProgress] = useState(0);
-  const [updateProgressMsg, setUpdateProgressMsg] = useState('');
+  const [updateSnap, setUpdateSnap] = useState(() => updateStore.get());
+  useEffect(() => updateStore.subscribe(setUpdateSnap), []);
+  const updateApplying = updateSnap.phase === 'downloading' || updateSnap.phase === 'applying';
+  const updateProgress = updateSnap.percent;
+  const updateProgressMsg = updateSnap.message;
   const [vkAuthOpen, setVkAuthOpen] = useState(false);
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
@@ -85,12 +91,14 @@ export default function Settings({ onClose }: Props) {
   useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
 
   useEffect(() => {
-    const off = EventsOn('update_progress', (p: UpdateProgressEvent) => {
-      setUpdateProgress(p?.percent ?? 0);
-      setUpdateProgressMsg(p?.message ?? '');
-      if (p?.phase === 'error') setUpdateApplying(false);
-    });
-    return () => { off?.(); };
+    void (async () => {
+      try {
+        if (await IsUpdateDownloading()) {
+          const st = await GetUpdateDownloadState();
+          updateStore.syncFromBackend(st);
+        }
+      } catch { /* dev / old bindings */ }
+    })();
   }, []);
 
   useEffect(() => settingsStore.subscribe(s => {
@@ -309,9 +317,11 @@ export default function Settings({ onClose }: Props) {
                       setUpdateMsg('Сначала отключитесь — нажмите кнопку питания на главном экране');
                       return;
                     }
-                    setUpdateApplying(true);
-                    setUpdateProgress(0);
-                    setUpdateProgressMsg('Скачивание…');
+                    if (updateStore.isActive()) {
+                      setUpdateMsg('Обновление уже скачивается');
+                      return;
+                    }
+                    updateStore.startDownload();
                     setUpdateMsg('');
                     try {
                       const res = await DownloadAndApplyUpdate();
@@ -319,11 +329,11 @@ export default function Settings({ onClose }: Props) {
                         setUpdateMsg(res.message || 'Перезапуск…');
                       } else {
                         setUpdateMsg(res.message || 'Ошибка');
-                        setUpdateApplying(false);
+                        updateStore.finish();
                       }
                     } catch (e) {
                       setUpdateMsg(String(e));
-                      setUpdateApplying(false);
+                      updateStore.finish();
                     }
                   }}
                 >

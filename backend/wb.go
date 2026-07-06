@@ -116,7 +116,12 @@ func NewWBManager(ctx context.Context) *WBManager {
 func (m *WBManager) IsRunning() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cancel != nil
+	// User Disconnect sets stop=true; teardown may take up to wbShutdownWait but
+	// updates/install must be allowed immediately after UI shows "idle".
+	if m.cancel == nil || m.stop {
+		return false
+	}
+	return true
 }
 
 func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool) error {

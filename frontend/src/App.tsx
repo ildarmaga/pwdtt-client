@@ -12,6 +12,8 @@ import { connectionErrorStore } from './lib/stores/connectionErrorStore';
 import { parseConnectionError } from './lib/utils/connectionErrors';
 import { logStore } from './lib/stores/logStore';
 import { tunnelStore } from './lib/stores/tunnelStore';
+import { updateStore } from './lib/stores/updateStore';
+import type { UpdateProgressEvent } from './lib/types';
 import { activeServerStore } from './lib/stores/activeServerStore';
 import { tunnelStatsStore } from './lib/stores/tunnelStatsStore';
 import type { LogLevel } from './lib/stores/logStore';
@@ -108,6 +110,9 @@ function useWailsEvents() {
       }),
       EventsOn('event', (name: unknown) => {
         if (name === 'wg_config') tunnelStore.set('connected');
+      }),
+      EventsOn('update_progress', (p: UpdateProgressEvent) => {
+        updateStore.applyEvent(p);
       }),
     ];
     return () => offs.forEach(off => off());
