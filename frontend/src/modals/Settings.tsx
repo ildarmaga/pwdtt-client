@@ -27,15 +27,53 @@ const PROTOCOL_BADGE: Record<TunnelProtocol, { label: string; color: string }> =
   wb: { label: 'WB', color: '#6d6aac' },
 };
 
-function Stepper({ value, min, max, step, disabled, onChange }: {
+function NumberStepper({ value, min, max, step, disabled, onChange }: {
   value: number; min: number; max: number; step: number;
   disabled?: boolean; onChange: (v: number) => void;
 }) {
+  const [raw, setRaw] = useState(String(value));
+
+  useEffect(() => {
+    setRaw(String(value));
+  }, [value]);
+
+  const commit = (text: string) => {
+    const n = Number(text);
+    const clamped = Number.isFinite(n)
+      ? Math.max(min, Math.min(max, Math.round(n)))
+      : value;
+    setRaw(String(clamped));
+    if (clamped !== value) {
+      onChange(clamped);
+    }
+  };
+
+  const bump = (delta: number) => {
+    const next = Math.max(min, Math.min(max, value + delta));
+    setRaw(String(next));
+    onChange(next);
+  };
+
   return (
     <div className={`st-stepper${disabled ? ' st-stepper--disabled' : ''}`}>
-      <button type="button" disabled={disabled || value <= min} onClick={() => onChange(Math.max(min, value - step))}>−</button>
-      <span>{value}</span>
-      <button type="button" disabled={disabled || value >= max} onClick={() => onChange(Math.min(max, value + step))}>+</button>
+      <button type="button" disabled={disabled || value <= min} onClick={() => bump(-step)}>−</button>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        className="st-num-input st-num-input--stepper"
+        value={raw}
+        onChange={e => setRaw(e.target.value)}
+        onBlur={() => commit(raw)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <button type="button" disabled={disabled || value >= max} onClick={() => bump(step)}>+</button>
     </div>
   );
 }
@@ -118,6 +156,14 @@ export default function Settings({ onClose }: Props) {
     setSettings(s => ({ ...s, [key]: value }));
   };
 
+  const updateAndSave = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings(s => {
+      const next = { ...s, [key]: value };
+      settingsStore.save(next);
+      return next;
+    });
+  };
+
   const handleClose = () => {
     const n = Number(mtuRaw);
     const mtu = mtuValid ? n : settings.mtu;
@@ -159,6 +205,9 @@ export default function Settings({ onClose }: Props) {
         .st-stepper button:disabled { opacity: 0.35; cursor: default; }
         .st-stepper span { min-width: 28px; text-align: center; font-size: 14px; font-weight: 600; }
         .st-stepper--disabled { opacity: 0.45; pointer-events: none; }
+        .st-num-input--stepper { width: 56px; padding: 5px 6px; text-align: center; -moz-appearance: textfield; }
+        .st-num-input--stepper::-webkit-outer-spin-button,
+        .st-num-input--stepper::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .st-field { margin-top: 8px; }
         .st-field label { display: block; font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
         .st-input {
@@ -527,21 +576,21 @@ export default function Settings({ onClose }: Props) {
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <span>FPS</span>
-            <Stepper
+            <NumberStepper
               value={settings.wbFps}
               min={1} max={120} step={1}
               disabled={locked}
-              onChange={v => update('wbFps', v)}
+              onChange={v => updateAndSave('wbFps', v)}
             />
           </div>
 
           <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
             <span>Batch</span>
-            <Stepper
+            <NumberStepper
               value={settings.wbBatch}
               min={1} max={256} step={1}
               disabled={locked}
-              onChange={v => update('wbBatch', v)}
+              onChange={v => updateAndSave('wbBatch', v)}
             />
           </div>
 

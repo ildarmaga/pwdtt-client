@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.187] — 2026-07-07
+
+### Fix — WB медленный/нестабильный трафик на TURN (speedtest timeout)
+- **Клиент v0.3.187** включает все relay-фиксы (v0.3.184–186): reorder gap flush, creator smux resync, KCP congestion control + bounded send window (`snd=1024`). На v0.3.184 joiner работал со старым KCP (`snd=2048`, без nc) — asymmetry с сервером.
+- **Pacing по умолчанию 30/64**, dual-track **выкл** — 60/128 + dualTrack перегружали lossy TURN-носитель (RTT 300–800 ms, провалы 0 B/s). Creator (сервер) тоже на 30/64.
+- **Настройки VP8**: поля FPS/Batch редактируемые (ввод с клавиатуры), сохранение сразу; убрана автомиграция 30/64→60/128.
+
 ## [0.3.186] — 2026-07-07
 
 ### Fix — WB bufferbloat: RTT растёт до 2–4 с и скорость падает в 0
