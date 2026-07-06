@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.181] — 2026-07-06
+
+### Fix — WB трафик не идёт после connect (KCP restart storm)
+- **Joiner**: xray/VPN поднимается через 5 с после WebRTC — после типичного ICE sub-offer rebind.
+- **Creator (сервер)**: убран лишний `RestartLink` после `SwapTunnel`; debounce peer-epoch restart 3 с.
+- Устраняет `remote not ready` / warmup ipify timeout при connect.
+
 ## [0.3.180] — 2026-07-06
 
 ### Fix — WB UI «зависает» при подключении
