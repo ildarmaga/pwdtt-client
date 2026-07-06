@@ -2,6 +2,11 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.185] — 2026-07-07
+
+### Fix — WB туннель мёртв после рестарта сервера (`closed pipe`, KCP rtt=200ms)
+- **Creator (сервер)**: `joinerNeedsKCPRestart` теперь инициализируется `true`. После рестарта сервера комната возобновлялась с `activeCreator`, но флаг был `false` — первый пришедший joiner (свежий smux-клиент) не вызывал `RestartLink`, creator держал старый smux-сервер → `OpenStream: read/write on closed pipe`, KCP голодал на `rtt=200ms` бесконечно. Теперь первый joiner после любого (ре)старта всегда пересинхронизирует smux; `OnTunnelLost` перевзводит флаг для последующих reconnect.
+
 ## [0.3.184] — 2026-07-07
 
 ### Fix — WB медленная/рваная загрузка (провалы `↓ 0 B/s` по 3–4 с)
