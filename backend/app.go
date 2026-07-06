@@ -58,15 +58,6 @@ func (a *App) Startup(ctx context.Context) {
 			bringMainWindowToFront()
 		}()
 	}
-	go func() {
-		time.Sleep(2 * time.Second)
-		if a.quitting.Load() || a.IsTunnelRunning() {
-			return
-		}
-		if a.HasPendingUpdate() {
-			_ = a.TryApplyPendingUpdate()
-		}
-	}()
 }
 
 func (a *App) updateTray(connected bool, rx, tx int64, workers int32) {

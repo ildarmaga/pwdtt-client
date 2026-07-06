@@ -177,7 +177,6 @@ func (a *App) applyDownloadedUpdate(newExe, version string) UpdateApplyResult {
 		return UpdateApplyResult{Message: "Не удалось запустить обновление: " + err.Error()}
 	}
 
-	clearPendingUpdate()
 	a.quitting.Store(true)
 	a.orch.Stop()
 	a.wb.Disconnect()
@@ -265,6 +264,17 @@ func hasPendingUpdate() bool {
 	if err := verifyWindowsExe(exe); err != nil {
 		return false
 	}
+	pending := strings.TrimSpace(readPendingVersion())
+	cur := strings.TrimSpace(AppVersion)
+	if pending == "" || cur == "" || cur == "dev" {
+		clearPendingUpdate()
+		return false
+	}
+	if !versionLess(cur, pending) {
+		// Stale package from a completed or manual update — do not re-apply.
+		clearPendingUpdate()
+		return false
+	}
 	return true
 }
 
@@ -343,6 +353,12 @@ func runUpdateApply(pid int, dest string) {
 		return
 	}
 	logln("relaunch ok")
+	cleanupUpdateArtifacts(filepath.Dir(src))
+}
+
+func cleanupUpdateArtifacts(dir string) {
+	_ = os.Remove(filepath.Join(dir, pendingUpdateExe))
+	_ = os.Remove(filepath.Join(dir, pendingUpdateMetaFile))
 }
 
 // waitProcessExit polls until the pid disappears or the timeout passes.
