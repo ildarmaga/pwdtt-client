@@ -59,6 +59,14 @@ export const settingsStore = {
     if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 256) {
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
     }
+    // Migrate the stale old default pacing (30/64) to the current faster
+    // defaults (60/128) so the joiner uplink matches the creator and does not
+    // throttle download. Only the exact legacy pair is bumped — a user who
+    // deliberately picked other values keeps them.
+    if (merged.wbFps === 30 && merged.wbBatch === 64) {
+      merged.wbFps = DEFAULT_SETTINGS.wbFps;
+      merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
+    }
     if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
       merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;
     }
