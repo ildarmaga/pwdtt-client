@@ -78,7 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metricsRefreshSec: 0,
   vkThroughTunnel: true,
   tunnelProtocol: 'vk',
-  wbDualTrack: true,
+  wbDualTrack: false,
   wbShowLogs: true,
   wbFps: 60,
   wbBatch: 128,

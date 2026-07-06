@@ -77,7 +77,22 @@ export default function Logs() {
         .icon-btn { width: 32px; height: 32px; border: 0.5px solid var(--border); border-radius: 8px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background 0.12s, border-color 0.12s, color 0.12s; flex-shrink: 0; }
         .logs-toolbar--compact .icon-btn { width: 28px; height: 28px; border-radius: 7px; }
         .icon-btn:hover { background: var(--bg-3); border-color: var(--text-3); color: var(--text); }
-        .logs-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0; }
+        .logs-list {
+          flex: 1; min-height: 0; overflow-y: auto; padding: 6px 4px 6px 0;
+          scrollbar-gutter: stable; scrollbar-width: thin;
+          scrollbar-color: color-mix(in srgb, var(--text-3) 55%, transparent) transparent;
+        }
+        .logs-list::-webkit-scrollbar { width: 8px; }
+        .logs-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+        .logs-list::-webkit-scrollbar-thumb {
+          background: color-mix(in srgb, var(--text-3) 45%, transparent);
+          border-radius: 8px; border: 2px solid transparent; background-clip: padding-box;
+        }
+        .logs-list::-webkit-scrollbar-thumb:hover {
+          background: color-mix(in srgb, var(--text-3) 70%, transparent);
+          background-clip: padding-box;
+        }
+        .logs-list::-webkit-scrollbar-corner { background: transparent; }
         .log-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 10px; font-size: 12px; line-height: 1.45; }
         .logs-card--compact .log-row { padding: 3px 8px; font-size: 11px; gap: 6px; }
         .log-row:hover { background: var(--bg-2); }

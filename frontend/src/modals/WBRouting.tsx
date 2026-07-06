@@ -5,13 +5,10 @@ import { tunnelStore } from '../lib/stores/tunnelStore';
 import type { AppSettings } from '../lib/types';
 import {
   type WBRoutingRule,
-  type WBRoutingPreset,
   type WBOutboundTag,
   DEFAULT_WB_ROUTING_RULES,
   newRuleId,
-  presetRules,
   OUTBOUND_LABELS,
-  PRESET_LABELS,
 } from '../lib/wbRouting';
 
 interface Props {
@@ -38,7 +35,6 @@ export default function WBRouting({ onClose }: Props) {
       ? [...settingsStore.get().wbRoutingRules!]
       : [...DEFAULT_WB_ROUTING_RULES],
   );
-  const [preset, setPreset] = useState<WBRoutingPreset>(() => settingsStore.get().wbRoutingMode);
   const [editId, setEditId] = useState<string | null>(null);
   const [tunnelState, setTunnelState] = useState(() => tunnelStore.get());
   useEffect(() => tunnelStore.subscribe(setTunnelState), []);
@@ -47,7 +43,7 @@ export default function WBRouting({ onClose }: Props) {
   const save = () => {
     const next: AppSettings = {
       ...settings,
-      wbRoutingMode: preset,
+      wbRoutingMode: 'custom',
       wbRoutingRules: rules,
     };
     settingsStore.save(next);
@@ -55,19 +51,8 @@ export default function WBRouting({ onClose }: Props) {
     onClose();
   };
 
-  const applyPreset = (p: Exclude<WBRoutingPreset, 'custom'>) => {
-    if (locked) return;
-    if (rules.length > 1 && !window.confirm(`Заменить ${rules.length} правил шаблоном «${PRESET_LABELS[p]}»?`)) {
-      return;
-    }
-    setPreset(p);
-    setRules(presetRules(p));
-    setEditId(null);
-  };
-
   const updateRule = (id: string, patch: Partial<WBRoutingRule>) => {
     setRules(rs => rs.map(r => (r.id === id ? { ...r, ...patch } : r)));
-    setPreset('custom');
   };
 
   const moveRule = (idx: number, dir: -1 | 1) => {
@@ -78,20 +63,17 @@ export default function WBRouting({ onClose }: Props) {
       [copy[idx], copy[j]] = [copy[j], copy[idx]];
       return copy;
     });
-    setPreset('custom');
   };
 
   const removeRule = (id: string) => {
     setRules(rs => rs.filter(r => r.id !== id));
     if (editId === id) setEditId(null);
-    setPreset('custom');
   };
 
   const addRule = () => {
     const r = emptyRule();
     setRules(rs => [...rs, r]);
     setEditId(r.id);
-    setPreset('custom');
   };
 
   const editing = editId ? rules.find(r => r.id === editId) : null;
@@ -106,12 +88,11 @@ export default function WBRouting({ onClose }: Props) {
         .rt-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
         .rt-close { border: none; background: transparent; color: var(--text-3); cursor: pointer; padding: 4px; border-radius: 8px; }
         .rt-close:hover { color: var(--text); background: var(--border); }
-        .rt-body { overflow: auto; flex: 1; padding: 12px 16px 16px; }
-        .rt-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-        .rt-preset { font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; }
-        .rt-preset--active { background: color-mix(in srgb, #6d6aac 22%, transparent); border-color: #6d6aac; color: var(--text); }
-        .rt-preset:disabled { opacity: 0.45; cursor: not-allowed; }
-        .rt-hint { font-size: 11px; color: var(--text-3); margin-bottom: 10px; line-height: 1.45; }
+        .rt-body { overflow: auto; flex: 1; padding: 12px 16px 16px; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .rt-body::-webkit-scrollbar { width: 6px; }
+        .rt-body::-webkit-scrollbar-track { background: transparent; }
+        .rt-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+        .rt-body::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
         .rt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
         .rt-table { width: 100%; border-collapse: collapse; font-size: 11px; min-width: 560px; }
         .rt-table th { text-align: left; padding: 8px 8px; color: var(--text-3); font-weight: 600; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--border) 40%, transparent); white-space: nowrap; }
@@ -160,28 +141,6 @@ export default function WBRouting({ onClose }: Props) {
             {locked && (
               <div className="rt-locked">Туннель активен — правила применятся при следующем подключении.</div>
             )}
-
-            <div className="rt-presets">
-              {(Object.keys(PRESET_LABELS) as Exclude<WBRoutingPreset, 'custom'>[]).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  className={`rt-preset${preset === p ? ' rt-preset--active' : ''}`}
-                  disabled={locked}
-                  onClick={() => applyPreset(p)}
-                >
-                  {PRESET_LABELS[p]}
-                </button>
-              ))}
-              {preset === 'custom' && (
-                <span className="rt-preset rt-preset--active" style={{ cursor: 'default' }}>Custom</span>
-              )}
-            </div>
-
-            <p className="rt-hint">
-              Порядок сверху вниз. Domain и IP в одной строке UI → два правила (ИЛИ). Signaling и «всё → Proxy» — автоматически.
-              Поддерживаются <code>geoip:ru</code>, <code>geosite:private</code>, CIDR, домены.
-            </p>
 
             <div className="rt-table-wrap">
               <table className="rt-table">
