@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/ildarmaga/whitelist-bypass/relay/wbjrunner"
+	"github.com/ildarmaga/whitelist-bypass/relay/wbxray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	goruntime "runtime"
 )
 
 const (
@@ -79,6 +81,8 @@ type WBManager struct {
 	runGen atomic.Uint64
 
 	room           string
+	routingMode    string
+	routingPayload string
 	vp8Fps         int
 	vp8Batch       int
 	vp8DualTrack   bool
@@ -115,7 +119,7 @@ func (m *WBManager) IsRunning() bool {
 	return m.cancel != nil
 }
 
-func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int, dualTrack bool) error {
+func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -126,12 +130,12 @@ func (m *WBManager) Connect(room string, _ string, vp8Fps, vp8Batch int, dualTra
 	m.vp8Batch = vp8Batch
 	m.vp8DualTrack = dualTrack
 	m.mu.Unlock()
-	return m.connect(room)
+	return m.connect(room, routingPayload)
 }
 
 // connect dials without resetting the user-stop flag, so a user Disconnect
 // racing with auto-reconnect always wins.
-func (m *WBManager) connect(room string) error {
+func (m *WBManager) connect(room, routingPayload string) error {
 	m.awaitShutdown(wbShutdownWait)
 
 	m.mu.Lock()
@@ -144,6 +148,13 @@ func (m *WBManager) connect(room string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
+	mode, customRules, err := wbxray.ParseConnectPayload(routingPayload)
+	if err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("маршрутизация: %w", err)
+	}
+	m.routingMode = string(mode)
+	m.routingPayload = routingPayload
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
 	m.lastHealthy = time.Time{}
@@ -175,19 +186,38 @@ func (m *WBManager) connect(room string) error {
 		return fmt.Errorf("wintun.dll: %w", err)
 	}
 
+	useXray := goruntime.GOOS == "windows"
+	var xrayBin string
+	if useXray {
+		if err := prepareWBXray(); err != nil {
+			m.finishRun(cancel, done)
+			return fmt.Errorf("xray: %w", err)
+		}
+		var xerr error
+		xrayBin, xerr = xrayBinaryPath()
+		if xerr != nil {
+			m.finishRun(cancel, done)
+			return xerr
+		}
+	}
+
 	m.emitLog("INFO", "Подключение WB Stream…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	go func() {
 		defer close(done)
 		cfg := wbjrunner.Config{
-			Room:        room,
-			DisplayName: "WDTT",
-			UseTUN:      true,
-			VP8FPS:      vp8Fps,
-			VP8Batch:    vp8Batch,
-			DualTrack:   vp8DualTrack,
-			RecoverCh:   recoverCh,
+			Room:              room,
+			DisplayName:       "WDTT",
+			UseTUN:            true,
+			UseXray:           useXray,
+			XrayBinary:        xrayBin,
+			RoutingMode:       mode,
+			CustomRoutingJSON: customRules,
+			VP8FPS:            vp8Fps,
+			VP8Batch:          vp8Batch,
+			DualTrack:         vp8DualTrack,
+			RecoverCh:         recoverCh,
 			LogFn: func(format string, args ...any) {
 				m.logRelay(fmt.Sprintf(format, args...))
 			},
@@ -489,6 +519,7 @@ func (m *WBManager) reconnect(gen uint64) {
 		return
 	}
 	room := m.room
+	payload := m.routingPayload
 	cancel := m.cancel
 	m.mu.Unlock()
 
@@ -505,7 +536,7 @@ func (m *WBManager) reconnect(gen uint64) {
 	}
 
 	m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
-	if err := m.connect(room); err != nil {
+	if err := m.connect(room, payload); err != nil {
 		m.mu.Lock()
 		stopped = m.stop
 		m.mu.Unlock()

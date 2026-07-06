@@ -2,6 +2,13 @@
 # Changelog — PWDTT Client (WDTT Desktop)
 
 
+## [0.3.169] — 2026-07-06
+
+### Feat — WB маршрутизация через xray TUN (Windows)
+- Вернул xray-core embed + geoip/geosite, UI «Маршрутизация WB» (пресеты global / bypass_lan / ru_direct / custom).
+- WB на Windows: xray TUN → SOCKS → joiner (вместо gVisor netstack); правила v2rayN-style.
+- `ConnectWB` снова принимает routing payload; переподключение сохраняет выбранный режим.
+
 ## [0.3.168] — 2026-07-06
 
 ### Fix — логи: буфер 500 строк
