@@ -60,9 +60,10 @@ export const settingsStore = {
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
     }
     // Одноразовый сброс legacy VP8-настроек (dualTrack=true / 60/128 из старых
-    // версий перегружали TURN и роняли туннель). Пользовательский выбор после
-    // сброса сохраняется — ревизия штампуется в localStorage.
-    if (merged.wbVp8Rev !== DEFAULT_SETTINGS.wbVp8Rev) {
+    // версий перегружали TURN и роняли туннель). Сравниваем СОХРАНЁННУЮ ревизию,
+    // а не merged (в merged всегда дефолтная rev из DEFAULT_SETTINGS → проверка
+    // никогда не срабатывала бы). Пользовательский выбор после сброса сохраняется.
+    if (saved.wbVp8Rev !== DEFAULT_SETTINGS.wbVp8Rev) {
       merged.wbDualTrack = DEFAULT_SETTINGS.wbDualTrack;
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
