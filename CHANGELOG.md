@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.191] — 2026-07-07
+
+### Fix — медленный/пилообразный трафик на lossy TURN (adaptive KCP cc)
+- **relay/wbtunnel**: delay-based congestion control — `nc=1` (nocwnd) когда RTT у пола (путь свободен, случайные потери TURN не схлопывают окно); `nc=0` когда RTT раздувается (реальная очередь).
+- RTT floor с мгновенным snap-down и медленным creep-up; tuneLoop 1 с (быстрее реакция на dip).
+- Тесты: `kcp_cc_test.go` — `kcpShouldDisableCC`, `updateRTTFloor`.
+
 ## [0.3.190] — 2026-07-07
 
 ### Fix — регрессия 0.3.189: с dualTrack=false трафик не шёл вообще
