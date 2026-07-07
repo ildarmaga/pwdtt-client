@@ -315,7 +315,10 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
-      await WailsConnectWB(room, buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules), s.wbFps, s.wbBatch, s.wbDualTrack);
+      // Dual-track обязателен: сервер-creator всегда публикует 2 VP8-трека и шардит
+      // KCP по ним (seq-префикс). Одиночный трек у joiner ломает дефрейминг в обе
+      // стороны → трафик не идёт. Жёстко шлём true, игнорируя сохранённое значение.
+      await WailsConnectWB(room, buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules), s.wbFps, s.wbBatch, true);
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);

@@ -59,12 +59,12 @@ export const settingsStore = {
     if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 256) {
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
     }
-    // Одноразовый сброс legacy VP8-настроек (dualTrack=true / 60/128 из старых
-    // версий перегружали TURN и роняли туннель). Сравниваем СОХРАНЁННУЮ ревизию,
-    // а не merged (в merged всегда дефолтная rev из DEFAULT_SETTINGS → проверка
-    // никогда не срабатывала бы). Пользовательский выбор после сброса сохраняется.
+    // Dual-track ОБЯЗАТЕЛЕН: сервер-creator всегда шлёт 2 VP8-трека (sharded KCP).
+    // Одиночный трек ломает дефрейминг → трафик не идёт. rev=3 чинит регрессию
+    // 0.3.189 (которая насильно ставила dualTrack=false и убивала туннель) и
+    // заодно нормализует пейсинг на 30/64. Сравниваем СОХРАНЁННУЮ ревизию.
     if (saved.wbVp8Rev !== DEFAULT_SETTINGS.wbVp8Rev) {
-      merged.wbDualTrack = DEFAULT_SETTINGS.wbDualTrack;
+      merged.wbDualTrack = true;
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
       merged.wbVp8Rev = DEFAULT_SETTINGS.wbVp8Rev;
