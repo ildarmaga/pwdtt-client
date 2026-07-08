@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.193] — 2026-07-08
+
+### Fix — download встаёт при одновременном upload'е (KCP window collapse latency)
+- **relay/wbtunnel**: на быстром скачивании окно росло до 1024 (RTT ~66 мс). Внезапный upload-всплеск этим окном вываливал ~1.2 МБ в несущую; старый shrink ×0.7/тик драйнил буфер ~8 c — за это время WBT RTT уходил 66 → 800–2600 мс, ↓ падало в 0 B/s, новые smux-стримы отваливались (`write connect: timeout`).
+- **Пропорциональный shrink**: factor = floor/rttEwma, кламп [0.25, 0.80] — чем сильнее раздут RTT, тем жёстче режем окно (1024→64 за 1–2 тика вместо ~8).
+- **tuneLoop 1с→500мс** — всплеск ловится и гасится вдвое быстрее.
+- Тесты: `nextKCPWnd` (пропорциональный/severe-clamp), drain-bufferbloat (≤3 тика до min).
+
 ## [0.3.192] — 2026-07-08
 
 ### Fix — трафик встаёт под upload-нагрузкой (KCP bufferbloat runaway)
