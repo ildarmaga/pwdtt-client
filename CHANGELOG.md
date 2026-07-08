@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.197] — 2026-07-09
+
+### Observability — где именно встаёт WB на upload (транспорт под KCP, а не KCP)
+- **Разбор по слоям (реальные bidir-тесты + анализ pion-транспорта)**: при upload-всплеске WBT RTT улетает в 15c+ при ~77 KB данных в полёте — столько байт не могут создать 15c задержки, значит bloat **ниже KCP**, в pion/SRTP/ICE/TURN. `track.WriteSample` **полностью синхронный** и держит `writeMu` до возврата всего стека вниз (SRTP→DTLS→ICE→kernel/TURN send buffer); один медленный `WriteSample` замораживает **весь** VP8-писатель дорожки — и keepalive, и каждый KCP-кадр (ACK в т.ч.). Окно KCP тут бессильно.
+- **Лог `vp8tunnel: SLOW WriteSample <ms>`** (порог 150 ms, rate-limit 500 ms) — прямо показывает залипание несущей и его длительность.
+- **Лог `[lk] pub/sub selected ICE pair: local=… remote=…`** — какой транспорт реально несёт медиа (UDP srflx vs TCP/UDP TURN relay). Нужно, чтобы отличить залипание TCP-TURN от P2P-UDP.
+- Только наблюдаемость: конфиг ICE/транспорта не менялся, поведение то же, что в 0.3.196. Сними спидтест ↑/↓ и пришли лог со строками `SLOW WriteSample` и `selected ICE pair` — по ним выберем точечный фикс (форс UDP-relay / bound TCP-буфера / детектор стопора → ребайнд).
+- Плюс постоянный regression-harness `carrier_load_test.go`: секундные bidir-прогоны через смоделированную несущую (constrained uplink + deep TURN-буфер), ловит тотальный дедлок обеих сторон.
+
 ## [0.3.196] — 2026-07-08
 
 ### Fix — WB встаёт намертво на upload-всплеске (блокирующий KCP-tunnel → дедлок отдачи)
