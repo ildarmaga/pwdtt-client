@@ -177,12 +177,10 @@ export default function Connect() {
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
-  const [wbSocksOnly, setWbSocksOnly] = useState(() => settingsStore.get().wbSocksOnly);
   const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
   useEffect(() => settingsStore.subscribe(s => {
     setMetricsRefreshSec(s.metricsRefreshSec);
     setTunnelProtocol(s.tunnelProtocol);
-    setWbSocksOnly(s.wbSocksOnly);
   }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
   useEffect(() => wbSocksStore.subscribe(setSocksEp), []);
@@ -329,8 +327,8 @@ export default function Connect() {
         s.wbFps,
         s.wbBatch,
         true,
-        !!s.wbSocksOnly,
-        s.wbSocksPort || 10808,
+        true, // SOCKS-only (built-in TUN removed)
+        s.wbSocksPort || 10809,
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
         s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',
       );
@@ -887,7 +885,7 @@ export default function Connect() {
           </div>
         </div>
 
-          {tunnelProtocol === 'wb' && wbSocksOnly && socksEp && tunnelState === 'connected' && (
+          {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
             <div className="socks-card">
               <div className="socks-card-title">SOCKS5 для v2rayN</div>
               <div className="socks-card-row">

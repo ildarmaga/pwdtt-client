@@ -14,7 +14,6 @@ import (
 	"github.com/ildarmaga/whitelist-bypass/relay/wbjrunner"
 	"github.com/ildarmaga/whitelist-bypass/relay/wbxray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	goruntime "runtime"
 )
 
 const (
@@ -138,18 +137,24 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
 	}
+	// Built-in TUN/xray disabled: WB is SOCKS-only (v2rayN/V2BOX), like iOS.
+	_ = socksOnly
+	socksOnly = true
+	if socksPort <= 0 {
+		socksPort = 10809
+	}
 	m.mu.Lock()
 	m.stop = false // user explicitly asked to connect
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
 	m.vp8DualTrack = dualTrack
-	m.socksOnly = socksOnly
+	m.socksOnly = true
 	m.socksHost = "127.0.0.1"
 	m.socksPort = socksPort
 	m.socksUser = strings.TrimSpace(socksUser)
 	m.socksPass = socksPass
 	m.socksReady = false
-	if socksOnly && m.socksUser == "" {
+	if m.socksUser == "" {
 		m.socksUser, m.socksPass = genSocksCreds()
 	}
 	m.mu.Unlock()
@@ -226,40 +231,13 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	m.done = done
 	vp8Fps, vp8Batch := m.vp8Fps, m.vp8Batch
 	vp8DualTrack := m.vp8DualTrack
-	socksOnly := m.socksOnly
 	socksHost := m.socksHost
 	socksPort := m.socksPort
 	socksUser := m.socksUser
 	socksPass := m.socksPass
 	m.mu.Unlock()
 
-	useXray := false
-	var xrayBin string
-	if !socksOnly {
-		if err := prepareWBTun(); err != nil {
-			m.finishRun(cancel, done)
-			return fmt.Errorf("wintun.dll: %w", err)
-		}
-		useXray = goruntime.GOOS == "windows"
-		if useXray {
-			if err := prepareWBXray(); err != nil {
-				m.finishRun(cancel, done)
-				return fmt.Errorf("xray: %w", err)
-			}
-			var xerr error
-			xrayBin, xerr = xrayBinaryPath()
-			if xerr != nil {
-				m.finishRun(cancel, done)
-				return xerr
-			}
-		}
-	}
-
-	if socksOnly {
-		m.emitLog("INFO", "Подключение WB Stream (SOCKS для v2rayN)…")
-	} else {
-		m.emitLog("INFO", "Подключение WB Stream…")
-	}
+	m.emitLog("INFO", "Подключение WB Stream (SOCKS для v2rayN)…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	go func() {
@@ -267,10 +245,9 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		cfg := wbjrunner.Config{
 			Room:              room,
 			DisplayName:       "WDTT",
-			UseTUN:            !socksOnly,
-			UseXray:           useXray && !socksOnly,
-			XrayBinary:        xrayBin,
-			SocksOnly:         socksOnly,
+			UseTUN:            false,
+			UseXray:           false,
+			SocksOnly:         true,
 			SocksHost:         socksHost,
 			SocksPort:         socksPort,
 			SocksUser:         socksUser,

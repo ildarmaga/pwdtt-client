@@ -62,11 +62,11 @@ export interface AppSettings {
   wbProxyAuth: 'auto' | 'manual';
   wbProxyUser: string;
   wbProxyPass: string;
-  /** Как iOS: только SOCKS5 — вставить в v2rayN/V2BOX (без встроенного TUN) */
+  /** Как iOS: только SOCKS5 — вставить в v2rayN/V2BOX (встроенный TUN отключён) */
   wbSocksOnly: boolean;
-  /** Порт локального SOCKS (0 = 10808 по умолчанию) */
+  /** Порт локального SOCKS (по умолчанию 10809 — не пересекаться с inbound v2rayN) */
   wbSocksPort: number;
-  /** WB Stream xray routing preset (v2rayN-style) — только для полного TUN */
+  /** legacy: xray routing (не используется в SOCKS-only) */
   wbRoutingMode: 'global' | 'bypass_lan' | 'ru_direct' | 'custom';
   wbRoutingRules: WBRoutingRule[];
 }
@@ -93,7 +93,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wbProxyUser: '',
   wbProxyPass: '',
   wbSocksOnly: true,
-  wbSocksPort: 10808,
+  wbSocksPort: 10809,
   wbRoutingMode: 'global',
   wbRoutingRules: [],
 };

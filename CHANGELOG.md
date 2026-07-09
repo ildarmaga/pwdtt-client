@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.204] — 2026-07-09
+
+### Fix — WB только SOCKS + ICE settle (как у TUN)
+- **Встроенный TUN/маршрутизация WB убраны** из UI и Connect: только SOCKS для v2rayN (как iOS → V2BOX).
+- **Корень нестабильности**: SOCKS поднимался сразу после WebRTC, а ICE sub-offer через мгновение делал `RestartLink` и убивал smux под живым v2rayN → `remote not ready`, WBT в секунды, `wnd=64`. У TUN уже был settle 5 с + sync — у SOCKS не было.
+- **Фикс**: перед `ServeSOCKS` — 5 с ICE settle + `RestartLink` (как `bringUpVPN`). Порт по умолчанию **10809** (не пересекаться с inbound v2rayN на 10808).
+
 ## [0.3.203] — 2026-07-09
 
 ### Feature — WB SOCKS-only как iOS (для v2rayN)

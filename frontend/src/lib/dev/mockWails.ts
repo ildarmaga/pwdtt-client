@@ -144,20 +144,16 @@ function installGoMock() {
           }
           startDevTunnelStats();
         },
-        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown) => {
-          emitDevEvent('log', 'INFO', socksOnly ? 'Подключение WB Stream (SOCKS для v2rayN)…' : 'Подключение WB Stream…');
+        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, _socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown) => {
+          emitDevEvent('log', 'INFO', 'Подключение WB Stream (SOCKS для v2rayN)…');
           emitDevEvent('state_changed', 'connecting');
           await new Promise(r => setTimeout(r, 700));
           window.__pwdttDevConnected = true;
-          if (socksOnly) {
-            const port = Number(socksPort) || 10808;
-            const user = String(socksUser || 'devuser');
-            const pass = String(socksPass || 'devpass');
-            emitDevEvent('wb_socks_ready', '127.0.0.1', port, user, pass);
-            emitDevEvent('log', 'INFO', `✓ SOCKS5 127.0.0.1:${port}`);
-          } else {
-            emitDevEvent('log', 'INFO', '✓ WB Stream активен');
-          }
+          const port = Number(socksPort) || 10809;
+          const user = String(socksUser || 'devuser');
+          const pass = String(socksPass || 'devpass');
+          emitDevEvent('wb_socks_ready', '127.0.0.1', port, user, pass);
+          emitDevEvent('log', 'INFO', `✓ SOCKS5 127.0.0.1:${port}`);
           emitDevEvent('state_changed', 'running');
           startDevTunnelStats();
         },

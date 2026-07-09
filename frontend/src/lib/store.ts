@@ -76,8 +76,15 @@ export const settingsStore = {
     if (typeof merged.wbSocksOnly !== 'boolean') {
       merged.wbSocksOnly = DEFAULT_SETTINGS.wbSocksOnly;
     }
-    if (typeof merged.wbSocksPort !== 'number' || merged.wbSocksPort < 0 || merged.wbSocksPort > 65535) {
+    // Built-in TUN removed — always SOCKS-only.
+    merged.wbSocksOnly = true;
+    if (typeof merged.wbSocksPort !== 'number' || merged.wbSocksPort < 1024 || merged.wbSocksPort > 65535) {
       merged.wbSocksPort = DEFAULT_SETTINGS.wbSocksPort;
+    }
+    // Migrate old default 10808 (often clashes with v2rayN inbound) → 10809.
+    if (merged.wbSocksPort === 10808) {
+      merged.wbSocksPort = DEFAULT_SETTINGS.wbSocksPort;
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
     }
     return merged;
   },

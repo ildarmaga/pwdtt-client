@@ -553,7 +553,7 @@ export default function Settings({ onClose }: Props) {
 
           {isWb && (
             <>
-          <div className="st-section-title">WB Stream · WebRTC</div>
+          <div className="st-section-title">WB Stream · SOCKS</div>
 
           <div className="st-row">
             <span>Показывать логи</span>
@@ -564,47 +564,19 @@ export default function Settings({ onClose }: Props) {
           </div>
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
-            <span>Режим</span>
-            <div className="st-seg">
-              <button
-                type="button"
-                className={`st-seg-btn${settings.wbSocksOnly ? ' st-seg-btn--active' : ''}`}
-                disabled={locked}
-                onClick={() => updateAndSave('wbSocksOnly', true)}
-                title="Как iOS: SOCKS для v2rayN / V2BOX"
-              >
-                SOCKS
-              </button>
-              <button
-                type="button"
-                className={`st-seg-btn${!settings.wbSocksOnly ? ' st-seg-btn--active' : ''}`}
-                disabled={locked}
-                onClick={() => updateAndSave('wbSocksOnly', false)}
-                title="Встроенный полный VPN (wintun)"
-              >
-                TUN
-              </button>
-            </div>
+            <span>SOCKS порт</span>
+            <NumberStepper
+              value={settings.wbSocksPort || 10809}
+              min={1024} max={65535} step={1}
+              disabled={locked}
+              onChange={v => updateAndSave('wbSocksPort', v)}
+            />
           </div>
 
-          {settings.wbSocksOnly && (
-            <div className={`st-row${locked ? ' st-locked' : ''}`}>
-              <span>SOCKS порт</span>
-              <NumberStepper
-                value={settings.wbSocksPort || 10808}
-                min={1024} max={65535} step={1}
-                disabled={locked}
-                onChange={v => updateAndSave('wbSocksPort', v)}
-              />
-            </div>
-          )}
-
-          {settings.wbSocksOnly && (
-            <div className="st-vk-hint">
-              После подключения вставьте в v2rayN: SOCKS5 → 127.0.0.1:{settings.wbSocksPort || 10808}
-              (логин/пароль — ниже или авто). Системный VPN делает v2rayN, не WDTT.
-            </div>
-          )}
+          <div className="st-vk-hint">
+            После подключения (~5 с на ICE) вставьте в v2rayN: SOCKS5 → 127.0.0.1:{settings.wbSocksPort || 10809}
+            (логин/пароль — ниже или авто). Системный VPN делает v2rayN. Порт по умолчанию 10809, чтобы не пересечься с inbound v2rayN (часто 10808).
+          </div>
 
           <div className="st-section-title">VP8</div>
 
