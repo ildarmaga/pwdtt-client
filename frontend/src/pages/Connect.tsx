@@ -318,16 +318,14 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
-      // Dual-track обязателен: сервер-creator всегда публикует 2 VP8-трека и шардит
-      // KCP по ним (seq-префикс). Одиночный трек у joiner ломает дефрейминг в обе
-      // стороны → трафик не идёт. Жёстко шлём true, игнорируя сохранённое значение.
+      // Dual-track обязателен: сервер-creator всегда публикует 2 VP8-трека.
       await WailsConnectWB(
         room,
         buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules),
         s.wbFps,
         s.wbBatch,
         true,
-        true, // SOCKS-only (built-in TUN removed)
+        true, // SOCKS-only
         s.wbSocksPort || 10809,
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
         s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',

@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.205] — 2026-07-09
+
+### Fix — простой WB SOCKS: без streamSem / per-host / AIMD wnd=64
+- Эталон [kulikov0/whitelist-bypass](https://github.com/kulikov0/whitelist-bypass): `RelayBridge` без лимитов потоков. У нас KCP+smux (сервер), но лишние ограничения убивали SOCKS.
+- **Убрано**: `streamSem` 128, per-host 12, delay-based AIMD (фиксированное окно 2048, без shrink до 64).
+- **Фикс UI**: не слать `SOCKS_READY` на carrier rebind до реального `Listen` (ложный «туннель активен» на 5 с раньше SOCKS).
+- Нужен сервер ≥1.4.67 (тот же fixed-window KCP на creator).
+
 ## [0.3.204] — 2026-07-09
 
 ### Fix — WB только SOCKS + ICE settle (как у TUN)
