@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.199] — 2026-07-09
+
+### Fix — WB встроенный TUN: LAN/wintun-шум валился в KCP (iOS ок, ПК вставал)
+- **Причина**: при переходе на xray-owned wintun (`RouteShell`) потеряли OS-bypass, который был в gVisor-пути (`desktoptun_windows.go`): RFC1918 LAN + sink `172.31.255.254`. В `global`/`custom` xray тоже не держал LAN на `direct` — весь LAN-скан/адаптерный шум шёл `wintun → xray → SOCKS → smux/KCP` и забивал несущую. На iOS V2BOX обычно режет LAN сам; на ПК после warmup (`ip=…`) трафик садился в `0 B/s`, `wnd=64`, WBT секунды.
+- **Фикс**: `RouteShell.FinishTunSetup` ставит те же LAN CIDR + `172.31.255.254` bypass (metric 1), что gVisor; teardown чистит CIDR. В `wbxray` LAN/sink/`10.99.0.0/24` всегда `direct` до catch-all (defense in depth для global/custom).
+- Тесты: `TestBuildConfigJSON_GlobalAlwaysLANDirect`; `./wbxray` + `./desktoptun` зелёные.
+
 ## [0.3.198] — 2026-07-09
 
 ### Fix — WB: окно KCP залипало на дне после upload-всплеска → «плавающая» загрузка
