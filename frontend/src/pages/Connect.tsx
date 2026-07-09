@@ -318,13 +318,12 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
-      // Dual-track обязателен: сервер-creator всегда публикует 2 VP8-трека.
       await WailsConnectWB(
         room,
         buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules),
         s.wbFps,
         s.wbBatch,
-        true,
+        !!s.wbDualTrack,
         true, // SOCKS-only
         s.wbSocksPort || 10809,
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',

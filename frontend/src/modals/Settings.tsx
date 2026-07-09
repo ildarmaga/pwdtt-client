@@ -590,7 +590,7 @@ export default function Settings({ onClose }: Props) {
             />
           </div>
 
-          <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <span>Batch</span>
             <NumberStepper
               value={settings.wbBatch}
@@ -598,6 +598,21 @@ export default function Settings({ onClose }: Props) {
               disabled={locked}
               onChange={v => updateAndSave('wbBatch', v)}
             />
+          </div>
+
+          <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
+            <span title="Второй VP8 (ScreenShare). По умолчанию выкл — стабильнее SOCKS. Вкл — больше uplink, но SFU может ронять шарды.">
+              Dual-track
+            </span>
+            <button
+              type="button"
+              className={`st-toggle st-toggle--${settings.wbDualTrack ? 'on' : 'off'}`}
+              disabled={locked}
+              onClick={() => updateAndSave('wbDualTrack', !settings.wbDualTrack)}
+            />
+          </div>
+          <div className="st-vk-hint">
+            Dual-track выкл (как kulikov0) — весь трафик по одному VP8. Вкл — шардинг по 2 трекам (больше скорость, риск потерь на SFU).
           </div>
 
           <div className="st-section-title">Proxy</div>

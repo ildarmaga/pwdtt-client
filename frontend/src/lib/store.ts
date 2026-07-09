@@ -59,16 +59,17 @@ export const settingsStore = {
     if (typeof merged.wbBatch !== 'number' || merged.wbBatch < 1 || merged.wbBatch > 256) {
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
     }
-    // Dual-track ОБЯЗАТЕЛЕН: сервер-creator всегда шлёт 2 VP8-трека (sharded KCP).
-    // Одиночный трек ломает дефрейминг → трафик не идёт. rev=3 чинит регрессию
-    // 0.3.189 (которая насильно ставила dualTrack=false и убивала туннель) и
-    // заодно нормализует пейсинг на 30/64. Сравниваем СОХРАНЁННУЮ ревизию.
+    // rev=4: RelayBridge defaults dual-track OFF (kulikov0). Forced dual=true
+    // sharded MsgData onto screenshare; SFU drops → SOCKS ClientHello lost.
     if (saved.wbVp8Rev !== DEFAULT_SETTINGS.wbVp8Rev) {
-      merged.wbDualTrack = true;
+      merged.wbDualTrack = DEFAULT_SETTINGS.wbDualTrack;
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
       merged.wbBatch = DEFAULT_SETTINGS.wbBatch;
       merged.wbVp8Rev = DEFAULT_SETTINGS.wbVp8Rev;
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
+    }
+    if (typeof merged.wbDualTrack !== 'boolean') {
+      merged.wbDualTrack = DEFAULT_SETTINGS.wbDualTrack;
     }
     if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
       merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;

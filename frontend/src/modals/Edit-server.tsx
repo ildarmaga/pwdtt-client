@@ -262,7 +262,7 @@ export default function EditServer({ server, onClose, onSave, onDelete }: Props)
             <div className="es-hint-wb">
               {syncingSub ? 'Обновление из подписки…' : (
                 <>
-                  VP8, Dual-track и Proxy — в <strong>Настройках</strong> (вкладка WB).
+                  VP8, Dual-track и Proxy — в <strong>Настройках</strong> (вкладка WB). Dual-track по умолчанию выкл.
                   {wbRoom ? (
                     <> Room: <span style={{ color: 'var(--text-2)' }}>{wbRoom}</span></>
                   ) : ' Room не найден в подписке — проверьте URL sub.'}

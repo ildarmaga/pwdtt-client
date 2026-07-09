@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.208] — 2026-07-09
+
+### Fix — Dual-track ломал SOCKS + переключатель в настройках
+- **Корень**: `MultiTrackTunnel.SendData` шардил кадры по `connID%2` на screenshare; WB SFU часто роняет/задерживает 2-й трек → ClientHello не доходит (`EOF with no data read`), ответы приходят как `unknown conn`.
+- **Фикс**: RelayBridge `SendData` всегда на camera track (как стабильный путь); `SendRaw` (WBT) по-прежнему round-robin.
+- **UI**: Настройки → WB → **Dual-track** (вкл/выкл). Дефолт **выкл** (как kulikov0 `--dual-track=false`). Connect передаёт `wbDualTrack`, не хардкод `true`.
+- Нужен сервер ≥1.4.69 (тот же SendData fix на creator).
+
 ## [0.3.207] — 2026-07-09
 
 ### Fix — RelayBridge: не убивать SOCKS на ICE rebind + watchdog без RTT

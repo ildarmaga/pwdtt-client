@@ -84,8 +84,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metricsRefreshSec: 0,
   vkThroughTunnel: true,
   tunnelProtocol: 'vk',
-  wbDualTrack: true,
-  wbVp8Rev: 3,
+  // RelayBridge (kulikov0): dual-track off by default — SFU often drops
+  // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.
+  wbDualTrack: false,
+  wbVp8Rev: 4,
   wbShowLogs: true,
   wbFps: 30,
   wbBatch: 64,
