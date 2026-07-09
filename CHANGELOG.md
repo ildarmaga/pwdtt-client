@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.206] — 2026-07-09
+
+### Fix — оригинальный WB (RelayBridge) + без xray + апдейтер direct
+- **WB**: вместо KCP/smux — [kulikov0 RelayBridge](https://github.com/kulikov0/whitelist-bypass) (как desktop-joiner). Нужен сервер ≥1.4.68.
+- **Размер**: убран embed xray.exe/geoip/geosite (~50+ МБ) из Windows-сборки; CI больше не качает xray.
+- **Обновления**: `Proxy: nil` (игнор системного/v2rayN прокси) + seed LAN gateway при VK connect — скачивание с GitHub идёт напрямую.
+
 ## [0.3.205] — 2026-07-09
 
 ### Fix — простой WB SOCKS: без streamSem / per-host / AIMD wnd=64

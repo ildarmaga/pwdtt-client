@@ -39,6 +39,8 @@ func newUpdateHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
+			// Never use system/v2rayN HTTP_PROXY — updates must go direct.
+			Proxy:                 nil,
 			DialContext:           dialer.DialContext,
 			TLSHandshakeTimeout:   90 * time.Second,
 			ResponseHeaderTimeout: 120 * time.Second,

@@ -10,5 +10,10 @@ import (
 func withUpdateDirectEgress(...string) func() { return func() {} }
 
 func newUpdateHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy: nil, // ignore HTTP_PROXY — updates go direct
+		},
+	}
 }

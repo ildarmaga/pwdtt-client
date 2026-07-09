@@ -91,10 +91,6 @@ jobs:
       - name: Run Windows backend tests
         run: go test ./backend/... -count=1 -v -run 'TestCompareVersion'
 
-      - name: Fetch xray embed assets (Windows)
-        shell: bash
-        run: bash scripts/fetch-xray-assets.sh
-
       - name: Build Windows app
         shell: bash
         run: |

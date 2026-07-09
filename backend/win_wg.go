@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ildarmaga/whitelist-bypass/relay/desktoptun"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -121,6 +122,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 	gw := defaultGateway()
 	rememberWGGateway(gw)
 	if gw != "" {
+		desktoptun.RememberPhysicalEgress(gw, desktoptun.DefaultLocalIPv4())
 		var excludes []string
 		for _, ip := range turnIPs {
 			excludes = append(excludes, ip+"/32")
