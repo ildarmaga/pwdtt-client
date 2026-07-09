@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.202] — 2026-07-09
+
+### Fix — WB TUN: zombie streamSem после dial fail (Telegram заполнял 512 слотов)
+- **Поле 0.3.201**: CC уже отпускал `wnd` (384→64→345), QUIC block (`rules=7`), лимит SOCKS срабатывал — но слоты не освобождались: creator при `dial failed` **не слал ack**, joiner ждал **90 с** → `SOCKS stream limit` спам, warmup timeout, ↓=0.
+- **Рабочий эталон**: gVisor netstack (~30 МБ/с) без SOCKS-петли; здесь чиним admission на xray-пути.
+- **Фикс**: creator `0x01` failure ack; connect wait 90→25 с; global cap 512→128; per-host ≤12. Нужен сервер ≥1.4.66.
+
 ## [0.3.201] — 2026-07-09
 
 ### Fix — WB TUN: после warmup окно KCP залипало (Telegram-шторм + баг CC)
