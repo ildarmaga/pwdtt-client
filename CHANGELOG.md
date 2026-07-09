@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.207] — 2026-07-09
+
+### Fix — RelayBridge: не убивать SOCKS на ICE rebind + watchdog без RTT
+- **Rebind**: `SwapTunnelKeepConns(false)` при sub-offer / sub-ICE — живые SOCKS-сессии v2rayN не сбрасываются (`closeAll` больше не рвёт CONNECT mid-handshake → меньше `unknown conn` / NACK).
+- **Watchdog**: `SOCKS_READY` и трафик помечают `lastHealthy` (у RelayBridge нет KCP RTT, `WBT 0 ms` — норма). Больше нет ложного «туннель не поднялся» через ~90 с при живом SOCKS.
+- Soft KCP-recover в SOCKS-only отключён (бессмысленен для RelayBridge).
+
 ## [0.3.206] — 2026-07-09
 
 ### Fix — оригинальный WB (RelayBridge) + без xray + апдейтер direct

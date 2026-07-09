@@ -504,8 +504,20 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if !dead {
 				continue
 			}
+			// RelayBridge has no KCP RTT (WBT always 0). Do not kill on RTT-based
+			// reasons; SOCKS_READY + traffic refresh lastHealthy. Soft KCP recover
+			// is meaningless in socks-only mode.
+			if socks {
+				if reason == "нет живого RTT" {
+					continue
+				}
+				if reason == "туннель не поднялся" && !lastTraffic.IsZero() &&
+					now.Sub(lastTraffic) <= wbDeadTimeout {
+					continue
+				}
+			}
 
-			canSoft := trySoft &&
+			canSoft := trySoft && !socks &&
 				softCount < wbSoftRecoverMax &&
 				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
 			if canSoft {
@@ -753,6 +765,9 @@ func (m *WBManager) onStatus(code string) {
 	case "SOCKS_READY":
 		m.mu.Lock()
 		host, port, user, pass := m.socksHost, m.socksPort, m.socksUser, m.socksPass
+		// RelayBridge has no KCP RTT — mark healthy when SOCKS is up so the
+		// watchdog does not kill after wbConnectTimeout ("туннель не поднялся").
+		m.lastHealthy = time.Now()
 		m.mu.Unlock()
 		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS5 готов — вставьте в v2rayN: 127.0.0.1:%d (user=%s)", port, user))
 		if host != "" && port > 0 {
@@ -844,6 +859,7 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 
 	m.mu.Lock()
 	now := time.Now()
+	socks := m.socksOnly
 	if rtt > 0 {
 		m.lastHealthy = now
 		m.lastRTT = rtt
@@ -856,6 +872,10 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 	if total > m.lastTrafficBytes+1024 {
 		m.lastTrafficAt = now
 		m.lastTrafficBytes = total
+		// SOCKS/RelayBridge: traffic proves the data path; RTT stays 0.
+		if socks && rtt <= 0 {
+			m.lastHealthy = now
+		}
 	}
 	shouldLog := now.Sub(m.lastStatsLog) >= wbStatsLogInterval
 	if shouldLog {
