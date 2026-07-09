@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	crand "crypto/rand"
 	"fmt"
 	"net"
 	"net/http"
@@ -86,6 +87,12 @@ type WBManager struct {
 	vp8Fps         int
 	vp8Batch       int
 	vp8DualTrack   bool
+	socksOnly      bool
+	socksHost      string
+	socksPort      int
+	socksUser      string
+	socksPass      string
+	socksReady     bool
 	reconnecting atomic.Bool
 	connectedAt  time.Time // when this run started
 	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
@@ -126,7 +133,7 @@ func (m *WBManager) IsRunning() bool {
 	return true
 }
 
-func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool) error {
+func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass string) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -136,8 +143,39 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
 	m.vp8DualTrack = dualTrack
+	m.socksOnly = socksOnly
+	m.socksHost = "127.0.0.1"
+	m.socksPort = socksPort
+	m.socksUser = strings.TrimSpace(socksUser)
+	m.socksPass = socksPass
+	m.socksReady = false
+	if socksOnly && m.socksUser == "" {
+		m.socksUser, m.socksPass = genSocksCreds()
+	}
 	m.mu.Unlock()
 	return m.connect(room, routingPayload)
+}
+
+// SocksEndpoint returns the local SOCKS5 address after SOCKS_READY (socks-only mode).
+func (m *WBManager) SocksEndpoint() (host string, port int, user, pass string, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.socksReady || m.socksPort <= 0 {
+		return "", 0, "", "", false
+	}
+	return m.socksHost, m.socksPort, m.socksUser, m.socksPass, true
+}
+
+func genSocksCreds() (user, pass string) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 40)
+	if _, err := crand.Read(b); err != nil {
+		return "wdtt", "wdtt"
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b[:16]), string(b[16:])
 }
 
 // connect dials without resetting the user-stop flag, so a user Disconnect
@@ -188,29 +226,40 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	m.done = done
 	vp8Fps, vp8Batch := m.vp8Fps, m.vp8Batch
 	vp8DualTrack := m.vp8DualTrack
+	socksOnly := m.socksOnly
+	socksHost := m.socksHost
+	socksPort := m.socksPort
+	socksUser := m.socksUser
+	socksPass := m.socksPass
 	m.mu.Unlock()
 
-	if err := prepareWBTun(); err != nil {
-		m.finishRun(cancel, done)
-		return fmt.Errorf("wintun.dll: %w", err)
-	}
-
-	useXray := goruntime.GOOS == "windows"
+	useXray := false
 	var xrayBin string
-	if useXray {
-		if err := prepareWBXray(); err != nil {
+	if !socksOnly {
+		if err := prepareWBTun(); err != nil {
 			m.finishRun(cancel, done)
-			return fmt.Errorf("xray: %w", err)
+			return fmt.Errorf("wintun.dll: %w", err)
 		}
-		var xerr error
-		xrayBin, xerr = xrayBinaryPath()
-		if xerr != nil {
-			m.finishRun(cancel, done)
-			return xerr
+		useXray = goruntime.GOOS == "windows"
+		if useXray {
+			if err := prepareWBXray(); err != nil {
+				m.finishRun(cancel, done)
+				return fmt.Errorf("xray: %w", err)
+			}
+			var xerr error
+			xrayBin, xerr = xrayBinaryPath()
+			if xerr != nil {
+				m.finishRun(cancel, done)
+				return xerr
+			}
 		}
 	}
 
-	m.emitLog("INFO", "Подключение WB Stream…")
+	if socksOnly {
+		m.emitLog("INFO", "Подключение WB Stream (SOCKS для v2rayN)…")
+	} else {
+		m.emitLog("INFO", "Подключение WB Stream…")
+	}
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	go func() {
@@ -218,9 +267,14 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		cfg := wbjrunner.Config{
 			Room:              room,
 			DisplayName:       "WDTT",
-			UseTUN:            true,
-			UseXray:           useXray,
+			UseTUN:            !socksOnly,
+			UseXray:           useXray && !socksOnly,
 			XrayBinary:        xrayBin,
+			SocksOnly:         socksOnly,
+			SocksHost:         socksHost,
+			SocksPort:         socksPort,
+			SocksUser:         socksUser,
+			SocksPass:         socksPass,
 			RoutingMode:       mode,
 			CustomRoutingJSON: customRules,
 			VP8FPS:            vp8Fps,
@@ -232,6 +286,16 @@ func (m *WBManager) connect(room, routingPayload string) error {
 			},
 			OnStatus: m.onStatus,
 			OnStats:  m.onStats,
+			OnSocksReady: func(host string, port int, user, pass string) {
+				m.mu.Lock()
+				m.socksHost = host
+				m.socksPort = port
+				m.socksUser = user
+				m.socksPass = pass
+				m.socksReady = true
+				m.mu.Unlock()
+				runtime.EventsEmit(m.ctx, "wb_socks_ready", host, port, user, pass)
+			},
 		}
 		_ = wbjrunner.Run(ctx, cfg)
 
@@ -436,7 +500,11 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			skipProbe := false
 			m.mu.Lock()
 			rm := m.routingMode
+			socks := m.socksOnly
 			m.mu.Unlock()
+			if socks {
+				skipProbe = true // no system routes — probe would go direct, not through SOCKS
+			}
 			switch rm {
 			case "custom", "ru_direct", "bypass_lan":
 				skipProbe = true
@@ -593,6 +661,7 @@ func (m *WBManager) Disconnect() {
 	// Always set stop: auto-reconnect may be in-flight with cancel == nil,
 	// and the user's disconnect must abort it.
 	m.stop = true
+	m.socksReady = false
 	cancel := m.cancel
 	// Capture the run being stopped under the same lock: if the user quickly
 	// reconnects, m.done/m.runGen will already belong to the NEW run by the
@@ -604,6 +673,7 @@ func (m *WBManager) Disconnect() {
 
 	// UI must not block on gVisor/WebRTC teardown (can take 10–20s with active flows).
 	runtime.EventsEmit(m.ctx, "state_changed", "stopped")
+	runtime.EventsEmit(m.ctx, "wb_socks_ready", "", 0, "", "")
 	setTrayStatus(false, 0, 0, 0)
 	runtime.EventsEmit(m.ctx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 
@@ -687,7 +757,14 @@ func (m *WBManager) onStatus(code string) {
 	}
 	switch code {
 	case "TUNNEL_CONNECTED":
-		m.emitLog("INFO", "[WB] WebRTC готов · поднимаю VPN…")
+		m.mu.Lock()
+		socks := m.socksOnly
+		m.mu.Unlock()
+		if socks {
+			m.emitLog("INFO", "[WB] WebRTC готов · поднимаю SOCKS…")
+		} else {
+			m.emitLog("INFO", "[WB] WebRTC готов · поднимаю VPN…")
+		}
 	case "TUNNEL_RECONNECTING":
 		m.emitLog("WARN", "[WB] Переподключение WebRTC без снятия VPN…")
 		m.mu.Lock()
@@ -696,6 +773,18 @@ func (m *WBManager) onStatus(code string) {
 	case "TRAFFIC_READY":
 		m.emitLog("INFO", "[WB] Пробный запрос через туннель успешен")
 		m.markConnectedUI()
+	case "SOCKS_READY":
+		m.mu.Lock()
+		host, port, user, pass := m.socksHost, m.socksPort, m.socksUser, m.socksPass
+		m.mu.Unlock()
+		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS5 готов — вставьте в v2rayN: 127.0.0.1:%d (user=%s)", port, user))
+		if host != "" && port > 0 {
+			runtime.EventsEmit(m.ctx, "wb_socks_ready", host, port, user, pass)
+		}
+		m.markConnectedUI()
+	case "SOCKS_UNAVAILABLE":
+		runtime.EventsEmit(m.ctx, "state_changed", "error")
+		m.emitLog("ERROR", "[WB] Не удалось открыть SOCKS-порт — смените порт в настройках")
 	case "TUN_ACTIVE":
 		m.emitLog("INFO", "[WB] Полный VPN активен — весь трафик через WB Stream")
 		m.markConnectedUI()

@@ -64,6 +64,7 @@ import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStatsStore, formatRate, formatMs, formatDuration, type TunnelStats } from '../lib/stores/tunnelStatsStore';
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
+import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import ProtocolSelector from '../components/ProtocolSelector';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
@@ -176,11 +177,15 @@ export default function Connect() {
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
+  const [wbSocksOnly, setWbSocksOnly] = useState(() => settingsStore.get().wbSocksOnly);
+  const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
   useEffect(() => settingsStore.subscribe(s => {
     setMetricsRefreshSec(s.metricsRefreshSec);
     setTunnelProtocol(s.tunnelProtocol);
+    setWbSocksOnly(s.wbSocksOnly);
   }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
+  useEffect(() => wbSocksStore.subscribe(setSocksEp), []);
 
   useEffect(() => {
     return wdttLinkStore.subscribe((link) => {
@@ -318,7 +323,17 @@ export default function Connect() {
       // Dual-track обязателен: сервер-creator всегда публикует 2 VP8-трека и шардит
       // KCP по ним (seq-префикс). Одиночный трек у joiner ломает дефрейминг в обе
       // стороны → трафик не идёт. Жёстко шлём true, игнорируя сохранённое значение.
-      await WailsConnectWB(room, buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules), s.wbFps, s.wbBatch, true);
+      await WailsConnectWB(
+        room,
+        buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules),
+        s.wbFps,
+        s.wbBatch,
+        true,
+        !!s.wbSocksOnly,
+        s.wbSocksPort || 10808,
+        s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
+        s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',
+      );
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);
@@ -719,6 +734,36 @@ export default function Connect() {
         .session-latency { display: flex; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-2); font-size: 11px; color: var(--text-3); }
         .session-latency span { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; min-width: 0; }
         .session-latency strong { font-size: 12px; color: var(--text); font-weight: 600; }
+        .socks-card {
+          width: 100%;
+          margin-top: 10px;
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          padding: 12px 14px;
+          pointer-events: auto;
+          text-align: left;
+        }
+        .socks-card-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-4); margin-bottom: 8px; }
+        .socks-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--text-3); min-width: 0; }
+        .socks-card-row:last-of-type { margin-bottom: 10px; }
+        .socks-card-row strong { color: var(--text); font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .socks-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .socks-card-btn {
+          flex: 1 1 auto;
+          min-width: 0;
+          padding: 7px 10px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: var(--bg-2);
+          color: var(--text);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .socks-card-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .socks-card-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+        .socks-card-btn--primary:hover { filter: brightness(1.05); color: var(--accent-fg); }
         .icon-picker { position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; box-shadow: var(--shadow); display: grid; grid-template-columns: repeat(6, 36px); gap: 4px; animation: modal-in 0.15s ease-out; }
         .icon-picker-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 18px; }
         .icon-picker-btn:hover { background: var(--bg-3); border-color: var(--border); }
@@ -841,7 +886,51 @@ export default function Connect() {
             ))}
           </div>
         </div>
-        </div>
+
+          {tunnelProtocol === 'wb' && wbSocksOnly && socksEp && tunnelState === 'connected' && (
+            <div className="socks-card">
+              <div className="socks-card-title">SOCKS5 для v2rayN</div>
+              <div className="socks-card-row">
+                Адрес: <strong>{socksEp.host}:{socksEp.port}</strong>
+              </div>
+              {socksEp.user ? (
+                <div className="socks-card-row">
+                  Auth: <strong title={`${socksEp.user}:${socksEp.pass}`}>{socksEp.user} · ••••</strong>
+                </div>
+              ) : (
+                <div className="socks-card-row">Auth: <strong>без пароля</strong></div>
+              )}
+              <div className="socks-card-actions">
+                <button
+                  type="button"
+                  className="socks-card-btn socks-card-btn--primary"
+                  onClick={() => {
+                    const url = wbSocksStore.url(socksEp);
+                    void navigator.clipboard?.writeText(url).then(
+                      () => toastStore.show('SOCKS URL скопирован', 2500),
+                      () => toastStore.show(url, 5000),
+                    );
+                  }}
+                >
+                  Копировать URL
+                </button>
+                <button
+                  type="button"
+                  className="socks-card-btn"
+                  onClick={() => {
+                    const line = `${socksEp.host}:${socksEp.port}`;
+                    void navigator.clipboard?.writeText(line).then(
+                      () => toastStore.show('Адрес скопирован', 2500),
+                      () => toastStore.show(line, 5000),
+                    );
+                  }}
+                >
+                  Адрес
+                </button>
+              </div>
+            </div>
+          )}
+          </div>
 
         <div className="status-bar">
           {listOpen && servers.length > 0 && (

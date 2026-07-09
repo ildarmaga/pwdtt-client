@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.203] — 2026-07-09
+
+### Feature — WB SOCKS-only как iOS (для v2rayN)
+- Режим **SOCKS** (по умолчанию): WDTT поднимает WebRTC/KCP и локальный SOCKS5 `127.0.0.1:10808` — без встроенного wintun/xray. Системный VPN делает **v2rayN** (как V2BOX на iOS).
+- Режим **TUN** — прежний полный VPN в приложении.
+- Настройки: SOCKS/TUN, порт; после подключения на главном экране — адрес + копирование `socks5://…` URL.
+- Auth: авто (случайный логин/пароль) или вручную (как раньше в Proxy).
+
 ## [0.3.202] — 2026-07-09
 
 ### Fix — WB TUN: zombie streamSem после dial fail (Telegram заполнял 512 слотов)

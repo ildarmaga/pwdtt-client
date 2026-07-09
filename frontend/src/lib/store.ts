@@ -73,6 +73,12 @@ export const settingsStore = {
     if (merged.wbProxyAuth !== 'auto' && merged.wbProxyAuth !== 'manual') {
       merged.wbProxyAuth = DEFAULT_SETTINGS.wbProxyAuth;
     }
+    if (typeof merged.wbSocksOnly !== 'boolean') {
+      merged.wbSocksOnly = DEFAULT_SETTINGS.wbSocksOnly;
+    }
+    if (typeof merged.wbSocksPort !== 'number' || merged.wbSocksPort < 0 || merged.wbSocksPort > 65535) {
+      merged.wbSocksPort = DEFAULT_SETTINGS.wbSocksPort;
+    }
     return merged;
   },
   save: (settings: AppSettings) => {

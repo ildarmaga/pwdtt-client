@@ -51,7 +51,7 @@ export interface AppSettings {
   vkThroughTunnel: boolean;
   /** Выбранный протокол на главном экране */
   tunnelProtocol: TunnelProtocol;
-  /** WB Stream: dual-track (экран + камера) */
+  /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;
   /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
   wbVp8Rev: number;
@@ -62,7 +62,11 @@ export interface AppSettings {
   wbProxyAuth: 'auto' | 'manual';
   wbProxyUser: string;
   wbProxyPass: string;
-  /** WB Stream xray routing preset (v2rayN-style) */
+  /** Как iOS: только SOCKS5 — вставить в v2rayN/V2BOX (без встроенного TUN) */
+  wbSocksOnly: boolean;
+  /** Порт локального SOCKS (0 = 10808 по умолчанию) */
+  wbSocksPort: number;
+  /** WB Stream xray routing preset (v2rayN-style) — только для полного TUN */
   wbRoutingMode: 'global' | 'bypass_lan' | 'ru_direct' | 'custom';
   wbRoutingRules: WBRoutingRule[];
 }
@@ -88,6 +92,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wbProxyAuth: 'auto',
   wbProxyUser: '',
   wbProxyPass: '',
+  wbSocksOnly: true,
+  wbSocksPort: 10808,
   wbRoutingMode: 'global',
   wbRoutingRules: [],
 };

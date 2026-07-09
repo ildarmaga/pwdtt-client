@@ -18,6 +18,7 @@ import { activeServerStore } from './lib/stores/activeServerStore';
 import { tunnelStatsStore } from './lib/stores/tunnelStatsStore';
 import type { LogLevel } from './lib/stores/logStore';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { wbSocksStore } from './lib/stores/wbSocksStore';
 import { settingsStore } from './lib/store';
 import { SetTrayEnabled } from '../wailsjs/go/backend/App';
 
@@ -82,11 +83,23 @@ function useWailsEvents() {
           tunnelStore.set('idle');
           activeServerStore.setId(null);
           tunnelStatsStore.reset();
+          wbSocksStore.clear();
           logStore.push('INFO', '— Отключено');
         }
         else if (s === 'connecting') {
           tunnelStore.set('connecting');
+          wbSocksStore.clear();
         }
+      }),
+      EventsOn('wb_socks_ready', (host: unknown, port: unknown, user: unknown, pass: unknown) => {
+        const h = String(host ?? '');
+        const p = Number(port) || 0;
+        if (!h || !p) {
+          wbSocksStore.clear();
+          return;
+        }
+        wbSocksStore.set(h, p, String(user ?? ''), String(pass ?? ''));
+        logStore.push('INFO', `SOCKS5 → ${h}:${p} (для v2rayN)`);
       }),
       EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, assignedWorkers: unknown, connectedAtMs: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
         const rxN = Number(rx) || 0;

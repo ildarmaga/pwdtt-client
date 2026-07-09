@@ -144,6 +144,23 @@ function installGoMock() {
           }
           startDevTunnelStats();
         },
+        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown) => {
+          emitDevEvent('log', 'INFO', socksOnly ? 'Подключение WB Stream (SOCKS для v2rayN)…' : 'Подключение WB Stream…');
+          emitDevEvent('state_changed', 'connecting');
+          await new Promise(r => setTimeout(r, 700));
+          window.__pwdttDevConnected = true;
+          if (socksOnly) {
+            const port = Number(socksPort) || 10808;
+            const user = String(socksUser || 'devuser');
+            const pass = String(socksPass || 'devpass');
+            emitDevEvent('wb_socks_ready', '127.0.0.1', port, user, pass);
+            emitDevEvent('log', 'INFO', `✓ SOCKS5 127.0.0.1:${port}`);
+          } else {
+            emitDevEvent('log', 'INFO', '✓ WB Stream активен');
+          }
+          emitDevEvent('state_changed', 'running');
+          startDevTunnelStats();
+        },
         Disconnect: async () => {
           const proto = settingsStore.get().tunnelProtocol;
           stopDevTunnelStats();
@@ -151,10 +168,22 @@ function installGoMock() {
           emitDevEvent('log', 'INFO', proto === 'vk' ? 'Отключение VK…' : 'Отключение WB…');
           await new Promise(r => setTimeout(r, 400));
           window.__pwdttDevConnected = false;
+          emitDevEvent('wb_socks_ready', '', 0, '', '');
           emitDevEvent('state_changed', 'stopped');
           emitDevEvent('log', 'STATUS', 'DISCONNECTED');
           emitDevEvent('log', 'INFO', '— Отключено');
         },
+        DisconnectWB: async () => {
+          stopDevTunnelStats();
+          emitDevEvent('state_changed', 'disconnecting');
+          emitDevEvent('log', 'INFO', 'Отключение WB…');
+          await new Promise(r => setTimeout(r, 400));
+          window.__pwdttDevConnected = false;
+          emitDevEvent('wb_socks_ready', '', 0, '', '');
+          emitDevEvent('state_changed', 'stopped');
+          emitDevEvent('log', 'INFO', '— Отключено');
+        },
+        GetWBSocksEndpoint: async () => ({ ok: false }),
         Reconnect: async () => {
           emitDevEvent('state_changed', 'connecting');
           await new Promise(r => setTimeout(r, 600));

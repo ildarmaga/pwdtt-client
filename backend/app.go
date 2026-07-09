@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -89,14 +90,30 @@ func (a *App) Disconnect() {
 func (a *App) Reconnect() error { return a.orch.Reconnect() }
 func (a *App) IsRunning() bool  { return a.orch.IsRunning() }
 
-// ConnectWB поднимает WB Stream туннель (gVisor netstack + WebRTC/KCP).
-func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool) error {
+// ConnectWB поднимает WB Stream. socksOnly=true — как iOS: только SOCKS5 для v2rayN/V2BOX (без встроенного TUN).
+func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass string) error {
 	// Ensure the VK/orch tunnel is stopped before starting WB so the two
 	// don't coexist and fight over routes / produce a peer-restart storm.
 	if a.orch.IsRunning() {
 		a.orch.Stop()
 	}
-	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch, dualTrack)
+	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch, dualTrack, socksOnly, socksPort, socksUser, socksPass)
+}
+
+// GetWBSocksEndpoint returns local SOCKS5 details when WB is in socks-only mode.
+func (a *App) GetWBSocksEndpoint() map[string]interface{} {
+	host, port, user, pass, ok := a.wb.SocksEndpoint()
+	if !ok {
+		return map[string]interface{}{"ok": false}
+	}
+	return map[string]interface{}{
+		"ok":   true,
+		"host": host,
+		"port": port,
+		"user": user,
+		"pass": pass,
+		"url":  fmt.Sprintf("socks5://%s:%s@%s:%d", user, pass, host, port),
+	}
 }
 
 // DisconnectWB останавливает WB Stream туннель.
