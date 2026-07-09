@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.201] — 2026-07-09
+
+### Fix — WB TUN: после warmup окно KCP залипало (Telegram-шторм + баг CC)
+- **Разбор 0.3.200**: bring-up/warmup OK (`ip=178…`), LAN bypass до split. Через ~15 с: `rtt=1435 ewma=250 floor=155 wnd=64` → пила `0 B/s`. На сервере за минуту **221 connect**, из них **166 → 149.154 (Telegram)**.
+- **Причины**:
+  1. `nextKCPWnd` проверял shrink по ewma **раньше** grow по recent-min → при `ewma=250 > shrinkThresh` grow недостижим, `wnd=64` навсегда (тест 1.4.63 покрывал только dead-band).
+  2. `handleSOCKS` (путь xray) открывал smux **без** `streamSem` → сотни параллельных потоков в одну KCP.
+  3. `mode=custom` без правил = 6 rules без блока QUIC (в global он был).
+- **Фикс**: grow до shrink; `streamSem` на SOCKS; всегда block UDP/443. Нужен и клиент, и сервер ≥1.4.65 (общий relay).
+
 ## [0.3.200] — 2026-07-09
 
 ### Fix — WB TUN: LAN bypass ставился после split-default (~10 с hairpin)
