@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.200] — 2026-07-09
+
+### Fix — WB TUN: LAN bypass ставился после split-default (~10 с hairpin)
+- **Поле 0.3.199**: bypass появился (`LAN bypass 192.168…`, `172.31.255.254`), но **после** `split default routes` с паузой ~10 с (`20:46:00` → `20:46:10`). В это окно весь LAN/шум уже шёл в KCP → warmup timeout, `wnd=64`, пила `0 B/s`.
+- **Причина**: `route -p ADD` (persistent) на Windows тормозит по секунде на маршрут; плюс порядок «сначала split, потом bypass».
+- **Фикс**: LAN/sink bypass **до** split-default (RouteShell + gVisor); `route ADD` без `-p` (session-only, teardown и так чистит).
+
 ## [0.3.199] — 2026-07-09
 
 ### Fix — WB встроенный TUN: LAN/wintun-шум валился в KCP (iOS ок, ПК вставал)
