@@ -57,6 +57,7 @@ function ServerIcon({ iconKey, size }: { iconKey?: string; size: number }) {
 }
 import AddServer from '../modals/Add-server';
 import EditServer from '../modals/Edit-server';
+import SocksPanel from '../modals/SocksPanel';
 import { serverStore, settingsStore } from '../lib/store';
 import { tunnelStore } from '../lib/stores/tunnelStore';
 import { activeServerStore } from '../lib/stores/activeServerStore';
@@ -733,8 +734,8 @@ export default function Connect() {
           width: 100%;
           background: var(--surface);
           border: 1px solid var(--border);
-          border-radius: 14px;
-          padding: 12px 14px;
+          border-radius: 12px;
+          padding: 10px 12px;
           pointer-events: none;
         }
         .session-stats--idle .session-stat-value,
@@ -745,101 +746,40 @@ export default function Connect() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          gap: 12px;
-          margin-bottom: 10px;
-          font-size: 12px;
+          gap: 8px;
+          margin-bottom: 8px;
+          font-size: 11px;
           color: var(--text-3);
+          pointer-events: auto;
         }
         .session-meta strong { color: var(--text); font-weight: 600; }
-        .session-meta--idle { color: var(--text-4); }
-        .session-stats-grid { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
-        .session-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .session-meta--idle { color: var(--text-4); pointer-events: none; }
+        .session-stats-grid { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+        .session-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
         .session-stat--right { align-items: flex-end; text-align: right; }
-        .session-stat-label { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-4); }
-        .session-stat-value { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .session-stat-sub { font-size: 11px; color: var(--accent); }
-        .session-latency { display: flex; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-2); font-size: 11px; color: var(--text-3); }
-        .session-latency span { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; min-width: 0; }
-        .session-latency strong { font-size: 12px; color: var(--text); font-weight: 600; }
-        .session-stats-row {
-          position: relative;
-          display: flex;
-          align-items: stretch;
-          gap: 8px;
-          width: 100%;
-          pointer-events: none;
-        }
-        .session-stats-row .session-stats { flex: 1; min-width: 0; margin: 0; }
-        .socks-side-btn {
+        .session-stat-label { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-4); }
+        .session-stat-value { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .session-stat-sub { font-size: 10px; color: var(--accent); }
+        .session-latency { display: flex; justify-content: space-between; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border-2); font-size: 10px; color: var(--text-3); }
+        .session-latency span { display: flex; flex-direction: column; align-items: center; gap: 1px; flex: 1; min-width: 0; }
+        .session-latency strong { font-size: 11px; color: var(--text); font-weight: 600; }
+        .socks-chip {
           pointer-events: auto;
-          flex: 0 0 auto;
-          writing-mode: vertical-rl;
-          text-orientation: mixed;
-          transform: rotate(180deg);
-          padding: 10px 6px;
-          border-radius: 10px;
-          border: 1px solid var(--border);
-          background: var(--surface);
-          color: var(--text-3);
-          font-size: 11px;
+          flex-shrink: 0;
+          padding: 2px 8px;
+          border-radius: 5px;
+          border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+          background: color-mix(in srgb, var(--accent) 14%, transparent);
+          color: var(--accent);
+          font-size: 9px;
           font-weight: 700;
-          letter-spacing: 0.08em;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
           cursor: pointer;
           font-family: inherit;
+          line-height: 1.4;
         }
-        .socks-side-btn:hover,
-        .socks-side-btn--open {
-          border-color: var(--accent);
-          color: var(--accent-fg);
-          background: var(--accent);
-        }
-        .socks-popover {
-          pointer-events: auto;
-          position: absolute;
-          left: 0;
-          right: 0;
-          top: calc(100% + 8px);
-          z-index: 35;
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: 14px;
-          padding: 12px 14px;
-          text-align: left;
-          box-shadow: var(--shadow);
-          animation: modal-in 0.15s ease-out;
-        }
-        .socks-card-title {
-          display: inline-block;
-          font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
-          color: var(--accent-fg); background: var(--accent);
-          border-radius: 6px; padding: 4px 10px; margin-bottom: 8px;
-          font-weight: 600;
-        }
-        .socks-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--text-3); min-width: 0; }
-        .socks-card-row:last-of-type { margin-bottom: 10px; }
-        .socks-card-row strong { color: var(--text); font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .socks-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-        .socks-card-btn {
-          flex: 1 1 auto;
-          min-width: 0;
-          padding: 7px 10px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          background: var(--bg-2);
-          color: var(--text);
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          font-family: inherit;
-        }
-        .socks-card-btn:hover { border-color: var(--accent); color: var(--accent); }
-        .socks-card-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
-        .socks-card-btn--primary:hover { filter: brightness(1.05); color: var(--accent-fg); }
-        .socks-card-btn--tg { flex: 1 1 100%; }
+        .socks-chip:hover { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
         .icon-picker { position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; box-shadow: var(--shadow); display: grid; grid-template-columns: repeat(6, 36px); gap: 4px; animation: modal-in 0.15s ease-out; }
         .icon-picker-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 18px; }
         .icon-picker-btn:hover { background: var(--bg-3); border-color: var(--border); }
@@ -934,13 +874,24 @@ export default function Connect() {
             <span className="tunnel-label">{selected ? TUNNEL_LABEL[tunnelState] : 'Нет серверов'}</span>
           </div>
 
-          <div className="session-stats-row">
           <div className={`session-stats${statsLive ? '' : ' session-stats--idle'}`}>
           <div className={`session-meta${tunnelState === 'connecting' || tunnelState === 'connected' ? '' : ' session-meta--idle'}`}>
             <span>{durationLabel}: <strong>{durationDisplay}</strong></span>
-            {workersDisplay != null && (
-              <span title="Активные TURN-воркеры из назначенных">Воркеры: <strong>{workersDisplay}</strong></span>
-            )}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {workersDisplay != null && (
+                <span title="Активные TURN-воркеры из назначенных">Воркеры: <strong>{workersDisplay}</strong></span>
+              )}
+              {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
+                <button
+                  type="button"
+                  className="socks-chip"
+                  title="SOCKS5"
+                  onClick={() => setSocksOpen(true)}
+                >
+                  SOCKS
+                </button>
+              )}
+            </span>
           </div>
           <div className="session-stats-grid">
             <div className="session-stat">
@@ -964,79 +915,9 @@ export default function Connect() {
           </div>
           </div>
 
-          {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
-            <button
-              type="button"
-              className={`socks-side-btn${socksOpen ? ' socks-side-btn--open' : ''}`}
-              title="SOCKS5"
-              onClick={() => setSocksOpen(o => !o)}
-            >
-              SOCKS
-            </button>
-          )}
-
           {socksOpen && socksEp && (
-            <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 34 }} onClick={() => setSocksOpen(false)} />
-              <div className="socks-popover" onClick={e => e.stopPropagation()}>
-                <div className="socks-card-title">SOCKS5</div>
-                <div className="socks-card-row">
-                  Адрес: <strong>{socksEp.host}:{socksEp.port}</strong>
-                </div>
-                {socksEp.user ? (
-                  <div className="socks-card-row">
-                    Auth: <strong title={`${socksEp.user}:${socksEp.pass}`}>{socksEp.user} · ••••</strong>
-                  </div>
-                ) : (
-                  <div className="socks-card-row">Auth: <strong>без пароля</strong></div>
-                )}
-                <div className="socks-card-actions">
-                  <button
-                    type="button"
-                    className="socks-card-btn socks-card-btn--primary"
-                    onClick={() => {
-                      const url = wbSocksStore.url(socksEp);
-                      void navigator.clipboard?.writeText(url).then(
-                        () => toastStore.show('SOCKS URL скопирован', 2500),
-                        () => toastStore.show(url, 5000),
-                      );
-                    }}
-                  >
-                    Копировать URL
-                  </button>
-                  <button
-                    type="button"
-                    className="socks-card-btn"
-                    onClick={() => {
-                      const line = `${socksEp.host}:${socksEp.port}`;
-                      void navigator.clipboard?.writeText(line).then(
-                        () => toastStore.show('Адрес скопирован', 2500),
-                        () => toastStore.show(line, 5000),
-                      );
-                    }}
-                  >
-                    Адрес
-                  </button>
-                  <button
-                    type="button"
-                    className="socks-card-btn socks-card-btn--tg"
-                    title="Скопировать ссылку для вставки прокси в Telegram"
-                    onClick={() => {
-                      const url = wbSocksStore.telegramUrl(socksEp);
-                      void navigator.clipboard?.writeText(url).then(
-                        () => toastStore.show('Ссылка для Telegram скопирована', 2500),
-                        () => toastStore.show(url, 5000),
-                      );
-                    }}
-                  >
-                    <IconBrandTelegram size={15} stroke={1.8} />
-                    Telegram
-                  </button>
-                </div>
-              </div>
-            </>
+            <SocksPanel endpoint={socksEp} onClose={() => setSocksOpen(false)} />
           )}
-          </div>
         </div>
 
         <div className="status-bar">
