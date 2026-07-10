@@ -37,13 +37,22 @@ export const wbSocksStore = {
     fn(endpoint);
     return () => { listeners.delete(fn); };
   },
-  /** socks5://user:pass@host:port — for paste into v2rayN / Clash */
-  url(ep: WBSocksEndpoint | null = endpoint): string {
-    if (!ep) return '';
-    if (ep.user) {
-      return `socks5://${encodeURIComponent(ep.user)}:${encodeURIComponent(ep.pass)}@${ep.host}:${ep.port}`;
+  /** Fragment: «MAGIC VPN» + «ildar» → MAGIC_VPN-ildar */
+  shareLabel(vpnName: string, userName: string): string {
+    const vpn = vpnName.trim().replace(/\s+/g, '_');
+    const user = userName.trim().replace(/\s+/g, '_');
+    if (vpn && user && user.toLowerCase() !== vpn.toLowerCase()) {
+      return `${vpn}-${user}`;
     }
-    return `socks5://${ep.host}:${ep.port}`;
+    return vpn || user || 'WDTT';
+  },
+  /** socks://user:pass@host:port#MAGIC_VPN-ildar */
+  url(ep: WBSocksEndpoint | null = endpoint, label = ''): string {
+    if (!ep) return '';
+    const auth = ep.user ? `${ep.user}:${ep.pass}@` : '';
+    const base = `socks://${auth}${ep.host}:${ep.port}`;
+    const tag = label.trim().replace(/\s+/g, '_');
+    return tag ? `${base}#${tag}` : base;
   },
   /** tg://socks?server=&port=&user=&pass= — открыть прокси в Telegram */
   telegramUrl(ep: WBSocksEndpoint | null = endpoint): string {

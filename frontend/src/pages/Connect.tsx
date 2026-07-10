@@ -916,7 +916,14 @@ export default function Connect() {
           </div>
 
           {socksOpen && socksEp && (
-            <SocksPanel endpoint={socksEp} onClose={() => setSocksOpen(false)} />
+            <SocksPanel
+              endpoint={socksEp}
+              label={wbSocksStore.shareLabel(
+                displayServer?.vpnName || traffic?.title || '',
+                displayServer?.name || '',
+              )}
+              onClose={() => setSocksOpen(false)}
+            />
           )}
         </div>
 

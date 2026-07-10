@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.218] — 2026-07-10
+
+### UI — формат SOCKS URL
+- Копирование: `socks://user:pass@127.0.0.1:10809#MAGIC_VPN-ildar` (vpn + имя профиля).
+
 ## [0.3.217] — 2026-07-10
 
 ### UI — Telegram открывает прокси сам

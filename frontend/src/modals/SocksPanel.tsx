@@ -5,16 +5,20 @@ import { toastStore } from '../lib/stores/toastStore';
 
 interface Props {
   endpoint: WBSocksEndpoint;
+  /** Share fragment, e.g. MAGIC_VPN-ildar */
+  label?: string;
   onClose: () => void;
 }
 
-export default function SocksPanel({ endpoint, onClose }: Props) {
+export default function SocksPanel({ endpoint, label = '', onClose }: Props) {
   const copy = (text: string, ok: string) => {
     void navigator.clipboard?.writeText(text).then(
       () => toastStore.show(ok, 2500),
       () => toastStore.show(text, 5000),
     );
   };
+
+  const shareUrl = wbSocksStore.url(endpoint, label);
 
   const openTelegram = () => {
     const url = wbSocksStore.telegramUrl(endpoint);
@@ -96,13 +100,20 @@ export default function SocksPanel({ endpoint, onClose }: Props) {
               <strong>без пароля</strong>
             )}
           </div>
+          {label ? (
+            <div className="sk-row">
+              <span>Имя</span>
+              <strong>{label}</strong>
+            </div>
+          ) : null}
 
           <div className="sk-section">Действия</div>
           <div className="sk-actions">
             <button
               type="button"
               className="sk-btn sk-btn--primary"
-              onClick={() => copy(wbSocksStore.url(endpoint), 'SOCKS URL скопирован')}
+              title={shareUrl}
+              onClick={() => copy(shareUrl, 'SOCKS URL скопирован')}
             >
               Копировать URL
             </button>
