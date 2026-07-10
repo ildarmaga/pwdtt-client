@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -109,13 +110,19 @@ func (a *App) GetWBSocksEndpoint() map[string]interface{} {
 	if !ok {
 		return map[string]interface{}{"ok": false}
 	}
+	// iOS-compatible share URL: socks://BASE64(user:pass)@host:port
+	url := fmt.Sprintf("socks://%s:%d", host, port)
+	if user != "" {
+		creds := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+		url = fmt.Sprintf("socks://%s@%s:%d", creds, host, port)
+	}
 	return map[string]interface{}{
 		"ok":   true,
 		"host": host,
 		"port": port,
 		"user": user,
 		"pass": pass,
-		"url":  fmt.Sprintf("socks5://%s:%s@%s:%d", user, pass, host, port),
+		"url":  url,
 	}
 }
 
