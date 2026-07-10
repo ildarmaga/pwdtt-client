@@ -37,7 +37,7 @@ export default function Hash({ hashes, onClose, onSave }: Props) {
   return (
     <>
       <style>{`
-        .hash-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 200; animation: overlay-in 0.3s ease-out; }
+        .hash-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: flex; align-items: center; justify-content: center; z-index: 200; animation: overlay-in 0.3s ease-out; }
         .hash-modal { background: var(--surface); border-radius: 14px; padding: 20px; width: 380px; max-width: 95vw; box-shadow: var(--shadow); border: 1px solid var(--border); animation: modal-in 0.3s ease-out; }
         .hash-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: var(--text); }
         .hash-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }

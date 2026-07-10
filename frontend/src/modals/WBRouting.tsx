@@ -81,7 +81,7 @@ export default function WBRouting({ onClose }: Props) {
   return (
     <>
       <style>{`
-        .rt-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 12px; z-index: 110; animation: overlay-in 0.25s ease-out; }
+        .rt-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: flex; align-items: center; justify-content: center; padding: 12px; z-index: 110; animation: overlay-in 0.25s ease-out; }
         .rt-modal { background: var(--surface); border-radius: 14px; width: min(720px, calc(100vw - 16px)); max-height: calc(100vh - 24px); box-shadow: var(--shadow); border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; animation: modal-in 0.25s ease-out; }
         .rt-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
         .rt-title { font-size: 15px; font-weight: 600; flex: 1; color: var(--text); }

@@ -82,7 +82,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
   return (
     <>
       <style>{`
-        .as-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
+        .as-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: flex; align-items: flex-start; justify-content: center; padding: 16px 0; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
         .as-modal { background: var(--surface); border-radius: 14px; padding: 16px 18px; width: 440px; max-width: calc(100vw - 24px); box-shadow: var(--shadow); border: 1px solid var(--border); overflow: visible; flex-shrink: 0; animation: modal-in 0.3s ease-out; }
         .as-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--text); }
         .as-title { font-size: 16px; font-weight: 600; flex: 1; color: var(--text); }

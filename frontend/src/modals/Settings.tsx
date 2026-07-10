@@ -182,7 +182,7 @@ export default function Settings({ onClose }: Props) {
   return (
     <>
       <style>{`
-        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
+        .st-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100; animation: overlay-in 0.3s ease-out; overflow: hidden; }
         .st-modal { background: var(--surface); border-radius: 12px; padding: 12px 6px 12px 14px; width: min(400px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); box-shadow: var(--shadow); animation: modal-in 0.3s ease-out; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; display: flex; flex-direction: column; box-sizing: border-box; }
         .st-modal-body { overflow-x: hidden; overflow-y: auto; flex: 1; min-height: 0; min-width: 0; padding-right: 12px; scrollbar-gutter: stable both-edges; }
         .st-modal-body::-webkit-scrollbar { width: 5px; }
@@ -251,7 +251,7 @@ export default function Settings({ onClose }: Props) {
         .st-adv-body { overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s; }
         .st-adv-body--open { max-height: 300px; opacity: 1; }
         .st-adv-body--closed { max-height: 0; opacity: 0; pointer-events: none; }
-        .st-confirm-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 200; }
+        .st-confirm-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: flex; align-items: center; justify-content: center; z-index: 200; }
         .st-confirm { background: var(--surface); border-radius: 12px; padding: 16px 14px 14px; width: 300px; max-width: 92vw; box-shadow: var(--shadow); border: 1px solid var(--border); }
         .st-confirm-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
         .st-confirm-text { font-size: 12px; color: var(--text-2); line-height: 1.45; margin-bottom: 14px; }

@@ -74,7 +74,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
   return (
     <>
       <style>{`
-        .vk-auth-overlay { position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 12px; }
+        .vk-auth-overlay { position: fixed; inset: 0; background: var(--overlay-bg); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 12px; }
         .vk-auth-modal { background: var(--surface); border-radius: 14px; width: min(520px, 100%); height: min(720px, calc(100vh - 24px)); display: flex; flex-direction: column; border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
         .vk-auth-modal--native { height: auto; max-height: min(320px, calc(100vh - 24px)); }
         .vk-auth-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-2); }

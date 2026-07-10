@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.219] — 2026-07-10
+
+### UI — SOCKS overlay на весь экран
+- Модалка SOCKS рендерилась внутри `.connect-center` (`transform`) → `position:fixed` только по центру (зелёное пятно). Теперь portal в `document.body` + плотное затемнение без `backdrop-filter` (WebView2 ломает blur).
+
+### Fix — dual-track WBT
+- `SendRaw` больше не чередует треки (striping): один и тот же seq уходит на camera+screenshare. SFU часто роняет screenshare → дыры в reorder → `remote not ready` / долгие SOCKS dial в Telegram. Первый пришедший кадр выигрывает, дубликат отбрасывается.
+
 ## [0.3.218] — 2026-07-10
 
 ### UI — формат SOCKS URL

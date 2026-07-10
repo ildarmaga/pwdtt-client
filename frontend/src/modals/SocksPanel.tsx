@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { IconNetwork, IconBrandTelegram } from '@tabler/icons-react';
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
@@ -31,12 +32,14 @@ export default function SocksPanel({ endpoint, label = '', onClose }: Props) {
     }
   };
 
-  return (
+  // Portal to body: Connect nests this under .connect-center (transform),
+  // which would otherwise clip position:fixed to the center column only.
+  return createPortal(
     <>
       <style>{`
         .sk-overlay {
-          position: fixed; inset: 0; background: var(--overlay-bg); backdrop-filter: blur(4px);
-          display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 100;
+          position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+          display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 200;
           animation: overlay-in 0.2s ease-out;
         }
         .sk-modal {
@@ -136,6 +139,7 @@ export default function SocksPanel({ endpoint, label = '', onClose }: Props) {
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
