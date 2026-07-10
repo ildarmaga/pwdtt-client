@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.220] — 2026-07-10
+
+### Fix — dual-track: KCP только на camera
+- v0.3.219 redundant fan-out удваивал uplink и не чинил creator (сервер ещё на striping).
+- Теперь `SendRaw` всегда на camera; screenshare только для SFU. Нужен сервер ≥1.4.80.
+
 ## [0.3.219] — 2026-07-10
 
 ### UI — SOCKS overlay на весь экран
