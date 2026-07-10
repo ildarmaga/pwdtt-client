@@ -1,12 +1,18 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.212] — 2026-07-10
+
+### Fix — Dual-track снова выбор пользователя
+- Убран force dual на SocksOnly. Dual=off → 1 трек; Dual=on → 2 (creator scale-up).
+- Нужен сервер ≥1.4.79.
+
 ## [0.3.211] — 2026-07-10
 
 ### Fix — SocksOnly всегда dual (match creator WBT)
 - Creator шлёт 2 VP8 + seq prefix; dual=off на joiner без reorder → `remote not ready` / SOCKS мёртв.
 - SocksOnly форсит dualTrack=true. UI-тумблер для SOCKS-режима больше не отключает второй трек.
-- Нужен сервер ≥1.4.77 (WBT tracks=2).
+- Нужен сервер ≥1.4.77 (WBT tracks=2). Сверхседено 0.3.212.
 
 ## [0.3.210] — 2026-07-10
 
