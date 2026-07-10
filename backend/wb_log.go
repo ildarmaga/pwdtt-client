@@ -13,6 +13,18 @@ func classifyWBLog(raw string) (level, msg string, emit bool) {
 	}
 	low := strings.ToLower(raw)
 
+	// Benign SOCKS teardown (app/CDN closed socket) — already filtered in
+	// relay IsBenignConnError, but keep a UI safety net for older relay builds
+	// and Windows wsarecv wording that used to flood [ERROR].
+	if strings.Contains(raw, "relay: SOCKS") && strings.Contains(raw, "read error:") {
+		if strings.Contains(low, "use of closed") ||
+			strings.Contains(low, "forcibly closed") ||
+			strings.Contains(low, "wsarecv") ||
+			strings.Contains(low, "connection reset") {
+			return "", "", false
+		}
+	}
+
 	// Per-frame media spam only — thousands/sec freeze WebView2.
 	if strings.Contains(raw, "vp8tunnel:") && strings.Contains(raw, "frame #") {
 		return "", "", false

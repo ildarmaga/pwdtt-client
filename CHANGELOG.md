@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.209] — 2026-07-10
+
+### Fix — тихий лог при нормальном закрытии SOCKS (Windows)
+- Relay `IsBenignConnError` + UI `classifyWBLog`: больше не красим в `[ERROR]` обычные closes (`use of closed`, `wsarecv` / `forcibly closed by the remote host`).
+- Это был шум от приложений/CDN, не падение туннеля. Нужен сервер ≥1.4.74 (тот же фильтр на creator).
+
 ## [0.3.208] — 2026-07-09
 
 ### Fix — Dual-track ломал SOCKS + переключатель в настройках
