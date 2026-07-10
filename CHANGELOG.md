@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.222] — 2026-07-10
+
+### Fix — SOCKS UDP для Steam / v2rayN TUN
+- UDP ASSOCIATE стал двусторонним: unsolicited datagrams (Steam SDR) больше не теряются.
+- Нужен сервер ≥1.4.82. Тест `TestSocksUDPUnsolicitedDatagrams` зелёный до релиза.
+
 ## [0.3.221] — 2026-07-10
 
 ### Fix — dual-track: drain #3+#4, без seq/reorder, тесты до релиза
