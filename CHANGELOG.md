@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.221] — 2026-07-10
+
+### Fix — dual-track: drain #3+#4, без seq/reorder, тесты до релиза
+- ICE rebind давал track #3/#4 в тот же VP8 → `remote not ready`; scale-up RestartLink только 1 раз.
+- KCP = camera-only без seq (как single). Сервер ≥1.4.81.
+- Регрессии прогнаны: SOCKS×48 dual, drain policy, no-reorder.
+
 ## [0.3.220] — 2026-07-10
 
 ### Fix — dual-track: KCP только на camera
