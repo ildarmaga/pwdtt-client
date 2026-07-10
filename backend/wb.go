@@ -504,7 +504,7 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if !dead {
 				continue
 			}
-			// RelayBridge has no KCP RTT (WBT always 0). Do not kill on RTT-based
+			// SOCKS/WBT: RTT may be 0 briefly before KCP settles. Do not kill on RTT-based
 			// reasons; SOCKS_READY + traffic refresh lastHealthy. Soft KCP recover
 			// is meaningless in socks-only mode.
 			if socks {
@@ -765,7 +765,7 @@ func (m *WBManager) onStatus(code string) {
 	case "SOCKS_READY":
 		m.mu.Lock()
 		host, port, user, pass := m.socksHost, m.socksPort, m.socksUser, m.socksPass
-		// RelayBridge has no KCP RTT — mark healthy when SOCKS is up so the
+		// WBT RTT may still be 0 when SOCKS first binds — mark healthy so the
 		// watchdog does not kill after wbConnectTimeout ("туннель не поднялся").
 		m.lastHealthy = time.Now()
 		m.mu.Unlock()
@@ -872,7 +872,7 @@ func (m *WBManager) onStats(rx, tx, rtt, fps int64) {
 	if total > m.lastTrafficBytes+1024 {
 		m.lastTrafficAt = now
 		m.lastTrafficBytes = total
-		// SOCKS/RelayBridge: traffic proves the data path; RTT stays 0.
+		// SOCKS/WBT: traffic proves the data path while RTT is still settling.
 		if socks && rtt <= 0 {
 			m.lastHealthy = now
 		}
