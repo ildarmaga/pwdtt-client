@@ -18,12 +18,10 @@ import (
 
 const (
 	wbStatsLogInterval = 3 * time.Second
-	// Teardown of the previous WB tunnel (gVisor drain + wintun route removal)
-	// can take well over 5s when the link stalled with active flows. Starting a
-	// new connection before the old adapter's split-default routes are gone
-	// sends guest-register auth into the dead tunnel → TLS handshake timeout on
-	// every reconnect. Wait long enough for a full serial teardown (iOS-style).
-	wbShutdownWait = 25 * time.Second
+	// Teardown of the previous WB tunnel. SOCKS relays are force-closed on
+	// Joiner.Close (2s cap); keep a short wait so reconnect does not race the
+	// old Run() goroutine, without the old 25s hang under v2rayN keepalives.
+	wbShutdownWait = 8 * time.Second
 
 	// Liveness: healthy stats report rtt > 0 (~90-140ms). After "tunnel lost"
 	// the runner keeps emitting stats with rtt == 0 while its internal
@@ -190,8 +188,18 @@ func (m *WBManager) connect(room, routingPayload string) error {
 
 	m.mu.Lock()
 	if m.cancel != nil {
+		// Already up (UI desync / double-click). Re-emit connected so frontend recovers.
+		socksReady := m.socksReady
+		host, port, user, pass := m.socksHost, m.socksPort, m.socksUser, m.socksPass
 		m.mu.Unlock()
-		return fmt.Errorf("WB туннель уже запущен")
+		m.emitLog("INFO", "[WB] туннель уже активен — синхронизирую UI")
+		if socksReady && host != "" && port > 0 {
+			runtime.EventsEmit(m.ctx, "wb_socks_ready", host, port, user, pass)
+			runtime.EventsEmit(m.ctx, "state_changed", "running")
+		} else {
+			runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+		}
+		return nil
 	}
 	if m.stop {
 		m.mu.Unlock()

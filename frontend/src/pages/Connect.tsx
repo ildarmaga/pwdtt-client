@@ -65,7 +65,6 @@ import { tunnelStatsStore, formatRate, formatMs, formatDuration, type TunnelStat
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
-import { settingsModalStore } from '../lib/stores/settingsModalStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import ProtocolSelector from '../components/ProtocolSelector';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
@@ -75,7 +74,7 @@ import type { Server, TunnelState, TunnelProtocol } from '../lib/types';
 import { resolveConnectHashes } from '../lib/resolveConnectHashes';
 import { buildRoutingPayload } from '../lib/wbRouting';
 import { logStore } from '../lib/stores/logStore';
-import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB } from '../../wailsjs/go/backend/App';
+import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB, GetWBSocksEndpoint, IsWBRunning } from '../../wailsjs/go/backend/App';
 
 const PING_COLORS: Record<string, string> = {
   good: '#22c55e',
@@ -179,12 +178,40 @@ export default function Connect() {
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
   const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
+  const [socksOpen, setSocksOpen] = useState(false);
   useEffect(() => settingsStore.subscribe(s => {
     setMetricsRefreshSec(s.metricsRefreshSec);
     setTunnelProtocol(s.tunnelProtocol);
   }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
   useEffect(() => wbSocksStore.subscribe(setSocksEp), []);
+  useEffect(() => {
+    if (tunnelState !== 'connected' || !socksEp) setSocksOpen(false);
+  }, [tunnelState, socksEp]);
+
+  // Sync UI with backend: after disconnect race / route change the store can
+  // show idle while WB is still up (toast «туннель уже запущен»).
+  useEffect(() => {
+    if (tunnelProtocol !== 'wb') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const running = await IsWBRunning();
+        if (cancelled || !running) return;
+        const ep = await GetWBSocksEndpoint();
+        if (cancelled) return;
+        if (ep && ep.ok) {
+          wbSocksStore.set(String(ep.host), Number(ep.port) || 0, String(ep.user ?? ''), String(ep.pass ?? ''));
+          if (tunnelStore.get() === 'idle' || tunnelStore.get() === 'disconnecting') {
+            tunnelStore.set('connected');
+          }
+        } else if (tunnelStore.get() === 'idle') {
+          tunnelStore.set('connecting');
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [tunnelProtocol]);
 
   useEffect(() => {
     return wdttLinkStore.subscribe((link) => {
@@ -412,11 +439,15 @@ export default function Connect() {
           await WailsDisconnect();
         }
       } finally {
-        tunnelStore.set('idle');
-        activeServerStore.setId(null);
-        tunnelStatsStore.reset();
+        // DisconnectWB emits stopped → idle; keep idle even if event was missed.
+        if (tunnelStore.get() === 'disconnecting') {
+          tunnelStore.set('idle');
+          activeServerStore.setId(null);
+          tunnelStatsStore.reset();
+          wbSocksStore.clear();
+        }
       }
-      setReconnectAt(Date.now() + 2000);
+      setReconnectAt(Date.now() + 1500);
     }
   };
 
@@ -730,24 +761,60 @@ export default function Connect() {
         .session-latency { display: flex; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-2); font-size: 11px; color: var(--text-3); }
         .session-latency span { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; min-width: 0; }
         .session-latency strong { font-size: 12px; color: var(--text); font-weight: 600; }
-        .socks-card {
+        .session-stats-row {
+          position: relative;
+          display: flex;
+          align-items: stretch;
+          gap: 8px;
           width: 100%;
-          margin-top: 10px;
+          pointer-events: none;
+        }
+        .session-stats-row .session-stats { flex: 1; min-width: 0; margin: 0; }
+        .socks-side-btn {
+          pointer-events: auto;
+          flex: 0 0 auto;
+          writing-mode: vertical-rl;
+          text-orientation: mixed;
+          transform: rotate(180deg);
+          padding: 10px 6px;
+          border-radius: 10px;
+          border: 1px solid var(--border);
+          background: var(--surface);
+          color: var(--text-3);
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          cursor: pointer;
+          font-family: inherit;
+        }
+        .socks-side-btn:hover,
+        .socks-side-btn--open {
+          border-color: var(--accent);
+          color: var(--accent-fg);
+          background: var(--accent);
+        }
+        .socks-popover {
+          pointer-events: auto;
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: calc(100% + 8px);
+          z-index: 35;
           background: var(--surface);
           border: 1px solid var(--border);
           border-radius: 14px;
           padding: 12px 14px;
-          pointer-events: auto;
           text-align: left;
+          box-shadow: var(--shadow);
+          animation: modal-in 0.15s ease-out;
         }
         .socks-card-title {
-          display: inline-flex; align-items: center; gap: 4px;
+          display: inline-block;
           font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
-          color: var(--accent-fg); background: var(--accent); border: none;
+          color: var(--accent-fg); background: var(--accent);
           border-radius: 6px; padding: 4px 10px; margin-bottom: 8px;
-          cursor: pointer; font-weight: 600; font-family: inherit;
+          font-weight: 600;
         }
-        .socks-card-title:hover { filter: brightness(1.08); }
         .socks-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--text-3); min-width: 0; }
         .socks-card-row:last-of-type { margin-bottom: 10px; }
         .socks-card-row strong { color: var(--text); font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -763,10 +830,16 @@ export default function Connect() {
           font-size: 12px;
           font-weight: 600;
           cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          font-family: inherit;
         }
         .socks-card-btn:hover { border-color: var(--accent); color: var(--accent); }
         .socks-card-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
         .socks-card-btn--primary:hover { filter: brightness(1.05); color: var(--accent-fg); }
+        .socks-card-btn--tg { flex: 1 1 100%; }
         .icon-picker { position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px; box-shadow: var(--shadow); display: grid; grid-template-columns: repeat(6, 36px); gap: 4px; animation: modal-in 0.15s ease-out; }
         .icon-picker-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 18px; }
         .icon-picker-btn:hover { background: var(--bg-3); border-color: var(--border); }
@@ -861,6 +934,7 @@ export default function Connect() {
             <span className="tunnel-label">{selected ? TUNNEL_LABEL[tunnelState] : 'Нет серверов'}</span>
           </div>
 
+          <div className="session-stats-row">
           <div className={`session-stats${statsLive ? '' : ' session-stats--idle'}`}>
           <div className={`session-meta${tunnelState === 'connecting' || tunnelState === 'connected' ? '' : ' session-meta--idle'}`}>
             <span>{durationLabel}: <strong>{durationDisplay}</strong></span>
@@ -888,59 +962,82 @@ export default function Connect() {
               </span>
             ))}
           </div>
-        </div>
+          </div>
 
           {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
-            <div className="socks-card">
-              <button
-                type="button"
-                className="socks-card-title"
-                title="Настройки WB / SOCKS"
-                onClick={() => settingsModalStore.open()}
-              >
-                SOCKS5
-              </button>
-              <div className="socks-card-row">
-                Адрес: <strong>{socksEp.host}:{socksEp.port}</strong>
-              </div>
-              {socksEp.user ? (
+            <button
+              type="button"
+              className={`socks-side-btn${socksOpen ? ' socks-side-btn--open' : ''}`}
+              title="SOCKS5"
+              onClick={() => setSocksOpen(o => !o)}
+            >
+              SOCKS
+            </button>
+          )}
+
+          {socksOpen && socksEp && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 34 }} onClick={() => setSocksOpen(false)} />
+              <div className="socks-popover" onClick={e => e.stopPropagation()}>
+                <div className="socks-card-title">SOCKS5</div>
                 <div className="socks-card-row">
-                  Auth: <strong title={`${socksEp.user}:${socksEp.pass}`}>{socksEp.user} · ••••</strong>
+                  Адрес: <strong>{socksEp.host}:{socksEp.port}</strong>
                 </div>
-              ) : (
-                <div className="socks-card-row">Auth: <strong>без пароля</strong></div>
-              )}
-              <div className="socks-card-actions">
-                <button
-                  type="button"
-                  className="socks-card-btn socks-card-btn--primary"
-                  onClick={() => {
-                    const url = wbSocksStore.url(socksEp);
-                    void navigator.clipboard?.writeText(url).then(
-                      () => toastStore.show('SOCKS URL скопирован', 2500),
-                      () => toastStore.show(url, 5000),
-                    );
-                  }}
-                >
-                  Копировать URL
-                </button>
-                <button
-                  type="button"
-                  className="socks-card-btn"
-                  onClick={() => {
-                    const line = `${socksEp.host}:${socksEp.port}`;
-                    void navigator.clipboard?.writeText(line).then(
-                      () => toastStore.show('Адрес скопирован', 2500),
-                      () => toastStore.show(line, 5000),
-                    );
-                  }}
-                >
-                  Адрес
-                </button>
+                {socksEp.user ? (
+                  <div className="socks-card-row">
+                    Auth: <strong title={`${socksEp.user}:${socksEp.pass}`}>{socksEp.user} · ••••</strong>
+                  </div>
+                ) : (
+                  <div className="socks-card-row">Auth: <strong>без пароля</strong></div>
+                )}
+                <div className="socks-card-actions">
+                  <button
+                    type="button"
+                    className="socks-card-btn socks-card-btn--primary"
+                    onClick={() => {
+                      const url = wbSocksStore.url(socksEp);
+                      void navigator.clipboard?.writeText(url).then(
+                        () => toastStore.show('SOCKS URL скопирован', 2500),
+                        () => toastStore.show(url, 5000),
+                      );
+                    }}
+                  >
+                    Копировать URL
+                  </button>
+                  <button
+                    type="button"
+                    className="socks-card-btn"
+                    onClick={() => {
+                      const line = `${socksEp.host}:${socksEp.port}`;
+                      void navigator.clipboard?.writeText(line).then(
+                        () => toastStore.show('Адрес скопирован', 2500),
+                        () => toastStore.show(line, 5000),
+                      );
+                    }}
+                  >
+                    Адрес
+                  </button>
+                  <button
+                    type="button"
+                    className="socks-card-btn socks-card-btn--tg"
+                    title="Скопировать ссылку для вставки прокси в Telegram"
+                    onClick={() => {
+                      const url = wbSocksStore.telegramUrl(socksEp);
+                      void navigator.clipboard?.writeText(url).then(
+                        () => toastStore.show('Ссылка для Telegram скопирована', 2500),
+                        () => toastStore.show(url, 5000),
+                      );
+                    }}
+                  >
+                    <IconBrandTelegram size={15} stroke={1.8} />
+                    Telegram
+                  </button>
+                </div>
               </div>
-            </div>
+            </>
           )}
           </div>
+        </div>
 
         <div className="status-bar">
           {listOpen && servers.length > 0 && (

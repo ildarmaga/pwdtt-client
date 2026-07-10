@@ -88,7 +88,10 @@ func (a *App) Disconnect() {
 	a.schedulePendingUpdateApply()
 }
 func (a *App) Reconnect() error { return a.orch.Reconnect() }
-func (a *App) IsRunning() bool  { return a.orch.IsRunning() }
+func (a *App) IsRunning() bool { return a.orch.IsRunning() || a.wb.IsRunning() }
+
+// IsWBRunning reports whether the WB Stream tunnel is active (for UI sync).
+func (a *App) IsWBRunning() bool { return a.wb.IsRunning() }
 
 // ConnectWB поднимает WB Stream в режиме SOCKS-only (как iOS → V2BOX). socksOnly игнорируется (всегда true).
 func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass string) error {
