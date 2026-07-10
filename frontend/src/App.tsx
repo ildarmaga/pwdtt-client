@@ -99,7 +99,7 @@ function useWailsEvents() {
           return;
         }
         wbSocksStore.set(h, p, String(user ?? ''), String(pass ?? ''));
-        logStore.push('INFO', `SOCKS5 → ${h}:${p} (для v2rayN)`);
+        logStore.push('INFO', `SOCKS5 → ${h}:${p}`);
       }),
       EventsOn('tunnel_stats', (rx: unknown, tx: unknown, workers: unknown, assignedWorkers: unknown, connectedAtMs: unknown, turnRtt: unknown, dtlsHs: unknown, internetRtt: unknown) => {
         const rxN = Number(rx) || 0;

@@ -65,6 +65,7 @@ import { tunnelStatsStore, formatRate, formatMs, formatDuration, type TunnelStat
 import { trafficStatsStore } from '../lib/stores/trafficStatsStore';
 import { toastStore } from '../lib/stores/toastStore';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
+import { settingsModalStore } from '../lib/stores/settingsModalStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import ProtocolSelector from '../components/ProtocolSelector';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
@@ -739,7 +740,14 @@ export default function Connect() {
           pointer-events: auto;
           text-align: left;
         }
-        .socks-card-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-4); margin-bottom: 8px; }
+        .socks-card-title {
+          display: inline-flex; align-items: center; gap: 4px;
+          font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+          color: var(--accent-fg); background: var(--accent); border: none;
+          border-radius: 6px; padding: 4px 10px; margin-bottom: 8px;
+          cursor: pointer; font-weight: 600; font-family: inherit;
+        }
+        .socks-card-title:hover { filter: brightness(1.08); }
         .socks-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--text-3); min-width: 0; }
         .socks-card-row:last-of-type { margin-bottom: 10px; }
         .socks-card-row strong { color: var(--text); font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -884,7 +892,14 @@ export default function Connect() {
 
           {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
             <div className="socks-card">
-              <div className="socks-card-title">SOCKS5 для v2rayN</div>
+              <button
+                type="button"
+                className="socks-card-title"
+                title="Настройки WB / SOCKS"
+                onClick={() => settingsModalStore.open()}
+              >
+                SOCKS5
+              </button>
               <div className="socks-card-row">
                 Адрес: <strong>{socksEp.host}:{socksEp.port}</strong>
               </div>

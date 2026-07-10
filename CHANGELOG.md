@@ -1,11 +1,32 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.214] — 2026-07-10
+
+### UI — SOCKS компактнее
+- Убраны длинные подсказки про v2rayN / Dual-track из настроек.
+- «Показывать логи» убрано — логи всегда видны.
+- Карточка: заголовок **SOCKS5** (кнопка → настройки), без «для v2rayN».
+
+### Perf — быстрее SOCKS после ICE
+- Вместо жёстких 5 с ожидания: ждём carrier rebound (обычно ~1 с) + 800 мс, иначе fallback 5 с.
+
+### Logs — подробный таймлайн всего туннеля
+- Session: start → auth → signaling Start → end (с длительностями).
+- Joiner: NewJoiner / RestartLink / SwapTunnel с ms; SOCKS dial #1–12 + медленные (>800 мс).
+- ICE: RTP settle, dual wait, pre-SOCKS settle, RestartLink, total bring-up.
+
+## [0.3.213] — 2026-07-10
+
+### Fix — Dual-track 1|2 оба рабочих (с сервером 1.4.79)
+- Пересборка с wbstream: joiner ждёт creator tracks=2 при Dual=on; Dual=off — 1 трек.
+- Тумблер Dual-track снова выбирает режим. Нужен сервер ≥1.4.79.
+
 ## [0.3.212] — 2026-07-10
 
 ### Fix — Dual-track снова выбор пользователя
 - Убран force dual на SocksOnly. Dual=off → 1 трек; Dual=on → 2 (creator scale-up).
-- Нужен сервер ≥1.4.79.
+- Нужен сервер ≥1.4.79. Сверхседено 0.3.213.
 
 ## [0.3.211] — 2026-07-10
 

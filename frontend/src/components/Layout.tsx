@@ -6,11 +6,14 @@ import DevMetricsPanel from './DevMetricsPanel';
 import DevConnectionErrorsPanel from './DevConnectionErrorsPanel';
 import UpdateBanner from './UpdateBanner';
 import { isBrowserDev } from '../lib/dev/mockWails';
+import { settingsModalStore } from '../lib/stores/settingsModalStore';
 
 export default function Layout() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const location = useLocation();
   const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => settingsModalStore.subscribe(() => setSettingsOpen(true)), []);
 
   // Форсируем перерисовку WebView2 после смены роута. Без этого композитор
   // иногда не инвалидирует старый кадр и оставлял «артефакты» элементов

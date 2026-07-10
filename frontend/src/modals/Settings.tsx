@@ -555,14 +555,6 @@ export default function Settings({ onClose }: Props) {
             <>
           <div className="st-section-title">WB Stream · SOCKS</div>
 
-          <div className="st-row">
-            <span>Показывать логи</span>
-            <button
-              className={`st-toggle st-toggle--${settings.wbShowLogs ? 'on' : 'off'}`}
-              onClick={() => update('wbShowLogs', !settings.wbShowLogs)}
-            />
-          </div>
-
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <span>SOCKS порт</span>
             <NumberStepper
@@ -571,11 +563,6 @@ export default function Settings({ onClose }: Props) {
               disabled={locked}
               onChange={v => updateAndSave('wbSocksPort', v)}
             />
-          </div>
-
-          <div className="st-vk-hint">
-            После подключения (~5 с на ICE) вставьте в v2rayN: SOCKS5 → 127.0.0.1:{settings.wbSocksPort || 10809}
-            (логин/пароль — ниже или авто). Системный VPN делает v2rayN. Порт по умолчанию 10809, чтобы не пересечься с inbound v2rayN (часто 10808).
           </div>
 
           <div className="st-section-title">VP8</div>
@@ -601,7 +588,7 @@ export default function Settings({ onClose }: Props) {
           </div>
 
           <div className={`st-row${locked ? ' st-locked' : ''}`} style={{ borderBottom: 'none' }}>
-            <span title="Второй VP8 (ScreenShare). По умолчанию выкл — стабильнее SOCKS. Вкл — больше uplink, но SFU может ронять шарды.">
+            <span title="Второй VP8 (ScreenShare). Выкл — один трек (стабильнее). Вкл — шардинг по 2 (быстрее, риск потерь на SFU).">
               Dual-track
             </span>
             <button
@@ -610,9 +597,6 @@ export default function Settings({ onClose }: Props) {
               disabled={locked}
               onClick={() => updateAndSave('wbDualTrack', !settings.wbDualTrack)}
             />
-          </div>
-          <div className="st-vk-hint">
-            Dual-track выкл (как kulikov0) — весь трафик по одному VP8. Вкл — шардинг по 2 трекам (больше скорость, риск потерь на SFU).
           </div>
 
           <div className="st-section-title">Proxy</div>

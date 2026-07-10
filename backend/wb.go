@@ -237,7 +237,7 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	socksPass := m.socksPass
 	m.mu.Unlock()
 
-	m.emitLog("INFO", "Подключение WB Stream (SOCKS для v2rayN)…")
+	m.emitLog("INFO", "Подключение WB Stream…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	go func() {
@@ -750,9 +750,9 @@ func (m *WBManager) onStatus(code string) {
 		socks := m.socksOnly
 		m.mu.Unlock()
 		if socks {
-			m.emitLog("INFO", "[WB] WebRTC готов · поднимаю SOCKS…")
+			m.emitLog("INFO", "[WB] WebRTC готов · жду ICE rebind, затем SOCKS…")
 		} else {
-			m.emitLog("INFO", "[WB] WebRTC готов · поднимаю VPN…")
+			m.emitLog("INFO", "[WB] WebRTC готов · жду ICE rebind, затем VPN…")
 		}
 	case "TUNNEL_RECONNECTING":
 		m.emitLog("WARN", "[WB] Переподключение WebRTC без снятия VPN…")
@@ -769,7 +769,7 @@ func (m *WBManager) onStatus(code string) {
 		// watchdog does not kill after wbConnectTimeout ("туннель не поднялся").
 		m.lastHealthy = time.Now()
 		m.mu.Unlock()
-		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS5 готов — вставьте в v2rayN: 127.0.0.1:%d (user=%s)", port, user))
+		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS5 готов — 127.0.0.1:%d (user=%s)", port, user))
 		if host != "" && port > 0 {
 			runtime.EventsEmit(m.ctx, "wb_socks_ready", host, port, user, pass)
 		}
