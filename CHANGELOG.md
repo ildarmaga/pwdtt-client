@@ -1,12 +1,19 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.211] — 2026-07-10
+
+### Fix — SocksOnly всегда dual (match creator WBT)
+- Creator шлёт 2 VP8 + seq prefix; dual=off на joiner без reorder → `remote not ready` / SOCKS мёртв.
+- SocksOnly форсит dualTrack=true. UI-тумблер для SOCKS-режима больше не отключает второй трек.
+- Нужен сервер ≥1.4.77 (WBT tracks=2).
+
 ## [0.3.210] — 2026-07-10
 
 ### Fix — возврат WBT/KCP для SOCKS (как до xray / gVisor)
 - **Корень ERR_SSL / мёртвый ↓**: с 0.3.206 SocksOnly шёл через RelayBridge без KCP — TLS ломался (`ERR_SSL_BAD_RECORD_MAC_ALERT`), dual-track mid-session scale-up не работал.
 - Снова **WBT = KCP+smux + локальный SOCKS** для v2rayN (тот же транспорт, что у рабочего gVisor-стека). Dual-track снова шардит через `SendRaw`.
-- Нужен сервер ≥1.4.77 (`UseWBT=true`, tracks=2).
+- Нужен сервер ≥1.4.77 (`UseWBT=true`, tracks=2). Сверхседено 0.3.211.
 
 ## [0.3.209] — 2026-07-10
 
