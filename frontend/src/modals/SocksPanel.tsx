@@ -1,4 +1,5 @@
 import { IconNetwork, IconBrandTelegram } from '@tabler/icons-react';
+import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
 import { toastStore } from '../lib/stores/toastStore';
 
@@ -13,6 +14,17 @@ export default function SocksPanel({ endpoint, onClose }: Props) {
       () => toastStore.show(ok, 2500),
       () => toastStore.show(text, 5000),
     );
+  };
+
+  const openTelegram = () => {
+    const url = wbSocksStore.telegramUrl(endpoint);
+    if (!url) return;
+    try {
+      BrowserOpenURL(url);
+      toastStore.show('Открываю Telegram…', 2000);
+    } catch {
+      copy(url, 'Ссылка tg:// скопирована');
+    }
   };
 
   return (
@@ -59,6 +71,8 @@ export default function SocksPanel({ endpoint, onClose }: Props) {
         .sk-btn:hover { border-color: var(--accent); color: var(--accent); }
         .sk-btn--primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
         .sk-btn--primary:hover { filter: brightness(1.05); color: var(--accent-fg); }
+        .sk-btn--tg { background: #2aabee; color: #fff; border-color: transparent; }
+        .sk-btn--tg:hover { filter: brightness(1.06); color: #fff; border-color: transparent; }
       `}</style>
       <div className="sk-overlay" onClick={onClose}>
         <div className="sk-modal" onClick={e => e.stopPropagation()}>
@@ -101,12 +115,12 @@ export default function SocksPanel({ endpoint, onClose }: Props) {
             </button>
             <button
               type="button"
-              className="sk-btn"
-              title="Ссылка для вставки прокси в Telegram"
-              onClick={() => copy(wbSocksStore.telegramUrl(endpoint), 'Ссылка для Telegram скопирована')}
+              className="sk-btn sk-btn--tg"
+              title={wbSocksStore.telegramUrl(endpoint)}
+              onClick={openTelegram}
             >
               <IconBrandTelegram size={14} stroke={1.8} />
-              Telegram
+              Открыть в Telegram
             </button>
           </div>
         </div>

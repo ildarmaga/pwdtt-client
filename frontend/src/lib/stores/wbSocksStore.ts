@@ -45,14 +45,15 @@ export const wbSocksStore = {
     }
     return `socks5://${ep.host}:${ep.port}`;
   },
-  /** https://t.me/socks?… — вставка прокси в Telegram */
+  /** tg://socks?server=&port=&user=&pass= — открыть прокси в Telegram */
   telegramUrl(ep: WBSocksEndpoint | null = endpoint): string {
     if (!ep) return '';
-    const q = new URLSearchParams();
-    q.set('server', ep.host);
-    q.set('port', String(ep.port));
-    if (ep.user) q.set('user', ep.user);
-    if (ep.pass) q.set('pass', ep.pass);
-    return `https://t.me/socks?${q.toString()}`;
+    const parts = [
+      `server=${encodeURIComponent(ep.host)}`,
+      `port=${ep.port}`,
+    ];
+    if (ep.user) parts.push(`user=${encodeURIComponent(ep.user)}`);
+    if (ep.pass) parts.push(`pass=${encodeURIComponent(ep.pass)}`);
+    return `tg://socks?${parts.join('&')}`;
   },
 };
