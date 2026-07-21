@@ -17,6 +17,7 @@ import {
   GetDataDir,
 } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
+import { vkModeStore } from '../lib/stores/vkModeStore';
 
 interface Props {
   onClose: () => void;
@@ -131,6 +132,7 @@ export default function Settings({ onClose }: Props) {
     GetVKCookiesRaw()
       .then(raw => setVkCookies(raw ?? ''))
       .catch(() => { /* keep textarea as-is */ });
+    vkModeStore.notify();
   };
 
   useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
@@ -481,6 +483,7 @@ export default function Settings({ onClose }: Props) {
                   try {
                     await SetVKUseCookies(next);
                     setVkUseCookies(next);
+                    vkModeStore.notify();
                     refreshVkStatus();
                   } catch (e) {
                     setVkSaveMsg(String(e));
@@ -496,11 +499,8 @@ export default function Settings({ onClose }: Props) {
               </div>
             )}
             {vkStatus?.path && (
-              <div className="st-vk-hint" style={{ marginBottom: 8 }}>{vkStatus.path}</div>
+              <div className="st-vk-hint" style={{ marginBottom: vkUseCookies ? 8 : 0 }}>{vkStatus.path}</div>
             )}
-            <div className="st-vk-hint" style={{ marginBottom: vkUseCookies ? 8 : 0 }}>
-              Вход через VK — на главном экране (режим Cookies / Гость).
-            </div>
             {vkUseCookies && (
               <>
                 <textarea
