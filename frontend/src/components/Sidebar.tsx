@@ -5,10 +5,12 @@ import {
   IconTerminal2,
   IconSettings2,
   IconRoute,
+  IconBrandVk,
 } from '@tabler/icons-react';
 import { useMobileUI } from '../lib/useMobileUI';
 import { serverStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
+import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { GetProfile, GetAppVersion } from '../../wailsjs/go/backend/App';
 
 function shortDeviceId(id: string): string {
@@ -25,14 +27,17 @@ const NAV = [
 interface Props {
   onSettings?: () => void;
   onRouting?: () => void;
+  onVKLogin?: () => void;
   pathname?: string;
 }
 
-export default function Sidebar({ onSettings, onRouting, pathname: pathnameProp }: Props) {
+export default function Sidebar({ onSettings, onRouting, onVKLogin, pathname: pathnameProp }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const pathname = pathnameProp ?? location.pathname;
   const compact = useMobileUI();
+  const protocol = useTunnelProtocol();
+  const showVK = isVkProtocol(protocol) && !!onVKLogin;
   const [deviceId, setDeviceId] = useState('');
   const [appVersion, setAppVersion] = useState('');
 
@@ -102,6 +107,17 @@ export default function Sidebar({ onSettings, onRouting, pathname: pathnameProp 
           ))}
         </div>
         <div className="sidebar-bottom">
+          {showVK && (
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={onVKLogin}
+              title="Войти через VK"
+              aria-label="Войти через VK"
+            >
+              <IconBrandVk stroke={2} size={compact ? 18 : 22} />
+            </button>
+          )}
           {onRouting && (
             <button className="nav-btn" onClick={onRouting} title="Маршрутизация WB">
               <IconRoute stroke={2} size={compact ? 18 : 22} />

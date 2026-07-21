@@ -68,7 +68,7 @@ import { toastStore } from '../lib/stores/toastStore';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import ProtocolSelector from '../components/ProtocolSelector';
-import VKAuthBar from '../components/VKAuthBar';
+import VKModeChip from '../components/VKModeChip';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
 import { DeleteProfile, GetProfile } from '../../wailsjs/go/backend/App';
 import { saveServerProfile } from '../lib/utils/profileSync';
@@ -882,9 +882,7 @@ export default function Connect() {
               {workersDisplay != null && (
                 <span title="Активные TURN-воркеры из назначенных">Воркеры: <strong>{workersDisplay}</strong></span>
               )}
-              {tunnelProtocol === 'vk' && (
-                <VKAuthBar locked={selectionLocked} />
-              )}
+              {tunnelProtocol === 'vk' && <VKModeChip />}
               {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
                 <button
                   type="button"
