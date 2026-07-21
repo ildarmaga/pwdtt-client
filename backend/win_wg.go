@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/ildarmaga/whitelist-bypass/relay/desktoptun"
+	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -29,36 +30,64 @@ var (
 	activeExcludeRoutes []string
 )
 
-func InitWintun(dll []byte) { wintunDLL = dll }
+func InitWintun(dll []byte) {
+	wintunDLL = dll
+	// Materialize on startup (not only at first TUN connect).
+	_ = extractWintun()
+}
 
-// extractWintun writes the embedded wintun.dll next to the exe so the wintun
-// package can load it via LoadLibrary.
+func wintunNeedsWrite(path string) bool {
+	fi, err := os.Stat(path)
+	return err != nil || fi.Size() != int64(len(wintunDLL))
+}
+
+func writeWintunFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if !wintunNeedsWrite(path) {
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, wintunDLL, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(path)
+		if err2 := os.Rename(tmp, path); err2 != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	return nil
+}
+
+// extractWintun writes embedded wintun.dll only into data/ and points the
+// process DLL search path there (SetDllDirectory). No copy next to the exe.
 func extractWintun() error {
 	if len(wintunDLL) == 0 {
 		return fmt.Errorf("wintun.dll не встроен")
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
+	dir := DataDir()
+	dataDst := filepath.Join(dir, "wintun.dll")
+	if err := writeWintunFile(dataDst); err != nil {
+		return fmt.Errorf("data/wintun.dll: %w", err)
 	}
-	dst := filepath.Join(filepath.Dir(exe), "wintun.dll")
-	if fi, err := os.Stat(dst); err == nil && fi.Size() == int64(len(wintunDLL)) {
-		return nil
+	if err := windows.SetDllDirectory(dir); err != nil {
+		return fmt.Errorf("SetDllDirectory(%s): %w", dir, err)
 	}
-	return os.WriteFile(dst, wintunDLL, 0644)
+	// Drop leftover copy beside exe from older builds.
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(filepath.Join(filepath.Dir(exe), "wintun.dll"))
+	}
+	return nil
 }
 
-// placeWintunNextTo writes the embedded wintun.dll into dir so a child process
-// (the wbt-joiner) running from that directory can load it via LoadLibrary.
+// placeWintunNextTo keeps data/wintun.dll ready for any child that inherits
+// the same DLL directory / uses extractWintun.
 func placeWintunNextTo(dir string) error {
-	if len(wintunDLL) == 0 {
-		return fmt.Errorf("wintun.dll не встроен")
-	}
-	dst := filepath.Join(dir, "wintun.dll")
-	if fi, err := os.Stat(dst); err == nil && fi.Size() == int64(len(wintunDLL)) {
-		return nil
-	}
-	return os.WriteFile(dst, wintunDLL, 0644)
+	_ = dir
+	return extractWintun()
 }
 
 func wgTunnelActive() bool { return activeDevice != nil }

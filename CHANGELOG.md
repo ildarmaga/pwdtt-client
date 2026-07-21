@@ -1,6 +1,17 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.238] — 2026-07-21
+
+### Change — wintun.dll только в data/
+- Больше не кладём `wintun.dll` рядом с exe. Только `data/wintun.dll` + `SetDllDirectory`.
+- Старый dll у exe при старте удаляется.
+
+## [0.3.237] — 2026-07-21
+
+### Change — wintun.dll в data/ (и раньше ещё копия у exe)
+- См. 0.3.238 — копию у exe убрали по запросу.
+
 ## [0.3.236] — 2026-07-21
 
 ### Fix — обновление HTTP 404
