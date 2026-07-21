@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,8 @@ const (
 type vkWebView2Session struct {
 	chromium *edge.Chromium
 	hwnd     win.HWND
+	ready    atomic.Bool // controller embedded; safe to Resize/Navigate
+	busy     atomic.Bool // harvest in progress (GetCookies pumps messages)
 	done     atomic.Bool
 	navDone  atomic.Bool
 	// remixsid seen while still on the login wall — must not finish harvest.
@@ -36,6 +39,7 @@ type vkWebView2Session struct {
 	pendingSince     time.Time
 	writeSt          func(vkLoginStatusFile)
 	dataDir          string
+	wndProcCb        uintptr // keep NewCallback alive for process lifetime
 }
 
 // runVKWebView2Window opens a native window with WebView2 pointed at vk.ru and
@@ -44,8 +48,16 @@ type vkWebView2Session struct {
 // The window NEVER auto-closes: not on harvest success, not on WebView2
 // ProcessFailed, not on COM warnings. Only the user closing the window
 // (WM_DESTROY) ends the message loop.
-func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error {
+func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err error) {
 	runtime.LockOSThread()
+
+	defer func() {
+		if r := recover(); r != nil {
+			vkLoginLog(dataDir, "FATAL panic: %v\n%s", r, debug.Stack())
+			writeSt(vkLoginStatusFile{Status: "error", Message: fmt.Sprintf("сбой окна VK: %v", r)})
+			err = fmt.Errorf("vk webview panic: %v", r)
+		}
+	}()
 
 	s := &vkWebView2Session{writeSt: writeSt, dataDir: dataDir}
 
@@ -53,16 +65,19 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	className, _ := windows.UTF16PtrFromString("WDTTVKLoginWnd")
 
 	wndProc := func(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+		defer func() {
+			if r := recover(); r != nil {
+				vkLoginLog(dataDir, "wndProc panic msg=%d: %v\n%s", msg, r, debug.Stack())
+			}
+		}()
 		switch msg {
 		case win.WM_SIZE:
-			if s.chromium != nil {
+			if s.ready.Load() && s.chromium != nil {
 				s.chromium.Resize()
 			}
 		case win.WM_TIMER:
 			if wParam == vkWebView2TimerID {
 				s.tryHarvest()
-				// Intentionally NO DestroyWindow — cookies are saved via status
-				// file; user closes the window with the title-bar X.
 			}
 		case win.WM_CLOSE:
 			win.DestroyWindow(hwnd)
@@ -77,15 +92,20 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		return win.DefWindowProc(hwnd, msg, wParam, lParam)
 	}
 
+	s.wndProcCb = windows.NewCallback(wndProc)
 	wc := win.WNDCLASSEX{
 		HInstance:     hInstance,
 		LpszClassName: className,
-		LpfnWndProc:   windows.NewCallback(wndProc),
+		LpfnWndProc:   s.wndProcCb,
 		HCursor:       win.LoadCursor(0, win.MAKEINTRESOURCE(win.IDC_ARROW)),
 		HbrBackground: win.HBRUSH(win.COLOR_WINDOW + 1),
 	}
 	wc.CbSize = uint32(unsafe.Sizeof(wc))
-	win.RegisterClassEx(&wc)
+	atom := win.RegisterClassEx(&wc)
+	if atom == 0 {
+		// Class may already exist from a previous attempt in this process — OK.
+		vkLoginLog(dataDir, "RegisterClassEx returned 0 (class may already exist)")
+	}
 
 	const winW, winH = 520, 720
 	x := (win.GetSystemMetrics(win.SM_CXSCREEN) - winW) / 2
@@ -115,7 +135,7 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
 	}
 	_ = os.MkdirAll(dataDir, 0700)
-	vkLoginLog(dataDir, "worker start profile=%s (no auto-close)", dataDir)
+	vkLoginLog(dataDir, "worker start profile=%s pid=%d", dataDir, os.Getpid())
 	chromium.SetErrorCallback(func(err error) {
 		vkLoginLog(dataDir, "webview2 warn (ignored): %v", err)
 	})
@@ -128,9 +148,13 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		}
 		vkLoginLog(dataDir, "webview2 process failed kind=%d — ignored (no quit, no reload)", kind)
 		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 сбой процесса — закройте окно и войдите снова, если страница пустая"})
-		// No PostQuitMessage, no Navigate — both have historically killed the window.
 	}
 	chromium.NavigationCompletedCallback = func(sender *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
+		defer func() {
+			if r := recover(); r != nil {
+				vkLoginLog(dataDir, "NavigationCompleted panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		if sender != nil {
 			if src, err := sender.GetSource(); err == nil && src != "" {
 				s.lastURL = src
@@ -147,32 +171,42 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	s.chromium = chromium
 	s.hwnd = hwnd
 
+	vkLoginLog(dataDir, "Embed begin")
 	if !chromium.Embed(uintptr(hwnd)) {
+		vkLoginLog(dataDir, "Embed failed")
 		writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2 не установлен — установите Microsoft Edge WebView2 Runtime"})
 		return fmt.Errorf("webview2 embed failed")
 	}
-	if settings, err := chromium.GetSettings(); err == nil {
+	vkLoginLog(dataDir, "Embed ok")
+	s.ready.Store(true)
+
+	if settings, err := chromium.GetSettings(); err == nil && settings != nil {
 		_ = settings.PutAreDevToolsEnabled(false)
 	}
-	_ = chromium.Hide()
-	_ = chromium.Show()
-	chromium.SetBackgroundColour(255, 255, 255, 255)
+	// Do NOT Hide()/SetBackgroundColour — both historically nil-deref'd on
+	// some WebView2 builds (Controller2 missing) and killed this process.
+	if err := chromium.Show(); err != nil {
+		vkLoginLog(dataDir, "Show warn: %v", err)
+	}
 
-	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
 	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
 	win.UpdateWindow(hwnd)
 	win.SetForegroundWindow(hwnd)
 	chromium.Resize()
+	vkLoginLog(dataDir, "Navigate https://vk.ru/")
 	chromium.Navigate("https://vk.ru/")
 
 	win.SetTimer(hwnd, vkWebView2TimerID, 1500, 0)
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически. Окно закройте сами (крестик)."})
+	vkLoginLog(dataDir, "message loop enter")
 
 	var msg win.MSG
 	for win.GetMessage(&msg, 0, 0, 0) > 0 {
 		win.TranslateMessage(&msg)
 		win.DispatchMessage(&msg)
 	}
+	vkLoginLog(dataDir, "message loop exit")
+	runtime.KeepAlive(s)
 	return nil
 }
 
@@ -182,7 +216,7 @@ func (s *vkWebView2Session) readRemixsid() string {
 }
 
 func (s *vkWebView2Session) readVKCookies() (remixsid, pCookie string) {
-	if s.chromium == nil {
+	if s.chromium == nil || !s.ready.Load() {
 		return "", ""
 	}
 	cm, err := s.chromium.GetCookieManager()
@@ -225,9 +259,20 @@ func (s *vkWebView2Session) readVKCookies() (remixsid, pCookie string) {
 }
 
 func (s *vkWebView2Session) tryHarvest() {
+	defer func() {
+		if r := recover(); r != nil {
+			vkLoginLog(s.dataDir, "tryHarvest panic: %v\n%s", r, debug.Stack())
+		}
+	}()
 	if s.done.Load() || s.chromium == nil || !s.navDone.Load() {
 		return
 	}
+	// GetCookies nests a message pump; ignore re-entrant timer/nav callbacks.
+	if !s.busy.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.busy.Store(false)
+
 	remixsid, pCookie := s.readVKCookies()
 
 	if !vkLoginURLLooksLoggedIn(s.lastURL) {
@@ -275,6 +320,7 @@ func vkLoginLog(dataDir, format string, args ...any) {
 		return
 	}
 	defer f.Close()
-	_, _ = fmt.Fprintf(f, "[%s] ", time.Now().Format("15:04:05"))
+	_, _ = fmt.Fprintf(f, "[%s] ", time.Now().Format("15:04:05.000"))
 	_, _ = fmt.Fprintf(f, format+"\n", args...)
+	_ = f.Sync()
 }

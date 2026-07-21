@@ -274,6 +274,10 @@ func (e *Chromium) Resize() {
 }
 
 func (e *Chromium) Navigate(url string) {
+	if e.webview == nil {
+		e.nonFatalErrorCallback(fmt.Errorf("webview2 Navigate: webview is nil"))
+		return
+	}
 	err := e.webview.Navigate(url)
 	if err != nil {
 		e.nonFatalErrorCallback(err)
@@ -306,10 +310,16 @@ func (e *Chromium) Eval(script string) {
 }
 
 func (e *Chromium) Show() error {
+	if e.controller == nil {
+		return fmt.Errorf("webview2 controller is nil")
+	}
 	return e.controller.PutIsVisible(true)
 }
 
 func (e *Chromium) Hide() error {
+	if e.controller == nil {
+		return fmt.Errorf("webview2 controller is nil")
+	}
 	return e.controller.PutIsVisible(false)
 }
 
@@ -459,7 +469,15 @@ func (e *Chromium) SetPermission(kind CoreWebView2PermissionKind, state CoreWebV
 
 func (e *Chromium) SetBackgroundColour(R, G, B, A uint8) {
 	controller := e.GetController()
+	if controller == nil {
+		return
+	}
 	controller2 := controller.GetICoreWebView2Controller2()
+	if controller2 == nil {
+		// Older WebView2 runtimes lack ICoreWebView2Controller2 — must not
+		// dereference nil (that panic killed the WDTT VK login worker process).
+		return
+	}
 
 	backgroundCol := COREWEBVIEW2_COLOR{
 		A: A,
@@ -559,6 +577,9 @@ func (e *Chromium) AcceleratorKeyPressed(sender *ICoreWebView2Controller, args *
 }
 
 func (e *Chromium) GetSettings() (*ICoreWebViewSettings, error) {
+	if e.webview == nil {
+		return nil, fmt.Errorf("webview2 GetSettings: webview is nil")
+	}
 	return e.webview.GetSettings()
 }
 

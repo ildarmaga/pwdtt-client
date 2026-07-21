@@ -5,6 +5,7 @@ package backend
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -25,12 +26,19 @@ func MaybeRunVKLoginWorker(args []string) (bool, error) {
 	return true, runVKLoginWorker(*status, *data)
 }
 
-func runVKLoginWorker(statusPath, profile string) error {
+func runVKLoginWorker(statusPath, profile string) (err error) {
 	workerPid := os.Getpid()
 	writeSt := func(st vkLoginStatusFile) {
 		st.Pid = workerPid
 		writeVKLoginStatus(statusPath, st)
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			writeSt(vkLoginStatusFile{Status: "error", Message: fmt.Sprintf("сбой worker VK: %v", r)})
+			err = fmt.Errorf("vk login worker panic: %v", r)
+		}
+	}()
 
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
 

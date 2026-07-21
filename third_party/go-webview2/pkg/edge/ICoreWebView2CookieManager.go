@@ -1,9 +1,12 @@
 package edge
 
 import (
+	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
+	"github.com/wailsapp/go-webview2/internal/w32"
 	"golang.org/x/sys/windows"
 )
 
@@ -88,23 +91,74 @@ func (i *ICoreWebView2CookieManager) CopyCookie(cookie *ICoreWebView2Cookie) (*I
 	return newCookie, nil
 }
 
-// GetCookies gets all cookies matching the URI
+// getCookiesWaiter receives the async GetCookies completion. WebView2's
+// GetCookies(uri, ICoreWebView2GetCookiesCompletedHandler*) is asynchronous;
+// the old binding wrongly passed &list and WebView2 later invoked that stack
+// pointer as a COM vtable — native crash of the host process.
+type getCookiesWaiter struct {
+	done    uint32
+	errCode uintptr
+	list    *ICoreWebView2CookieList
+}
+
+func (w *getCookiesWaiter) QueryInterface(_, _ uintptr) uintptr { return 0 }
+func (w *getCookiesWaiter) AddRef() uintptr                      { return 1 }
+func (w *getCookiesWaiter) Release() uintptr                     { return 1 }
+
+func (w *getCookiesWaiter) GetCookiesCompleted(errorCode uintptr, result *ICoreWebView2CookieList) uintptr {
+	w.errCode = errorCode
+	w.list = result
+	if result != nil {
+		result.AddRef()
+	}
+	atomic.StoreUint32(&w.done, 1)
+	return 0
+}
+
+// GetCookies gets all cookies matching the URI (blocks on the UI thread by
+// pumping window messages until the completion handler runs).
 func (i *ICoreWebView2CookieManager) GetCookies(uri string) (*ICoreWebView2CookieList, error) {
-	var list *ICoreWebView2CookieList
 	uriutf16, err := windows.UTF16PtrFromString(uri)
 	if err != nil {
 		return nil, err
 	}
 
+	waiter := &getCookiesWaiter{}
+	handler := newICoreWebView2GetCookiesCompletedHandler(waiter)
+
 	hr, _, _ := i.vtbl.GetCookies.Call(
 		uintptr(unsafe.Pointer(i)),
 		uintptr(unsafe.Pointer(uriutf16)),
-		uintptr(unsafe.Pointer(&list)),
+		uintptr(unsafe.Pointer(handler)),
 	)
-	if hr != 0 {
+	if windows.Handle(hr) != windows.S_OK {
 		return nil, syscall.Errno(hr)
 	}
-	return list, nil
+
+	var msg w32.Msg
+	for atomic.LoadUint32(&waiter.done) == 0 {
+		r, _, _ := w32.User32GetMessageW.Call(
+			uintptr(unsafe.Pointer(&msg)),
+			0,
+			0,
+			0,
+		)
+		if r == 0 || int32(r) == -1 {
+			break
+		}
+		w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
+		w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
+	}
+	runtime.KeepAlive(handler)
+	runtime.KeepAlive(waiter)
+
+	if atomic.LoadUint32(&waiter.done) == 0 {
+		return nil, syscall.Errno(windows.ERROR_CANCELLED)
+	}
+	if waiter.errCode != 0 {
+		return nil, syscall.Errno(waiter.errCode)
+	}
+	return waiter.list, nil
 }
 
 // DeleteCookies deletes all cookies with matching name and uri

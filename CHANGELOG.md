@@ -1,6 +1,20 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.242] — 2026-07-21
+
+### Fix — вход VK: process dies «неожиданно закрылось» (корень)
+**Главная причина (GPT 5.6):** `ICoreWebView2CookieManager.GetCookies` в vendored
+go-webview2 вызывался как sync (`&list`), хотя ABI — async
+`ICoreWebView2GetCookiesCompletedHandler*`. WebView2 потом дергал мусорный
+указатель → **нативный краш** worker (~1.5с, первый harvest). Go `recover` это
+не ловит.
+
+- Правильный completed-handler + pump сообщений до callback
+- Re-entrancy guard на harvest (вложенный GetMessage)
+- Дополнительно: nil-guard Show/Hide/Navigate/SetBackgroundColour; убраны
+  Hide/SetBackgroundColour из worker; Resize только после Embed; panic log
+
 ## [0.3.241] — 2026-07-21
 
 ### Fix — вход VK: полный разбор причины «окно само закрывается»
