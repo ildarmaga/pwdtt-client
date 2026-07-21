@@ -56,11 +56,18 @@ const (
 
 	// After carrier rebind the data path can be quiet while KCP settles.
 	wbProbeGraceAfterRebind = 90 * time.Second
-	wbRecoverVerifyWait     = 25 * time.Second // soft recover must pass probe by then or full reconnect
+	// SOCKS/v2rayN: no system probe possible — short grace then require real traffic
+	// (or OpenStream burst → full reconnect). 90s left users stuck at 0 B/s.
+	wbSocksProbeGraceAfterRebind = 20 * time.Second
+	wbRecoverVerifyWait          = 25 * time.Second // soft recover must pass probe by then or full reconnect
+	wbSocksRecoverVerifyWait     = 20 * time.Second
 
 	wbSoftRecoverMax      = 3
 	wbSoftRecoverCooldown = 90 * time.Second
 	wbSoftRecoverCooldownDead = 15 * time.Second // RTT dead — retry faster
+
+	// OpenStream/closed pipe flood after soft rebound → full reconnect (SOCKS).
+	wbTunnelErrBurstRecover = 12
 )
 
 var wbProbeURLs = []string{
@@ -465,8 +472,17 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if !verifyUntil.IsZero() && now.After(verifyUntil) {
 				m.mu.Lock()
 				m.recoverVerifyUntil = time.Time{}
+				socksVerify := m.socksOnly
+				trafficAt := m.lastTrafficAt
 				m.mu.Unlock()
-				if wbProbeDataPath() {
+				ok := false
+				if socksVerify {
+					// Probe would go direct (no system routes). Require byte progress.
+					ok = !trafficAt.IsZero() && now.Sub(trafficAt) <= 15*time.Second
+				} else {
+					ok = wbProbeDataPath()
+				}
+				if ok {
 					m.mu.Lock()
 					m.softRecoverCount = 0
 					m.mu.Unlock()
@@ -512,9 +528,8 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if !dead {
 				continue
 			}
-			// SOCKS/WBT: RTT may be 0 briefly before KCP settles. Do not kill on RTT-based
-			// reasons; SOCKS_READY + traffic refresh lastHealthy. Soft KCP recover
-			// is meaningless in socks-only mode.
+			// SOCKS/WBT: RTT floor stays >0 while smux is dead — do not kill on
+			// RTT alone. Traffic stall after grace → full reconnect (soft already tried).
 			if socks {
 				if reason == "нет живого RTT" {
 					continue
@@ -523,15 +538,23 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 					now.Sub(lastTraffic) <= wbDeadTimeout {
 					continue
 				}
+				if !inGrace && wbTrafficStalled(now, lastTraffic, lastTrafficBytes) {
+					m.emitLog("WARN", "[WB] SOCKS туннель без трафика — полное переподключение…")
+					runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+					m.reconnect(gen)
+					return
+				}
 			}
 
-			canSoft := trySoft && !socks &&
+			canSoft := trySoft &&
 				softCount < wbSoftRecoverMax &&
 				(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
 			if canSoft {
 				// Zombie: KCP-only never restores data path — go straight to session
 				// rebind + SwapTunnel (joiner kept, iOS-style bypass auth).
-				forceSession := strings.Contains(reason, "zombie") ||
+				// SOCKS: always ForceSession (KCP-only RestartLink is useless alone).
+				forceSession := socks ||
+					strings.Contains(reason, "zombie") ||
 					softCount >= 1 ||
 					(!healthy.IsZero() && now.Sub(healthy) > wbDeadTimeout)
 				if forceSession {
@@ -542,9 +565,14 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 				m.mu.Lock()
 				m.softRecoverCount++
 				m.lastSoftRecover = now
-				m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
-				if forceSession {
-					m.recoverVerifyUntil = now.Add(wbRecoverVerifyWait)
+				if socks {
+					m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+					m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
+				} else {
+					m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
+					if forceSession {
+						m.recoverVerifyUntil = now.Add(wbRecoverVerifyWait)
+					}
 				}
 				m.mu.Unlock()
 				probeFails = 0
@@ -765,7 +793,13 @@ func (m *WBManager) onStatus(code string) {
 	case "TUNNEL_RECONNECTING":
 		m.emitLog("WARN", "[WB] Переподключение WebRTC без снятия VPN…")
 		m.mu.Lock()
-		m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+		if m.socksOnly {
+			m.probeGraceUntil = time.Now().Add(wbSocksProbeGraceAfterRebind)
+			m.recoverVerifyUntil = time.Now().Add(wbSocksRecoverVerifyWait)
+		} else {
+			m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+			m.recoverVerifyUntil = time.Now().Add(wbRecoverVerifyWait)
+		}
 		m.mu.Unlock()
 	case "TRAFFIC_READY":
 		m.emitLog("INFO", "[WB] Пробный запрос через туннель успешен")
@@ -800,7 +834,12 @@ func (m *WBManager) onStatus(code string) {
 func (m *WBManager) logRelay(raw string) {
 	if strings.Contains(raw, "carrier rebind") || strings.Contains(raw, "carrier rebound") {
 		m.mu.Lock()
-		m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+		if m.socksOnly {
+			m.probeGraceUntil = time.Now().Add(wbSocksProbeGraceAfterRebind)
+			m.recoverVerifyUntil = time.Now().Add(wbSocksRecoverVerifyWait)
+		} else {
+			m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+		}
 		m.mu.Unlock()
 	}
 	if strings.Contains(raw, "OpenStream:") || strings.Contains(raw, "remote not ready") {
@@ -812,7 +851,17 @@ func (m *WBManager) logRelay(raw string) {
 		m.tunnelErrBurst++
 		m.lastTunnelErrLog = now
 		burst := m.tunnelErrBurst
+		gen := m.runGen.Load()
+		stopped := m.stop
 		m.mu.Unlock()
+		// Soft rebound left smux dead: floor RTT stays "healthy", SOCKS shows -1.
+		// Escalate to full reconnect instead of flooding logs forever.
+		if burst == wbTunnelErrBurstRecover && !stopped && !m.reconnecting.Load() {
+			m.emitLog("WARN", "[WB] OpenStream/smux мёртв после rebind — полное переподключение…")
+			runtime.EventsEmit(m.ctx, "state_changed", "connecting")
+			go m.reconnect(gen)
+			return
+		}
 		if burst > 5 {
 			return
 		}

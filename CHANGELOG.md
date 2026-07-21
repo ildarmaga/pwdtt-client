@@ -1,6 +1,18 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.224] — 2026-07-21
+
+### Fix — восстановление WB после смены сети (SOCKS / v2rayN)
+- Soft-rebind больше не зависает на 0 B/s: creator+joiner синхронно rebind’ят KCP/smux; убран двойной SwapTunnel.
+- SOCKS: короткий grace (20s) + verify по трафику; лавина `OpenStream closed pipe` → полное переподключение (не вечный soft).
+- Нужен сервер ≥1.4.83.
+
+## [0.3.223] — 2026-07-10
+
+### UI — SOCKS URL как на iOS
+- Копирование: `socks://BASE64(user:pass)@127.0.0.1:10809#MAGIC_VPN-ildar` (формат Happ / iOS `v2rayProxyUri`), не plaintext `user:pass@`.
+
 ## [0.3.222] — 2026-07-10
 
 ### Fix — SOCKS UDP для Steam / v2rayN TUN
