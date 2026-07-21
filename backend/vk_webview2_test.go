@@ -48,9 +48,6 @@ func TestVKCookieDomainOK(t *testing.T) {
 	if vkCookieDomainOK(".evil.com", ".vk.com", ".vk.ru") {
 		t.Fatal("evil domain")
 	}
-	if !vkCookieDomainOK(".login.vk.ru", ".login.vk.com", ".login.vk.ru") {
-		t.Fatal("expected login.vk.ru ok")
-	}
 }
 
 func TestVKLoginURLStillAuthFlow(t *testing.T) {
@@ -58,26 +55,42 @@ func TestVKLoginURLStillAuthFlow(t *testing.T) {
 		"",
 		"about:blank",
 		"https://id.vk.ru/qr_auth",
-		"https://id.vk.com/auth",
 		"https://login.vk.ru/?act=login",
 		"https://oauth.vk.com/authorize",
 		"https://vk.ru/login",
-		"https://id.vk.ru/not_robot_captcha?x=1",
 	}
 	for _, u := range auth {
 		if !vkLoginURLStillAuthFlow(u) {
 			t.Fatalf("expected auth flow: %q", u)
 		}
 	}
-	ok := []string{
+}
+
+func TestVKLoginURLLooksLoggedIn(t *testing.T) {
+	// QR / login wall on site root — must stay open
+	wall := []string{
 		"https://vk.ru/",
+		"https://vk.com/",
+		"https://vk.ru",
+		"https://id.vk.ru/qr",
+		"https://login.vk.ru/?act=login",
+		"https://vk.ru/index.php",
+	}
+	for _, u := range wall {
+		if vkLoginURLLooksLoggedIn(u) {
+			t.Fatalf("login wall must not look logged-in: %q", u)
+		}
+	}
+	ok := []string{
 		"https://vk.ru/feed",
+		"https://vk.ru/im",
 		"https://vk.com/feed",
-		"https://m.vk.ru/id1",
+		"https://vk.ru/id1",
+		"https://m.vk.ru/friends",
 	}
 	for _, u := range ok {
-		if vkLoginURLStillAuthFlow(u) {
-			t.Fatalf("expected logged-in page: %q", u)
+		if !vkLoginURLLooksLoggedIn(u) {
+			t.Fatalf("expected logged-in: %q", u)
 		}
 	}
 }

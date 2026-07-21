@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -18,10 +19,9 @@ import (
 )
 
 const (
-	vkWebView2TimerID     = 42
-	vkLoginBaselineGrace  = 6 * time.Second // guest/QR cookies in this window become baseline
-	vkLoginPendingStable  = 2 * time.Second
-	vkLoginDestroyDelay   = 1500 * time.Millisecond
+	vkWebView2TimerID    = 42
+	vkLoginPendingStable = 2 * time.Second
+	vkLoginDestroyDelay  = 1500 * time.Millisecond
 )
 
 type vkWebView2Session struct {
@@ -29,10 +29,8 @@ type vkWebView2Session struct {
 	hwnd     win.HWND
 	done     atomic.Bool
 	navDone  atomic.Bool
-	// remixsid already in the WebView2 profile / guest cookies during QR —
-	// harvesting it would close the window before the user finishes login.
+	// remixsid seen while still on the login wall — must not close the window.
 	baselineRemixsid string
-	baselineFrozen   bool
 	firstNavAt       time.Time
 	lastURL          string
 	pendingHeader    string
@@ -231,31 +229,29 @@ func (s *vkWebView2Session) tryHarvest() {
 	}
 	remixsid, pCookie := s.readVKCookies()
 
-	// Guest / QR flow often plants remixsid+p before the user finishes.
-	// Absorb anything seen in the grace window into the baseline so we only
-	// accept a *later* remixsid change (real login).
-	if !s.baselineFrozen {
-		if time.Since(s.firstNavAt) < vkLoginBaselineGrace {
-			if remixsid != "" && remixsid != s.baselineRemixsid {
-				vkLoginLog(s.dataDir, "grace baseline update %q → %q url=%q", s.baselineRemixsid, remixsid, s.lastURL)
-				s.baselineRemixsid = remixsid
-			}
-			return
+	// Login wall is often https://vk.ru/ with QR overlay — keep absorbing
+	// guest remixsid into baseline and never finish until a post-login URL.
+	if !vkLoginURLLooksLoggedIn(s.lastURL) {
+		if remixsid != "" && remixsid != s.baselineRemixsid {
+			vkLoginLog(s.dataDir, "auth-wall baseline %q → %q url=%q", s.baselineRemixsid, remixsid, s.lastURL)
+			s.baselineRemixsid = remixsid
 		}
-		s.baselineFrozen = true
-		vkLoginLog(s.dataDir, "baseline frozen remixsid=%q url=%q", s.baselineRemixsid, s.lastURL)
-	}
-
-	if vkLoginURLStillAuthFlow(s.lastURL) {
 		return
 	}
-	if !vkLoginCookiesReady(remixsid, s.baselineRemixsid, pCookie) {
+
+	// On feed/im/…: accept session if remixsid changed OR same cookie validates
+	// (VK may upgrade guest remixsid in place after QR success).
+	if strings.TrimSpace(remixsid) == "" || strings.TrimSpace(pCookie) == "" {
 		return
 	}
 	header := "remixsid=" + remixsid + "; p=" + pCookie
 	if err := core.ValidateVKCookieHeader(header); err != nil {
-		vkLoginLog(s.dataDir, "web_token not ready: %v", err)
+		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q", err, s.lastURL)
 		return
+	}
+	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
+		// Same value as wall baseline but URL is logged-in and token works — OK.
+		vkLoginLog(s.dataDir, "logged-in url with stable remixsid url=%q", s.lastURL)
 	}
 	now := time.Now()
 	if s.pendingHeader != header {

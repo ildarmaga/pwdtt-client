@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.230] — 2026-07-21
+
+### Fix — вход VK: не закрывать на QR-стене `vk.ru/`
+- Harvest только после URL вроде `/feed`, `/im`, `/id…` (корень сайта = login wall).
+- Пока на стене — guest remixsid уходит в baseline, окно остаётся открытым.
+
 ## [0.3.229] — 2026-07-21
 
 ### Fix — Windows CI: unused import в WebView2 login
