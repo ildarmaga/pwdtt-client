@@ -68,6 +68,7 @@ import { toastStore } from '../lib/stores/toastStore';
 import { wbSocksStore, type WBSocksEndpoint } from '../lib/stores/wbSocksStore';
 import ConnectionErrorBanner from '../components/ConnectionErrorBanner';
 import ProtocolSelector from '../components/ProtocolSelector';
+import VKAuthBar from '../components/VKAuthBar';
 import { wdttLinkStore, fetchTrafficStats, formatBytes, trafficCompactLabel, trafficUsedPercent, trafficFillColor, expireLabel, metricsRefreshMs, serverVpnTitle, syncServerFromSubscription, type TrafficStats } from '../lib/utils/wdttLink';
 import { DeleteProfile, GetProfile } from '../../wailsjs/go/backend/App';
 import { saveServerProfile } from '../lib/utils/profileSync';
@@ -593,9 +594,10 @@ export default function Connect() {
           flex-direction: column;
           align-items: center;
           gap: 6px;
-          width: min(280px, calc(100vw - 80px));
+          width: min(300px, calc(100vw - 80px));
         }
-        .protocol-bar--locked { opacity: 0.92; pointer-events: none; }
+        .protocol-bar--locked > .protocol-seg,
+        .protocol-bar--locked > .protocol-hint { opacity: 0.92; pointer-events: none; }
         .protocol-seg {
           display: flex;
           width: 100%;
@@ -849,6 +851,7 @@ export default function Connect() {
             settingsStore.patch({ tunnelProtocol: p });
             logStore.push('INFO', 'Протокол: ' + (p === 'vk' ? 'VK · TURN' : 'WB · WebRTC'));
           }}
+          below={tunnelProtocol === 'vk' ? <VKAuthBar locked={selectionLocked} /> : null}
         />
 
         <button className="btn-add" onClick={() => setAddServerOpen(true)}>

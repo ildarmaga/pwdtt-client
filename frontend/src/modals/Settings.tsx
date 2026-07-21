@@ -16,7 +16,6 @@ import {
   CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading,
   GetDataDir,
 } from '../../wailsjs/go/backend/App';
-import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
 
 interface Props {
@@ -102,7 +101,6 @@ export default function Settings({ onClose }: Props) {
   const updateReady = updateSnap.phase === 'ready';
   const updateProgress = updateSnap.percent;
   const updateProgressMsg = updateSnap.message;
-  const [vkAuthOpen, setVkAuthOpen] = useState(false);
   const [dataDir, setDataDir] = useState('');
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
@@ -500,15 +498,8 @@ export default function Settings({ onClose }: Props) {
             {vkStatus?.path && (
               <div className="st-vk-hint" style={{ marginBottom: 8 }}>{vkStatus.path}</div>
             )}
-            <div className="st-vk-actions" style={{ marginBottom: vkUseCookies ? 8 : 0 }}>
-              <button
-                type="button"
-                className="st-vk-btn st-vk-btn--primary"
-                disabled={locked}
-                onClick={() => setVkAuthOpen(true)}
-              >
-                Войти через VK
-              </button>
+            <div className="st-vk-hint" style={{ marginBottom: vkUseCookies ? 8 : 0 }}>
+              Вход через VK — на главном экране (режим Cookies / Гость).
             </div>
             {vkUseCookies && (
               <>
@@ -719,16 +710,6 @@ export default function Settings({ onClose }: Props) {
             serverStore.update(updated);
             await saveServerProfile(updated).catch(() => {});
             setProfileHashes(hashes);
-          }}
-        />
-      )}
-      {vkAuthOpen && (
-        <VKAuth
-          onClose={() => setVkAuthOpen(false)}
-          onDone={() => {
-            setVkUseCookies(true);
-            setVkSaveMsg('Cookies сохранены через VK login');
-            refreshVkStatus();
           }}
         />
       )}

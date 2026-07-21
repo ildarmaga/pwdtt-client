@@ -1,10 +1,12 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { TunnelProtocol } from '../lib/types';
 
 interface Props {
   value: TunnelProtocol;
   onChange: (p: TunnelProtocol) => void;
   locked?: boolean;
+  /** Extra content under the protocol hint (e.g. VK auth mode). */
+  below?: ReactNode;
 }
 
 const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accent: string }> = {
@@ -12,7 +14,7 @@ const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accen
   wb: { label: 'WB', hint: 'WB Stream · WebRTC', accent: '#6d6aac' },
 };
 
-export default function ProtocolSelector({ value, onChange, locked }: Props) {
+export default function ProtocolSelector({ value, onChange, locked, below }: Props) {
   const meta = PROTOCOL_META[value];
 
   return (
@@ -38,6 +40,7 @@ export default function ProtocolSelector({ value, onChange, locked }: Props) {
         })}
       </div>
       <span className="protocol-hint" style={{ color: meta.accent }}>{meta.hint}</span>
+      {below}
     </div>
   );
 }
