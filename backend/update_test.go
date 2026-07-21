@@ -28,3 +28,16 @@ func TestVersionLess(t *testing.T) {
 		t.Fatal("same version should not be less")
 	}
 }
+
+func TestWindowsDownloadURLRequiresAsset(t *testing.T) {
+	empty := ghRelease{TagName: "v0.3.235", Assets: nil}
+	if windowsDownloadURL(empty) != "" {
+		t.Fatal("empty assets must not invent a URL (causes HTTP 404)")
+	}
+	ok := ghRelease{TagName: "v0.3.234", Assets: []ghReleaseAsset{
+		{Name: "wdtt-windows-amd64.exe", BrowserDownloadURL: "https://example/x.exe"},
+	}}
+	if windowsDownloadURL(ok) != "https://example/x.exe" {
+		t.Fatal("expected asset URL")
+	}
+}

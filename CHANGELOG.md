@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.236] — 2026-07-21
+
+### Fix — обновление HTTP 404
+- Если latest-тег уже есть, а CI ещё не залил `.exe`, больше не подставляем фейковый URL → 404.
+- Берём ближайший релиз, у которого реально есть `wdtt-windows-amd64.exe`.
+
 ## [0.3.235] — 2026-07-21
 
 ### Change — portable data рядом с exe
