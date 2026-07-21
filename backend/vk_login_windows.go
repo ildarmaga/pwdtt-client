@@ -203,20 +203,9 @@ func (a *App) runVKLoginHelper(ctx context.Context, attachOnly bool) {
 				vkLoginWin.Lock()
 				vkLoginWin.helperPid = uint32(st.Pid)
 				vkLoginWin.Unlock()
-				if !processAlive(uint32(st.Pid)) {
-					// After successful harvest WM_DESTROY does not rewrite status
-					// (done stays). Either way the window is gone — stop helper.
-					if !savedDone && st.Status != "cancelled" && st.Status != "error" {
-						vkLoginWin.Lock()
-						vkLoginWin.errMsg = "Окно VK неожиданно закрылось (процесс завершился)"
-						vkLoginWin.Unlock()
-						vkLoginLog(dataDir, "worker pid=%d died unexpectedly status=%q", st.Pid, st.Status)
-					} else {
-						vkLoginLog(dataDir, "worker pid=%d exited status=%q", st.Pid, st.Status)
-					}
-					return
-				}
 			}
+			alive := st.Pid == 0 || processAlive(uint32(st.Pid))
+
 			switch st.Status {
 			case "error":
 				vkLoginWin.Lock()
@@ -224,6 +213,9 @@ func (a *App) runVKLoginHelper(ctx context.Context, attachOnly bool) {
 				vkLoginWin.Unlock()
 				return
 			case "done":
+				// MUST handle done before "process died" — worker writes done
+				// then DestroyWindow; parent used to treat that as unexpected
+				// close and skip SaveVKCookies (login succeeded, cookies lost).
 				if st.Done && st.Cookie != "" && !savedDone {
 					vkLoginWin.Lock()
 					if err := core.SaveVKCookiesJSON([]byte(st.Cookie)); err != nil {
@@ -237,9 +229,12 @@ func (a *App) runVKLoginHelper(ctx context.Context, attachOnly bool) {
 					vkLoginWin.status = st.Message
 					vkLoginWin.Unlock()
 					savedDone = true
-					vkLoginLog(dataDir, "cookies saved — keeping helper until window closes")
+					vkLoginLog(dataDir, "cookies saved from status done")
 				}
-				// Stay active until cancelled / process exit — do NOT return.
+				if !alive {
+					vkLoginLog(dataDir, "worker exited after done — ok")
+					return
+				}
 			case "cancelled":
 				return
 			default:
@@ -248,6 +243,15 @@ func (a *App) runVKLoginHelper(ctx context.Context, attachOnly bool) {
 					vkLoginWin.status = st.Message
 				}
 				vkLoginWin.Unlock()
+				if !alive {
+					if !savedDone {
+						vkLoginWin.Lock()
+						vkLoginWin.errMsg = "Окно VK неожиданно закрылось (процесс завершился)"
+						vkLoginWin.Unlock()
+						vkLoginLog(dataDir, "worker pid=%d died unexpectedly status=%q", st.Pid, st.Status)
+					}
+					return
+				}
 			}
 		}
 	}

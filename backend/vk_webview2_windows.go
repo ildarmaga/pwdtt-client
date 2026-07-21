@@ -234,8 +234,10 @@ func (s *vkWebView2Session) applyValidateResult() {
 			return
 		}
 		s.done.Store(true)
-		vkLoginLog(s.dataDir, "login ok — closing window")
+		vkLoginLog(s.dataDir, "login ok — writing status then closing")
 		s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
+		// Brief pause so parent can observe status.json before the process exits.
+		time.Sleep(300 * time.Millisecond)
 		if s.hwnd != 0 {
 			win.DestroyWindow(s.hwnd)
 		}

@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.245] — 2026-07-21
+
+### Fix — вход VK: вошёл, окно закрылось, cookies не сохранились
+Гонка: worker писал `done` + закрывался → parent видел мёртвый PID и ставил
+«неожиданно закрылось», **не читая** cookie из status.json.
+
+- Сначала обрабатываем `done` и SaveVKCookies, потом выход процесса
+- status.json: write+fsync+rename перед DestroyWindow
+
 ## [0.3.244] — 2026-07-21
 
 ### Fix — вход VK: после скана QR не появлялся код подтверждения

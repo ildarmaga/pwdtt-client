@@ -53,5 +53,17 @@ func writeVKLoginStatus(path string, st vkLoginStatusFile) {
 		return
 	}
 	b, _ := json.Marshal(st)
-	_ = os.WriteFile(path, b, 0600)
+	// Write+sync so parent sees "done"+cookie before DestroyWindow exits the process.
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		_ = os.WriteFile(path, b, 0600)
+		return
+	}
+	_, _ = f.Write(b)
+	_ = f.Sync()
+	_ = f.Close()
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.WriteFile(path, b, 0600)
+	}
 }
