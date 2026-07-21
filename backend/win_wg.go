@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"github.com/ildarmaga/whitelist-bypass/relay/desktoptun"
-	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -62,32 +61,26 @@ func writeWintunFile(path string) error {
 	return nil
 }
 
-// extractWintun writes embedded wintun.dll only into data/ and points the
-// process DLL search path there (SetDllDirectory). No copy next to the exe.
+// extractWintun writes embedded wintun.dll next to the exe.
+// wireguard-go / wintun load via LoadLibrary("wintun.dll") from the process
+// directory — SetDllDirectory(data/) is NOT enough (see v0.3.238 TUN failure).
 func extractWintun() error {
 	if len(wintunDLL) == 0 {
 		return fmt.Errorf("wintun.dll не встроен")
 	}
-	dir := DataDir()
-	dataDst := filepath.Join(dir, "wintun.dll")
-	if err := writeWintunFile(dataDst); err != nil {
-		return fmt.Errorf("data/wintun.dll: %w", err)
+	exe, err := os.Executable()
+	if err != nil {
+		return err
 	}
-	if err := windows.SetDllDirectory(dir); err != nil {
-		return fmt.Errorf("SetDllDirectory(%s): %w", dir, err)
-	}
-	// Drop leftover copy beside exe from older builds.
-	if exe, err := os.Executable(); err == nil {
-		_ = os.Remove(filepath.Join(filepath.Dir(exe), "wintun.dll"))
-	}
-	return nil
+	return writeWintunFile(filepath.Join(filepath.Dir(exe), "wintun.dll"))
 }
 
-// placeWintunNextTo keeps data/wintun.dll ready for any child that inherits
-// the same DLL directory / uses extractWintun.
+// placeWintunNextTo writes wintun.dll into dir for a child process cwd.
 func placeWintunNextTo(dir string) error {
-	_ = dir
-	return extractWintun()
+	if len(wintunDLL) == 0 {
+		return fmt.Errorf("wintun.dll не встроен")
+	}
+	return writeWintunFile(filepath.Join(dir, "wintun.dll"))
 }
 
 func wgTunnelActive() bool { return activeDevice != nil }

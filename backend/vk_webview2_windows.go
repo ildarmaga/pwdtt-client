@@ -114,8 +114,6 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	chromium.DataPath = dataDir
 	chromium.AdditionalBrowserArgs = []string{
 		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
-		"--disable-gpu",
-		"--disable-gpu-compositing",
 	}
 	_ = os.MkdirAll(dataDir, 0700)
 	vkLoginLog(dataDir, "worker start profile=%s", dataDir)
@@ -134,22 +132,15 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 				kind = k
 			}
 		}
-		// Only the main browser process dying is unrecoverable (WebView moves to
-		// Closed). Renderer/GPU/frame crashes are recoverable — VK's QR canvas is
-		// heavy and often kills the render process (blank white QR); previously we
-		// quit the whole login window ~1s after it opened. Reload instead so the
-		// user can still scan the QR / enter credentials.
-		if kind == edge.COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
-			vkLoginLog(dataDir, "webview2 browser process exited — fatal")
-			writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: процесс браузера завершился — перезапустите вход"})
-			win.PostQuitMessage(1)
-			return
-		}
+		// Never PostQuitMessage here — even BROWSER_PROCESS_EXITED. Quitting the
+		// host window is what the user sees as «вход VK закрылся сам». Reload /
+		// keep the HWND so they can retry QR without reopening Settings.
 		reloadURL := s.lastURL
 		if reloadURL == "" {
 			reloadURL = "https://vk.ru/"
 		}
-		vkLoginLog(dataDir, "webview2 process failed kind=%d — reloading %q", kind, reloadURL)
+		vkLoginLog(dataDir, "webview2 process failed kind=%d — reloading %q (no quit)", kind, reloadURL)
+		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 перезагрузка… отсканируйте QR снова"})
 		if s.chromium != nil {
 			s.chromium.Navigate(reloadURL)
 		}
@@ -276,9 +267,11 @@ func (s *vkWebView2Session) tryHarvest() {
 		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q", err, s.lastURL)
 		return
 	}
+	// Never finish on the same remixsid seen on the QR wall — that closed the
+	// window when VK briefly reported a "logged-in" URL with guest cookies.
 	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
-		// Same value as wall baseline but URL is logged-in and token works — OK.
-		vkLoginLog(s.dataDir, "logged-in url with stable remixsid url=%q", s.lastURL)
+		vkLoginLog(s.dataDir, "skip harvest: remixsid still baseline url=%q", s.lastURL)
+		return
 	}
 	now := time.Now()
 	if s.pendingHeader != header {

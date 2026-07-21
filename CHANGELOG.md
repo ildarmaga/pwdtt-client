@@ -1,11 +1,19 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.239] — 2026-07-21
+
+### Fix — wintun.dll снова рядом с exe
+- `SetDllDirectory(data/)` не помог wireguard-go → `Unable to load library`. DLL снова пишется рядом с `.exe` (иначе TUN не встаёт).
+
+### Fix — вход VK: не закрывать окно на ProcessFailed / guest harvest
+- Любой WebView2 ProcessFailed → reload, без `PostQuitMessage`.
+- Harvest только если remixsid **новый** относительно baseline на QR-стене.
+
 ## [0.3.238] — 2026-07-21
 
-### Change — wintun.dll только в data/
-- Больше не кладём `wintun.dll` рядом с exe. Только `data/wintun.dll` + `SetDllDirectory`.
-- Старый dll у exe при старте удаляется.
+### Change — wintun.dll только в data/ (откат в 0.3.239)
+- Не сработало для LoadLibrary — см. 0.3.239.
 
 ## [0.3.237] — 2026-07-21
 
