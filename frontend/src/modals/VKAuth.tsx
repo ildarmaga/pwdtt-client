@@ -114,7 +114,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
               <div className="vk-auth-native-icon">🪟</div>
               <p className={error ? 'vk-auth-native-err' : ''}>{error || status}</p>
               <p style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                На экране или в панели задач найдите окно «WDTT — вход VK». Не закрывайте его, пока не войдёте в аккаунт.
+                Окно «WDTT — вход VK»: отсканируйте QR телефоном — затем в этом же окне должен появиться код подтверждения. Подтвердите вход там (не только на телефоне).
               </p>
             </div>
           ) : url ? (

@@ -1,6 +1,18 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.244] — 2026-07-21
+
+### Fix — вход VK: после скана QR не появлялся код подтверждения
+UI-поток WebView2 блокировали sync `GetCookies` (вложенный pump × много URI)
+и `web_token` HTTP — страница VK не могла обновить SPA, код на десктопе
+не показывался (на телефоне запрос уже был).
+
+- `GetCookiesAsync` без nested pump; один запрос (все cookies профиля)
+- `web_token` только в goroutine
+- browser args: меньше tracking/partitioning; UA как Edge
+- подсказка: код подтверждать в окне WDTT
+
 ## [0.3.243] — 2026-07-21
 
 ### Fix — вход VK: после QR не ловились cookies + автозакрытие

@@ -115,16 +115,74 @@ func (w *getCookiesWaiter) GetCookiesCompleted(errorCode uintptr, result *ICoreW
 	return 0
 }
 
-// GetCookies gets all cookies matching the URI (blocks on the UI thread by
-// pumping window messages until the completion handler runs).
-func (i *ICoreWebView2CookieManager) GetCookies(uri string) (*ICoreWebView2CookieList, error) {
+// getCookiesAsyncCB is a one-shot completion sink. Callers must retain the
+// returned keepAlive until fn has been invoked (WebView2 holds a COM ref, but
+// the Go heap object still needs an explicit root).
+type getCookiesAsyncCB struct {
+	fn   func(*ICoreWebView2CookieList, error)
+	refs uint32
+}
+
+func (w *getCookiesAsyncCB) QueryInterface(_, _ uintptr) uintptr { return 0 }
+func (w *getCookiesAsyncCB) AddRef() uintptr {
+	return uintptr(atomic.AddUint32(&w.refs, 1))
+}
+func (w *getCookiesAsyncCB) Release() uintptr {
+	return uintptr(atomic.AddUint32(&w.refs, ^uint32(0)))
+}
+func (w *getCookiesAsyncCB) GetCookiesCompleted(errorCode uintptr, result *ICoreWebView2CookieList) uintptr {
+	fn := w.fn
+	w.fn = nil
+	if fn == nil {
+		return 0
+	}
+	if errorCode != 0 {
+		fn(nil, syscall.Errno(errorCode))
+		return 0
+	}
+	if result != nil {
+		result.AddRef()
+	}
+	fn(result, nil)
+	return 0
+}
+
+// GetCookiesAsync starts GetCookies without nesting a message pump. The
+// callback runs on the WebView UI thread when the result is ready — safe for
+// SPA/WebSocket login flows that must keep the main loop free.
+func (i *ICoreWebView2CookieManager) GetCookiesAsync(uri string, fn func(*ICoreWebView2CookieList, error)) (keepAlive any, err error) {
+	if fn == nil {
+		return nil, syscall.EINVAL
+	}
 	uriutf16, err := windows.UTF16PtrFromString(uri)
 	if err != nil {
 		return nil, err
 	}
+	w := &getCookiesAsyncCB{fn: fn, refs: 1}
+	handler := newICoreWebView2GetCookiesCompletedHandler(w)
+	hr, _, _ := i.vtbl.GetCookies.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(uriutf16)),
+		uintptr(unsafe.Pointer(handler)),
+	)
+	if windows.Handle(hr) != windows.S_OK {
+		return nil, syscall.Errno(hr)
+	}
+	runtime.KeepAlive(handler)
+	return w, nil
+}
 
+// GetCookies gets all cookies matching the URI (blocks on the UI thread by
+// pumping window messages until the completion handler runs). Prefer
+// GetCookiesAsync on interactive UI threads.
+func (i *ICoreWebView2CookieManager) GetCookies(uri string) (*ICoreWebView2CookieList, error) {
 	waiter := &getCookiesWaiter{}
 	handler := newICoreWebView2GetCookiesCompletedHandler(waiter)
+
+	uriutf16, err := windows.UTF16PtrFromString(uri)
+	if err != nil {
+		return nil, err
+	}
 
 	hr, _, _ := i.vtbl.GetCookies.Call(
 		uintptr(unsafe.Pointer(i)),

@@ -20,34 +20,39 @@ import (
 )
 
 const (
-	vkWebView2TimerID    = 42
-	vkLoginPendingStable = 1 * time.Second
+	vkWebView2TimerID = 42
+	// Slow poll: aggressive GetCookies+web_token on the UI thread froze the
+	// page so the post-QR confirmation code never appeared.
+	vkLoginTimerMS = 2500
 )
 
 type vkWebView2Session struct {
 	chromium *edge.Chromium
 	hwnd     win.HWND
-	ready    atomic.Bool // controller embedded; safe to Resize/Navigate
-	busy     atomic.Bool // harvest in progress (GetCookies pumps messages)
+	ready    atomic.Bool
 	done     atomic.Bool
 	navDone  atomic.Bool
-	// remixsid seen while still on the login wall — must not finish harvest.
+
+	fetching   atomic.Bool // GetCookiesAsync in flight
+	validating atomic.Bool // background web_token check
+	baselineOK atomic.Bool
+
 	baselineRemixsid string
-	firstNavAt       time.Time
 	lastURL          string
-	pendingHeader    string
-	pendingSince     time.Time
 	writeSt          func(vkLoginStatusFile)
 	dataDir          string
-	wndProcCb        uintptr // keep NewCallback alive for process lifetime
+	wndProcCb        uintptr
+	cookieKeepAlive  atomic.Value // any — roots GetCookiesAsync handler
+
+	// Set by validate goroutine; applied on UI timer tick.
+	validateOK     atomic.Bool
+	validateFail   atomic.Bool
+	validateHeader atomic.Value // string
+	validateErr    atomic.Value // string
 }
 
 // runVKWebView2Window opens a native window with WebView2 pointed at vk.ru and
 // harvests remixsid/p cookies via the WebView2 cookie manager.
-//
-// The window NEVER auto-closes: not on harvest success, not on WebView2
-// ProcessFailed, not on COM warnings. Only the user closing the window
-// (WM_DESTROY) ends the message loop.
 func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err error) {
 	runtime.LockOSThread()
 
@@ -77,7 +82,7 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 			}
 		case win.WM_TIMER:
 			if wParam == vkWebView2TimerID {
-				s.tryHarvest()
+				s.onTimer()
 			}
 		case win.WM_CLOSE:
 			win.DestroyWindow(hwnd)
@@ -101,13 +106,11 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 		HbrBackground: win.HBRUSH(win.COLOR_WINDOW + 1),
 	}
 	wc.CbSize = uint32(unsafe.Sizeof(wc))
-	atom := win.RegisterClassEx(&wc)
-	if atom == 0 {
-		// Class may already exist from a previous attempt in this process — OK.
+	if win.RegisterClassEx(&wc) == 0 {
 		vkLoginLog(dataDir, "RegisterClassEx returned 0 (class may already exist)")
 	}
 
-	const winW, winH = 520, 720
+	const winW, winH = 560, 780
 	x := (win.GetSystemMetrics(win.SM_CXSCREEN) - winW) / 2
 	y := (win.GetSystemMetrics(win.SM_CYSCREEN) - winH) / 2
 	if x < 0 {
@@ -131,8 +134,10 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 
 	chromium := edge.NewChromium()
 	chromium.DataPath = dataDir
+	// Keep QR long-poll / WebSocket alive; avoid Edge tracking features that
+	// break id.vk ↔ vk.ru cookie/storage for the confirmation-code step.
 	chromium.AdditionalBrowserArgs = []string{
-		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ThirdPartyStoragePartitioning,TrackingPrevention",
 	}
 	_ = os.MkdirAll(dataDir, 0700)
 	vkLoginLog(dataDir, "worker start profile=%s pid=%d", dataDir, os.Getpid())
@@ -146,8 +151,8 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 				kind = k
 			}
 		}
-		vkLoginLog(dataDir, "webview2 process failed kind=%d — ignored (no quit, no reload)", kind)
-		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 сбой процесса — закройте окно и войдите снова, если страница пустая"})
+		vkLoginLog(dataDir, "webview2 process failed kind=%d — ignored", kind)
+		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 сбой — закройте окно и войдите снова"})
 	}
 	chromium.NavigationCompletedCallback = func(sender *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
 		defer func() {
@@ -158,15 +163,15 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 		if sender != nil {
 			if src, err := sender.GetSource(); err == nil && src != "" {
 				s.lastURL = src
+				vkLoginLog(dataDir, "nav url=%q", src)
 			}
 		}
 		if !s.navDone.Load() {
 			s.navDone.Store(true)
-			s.firstNavAt = time.Now()
-			s.baselineRemixsid = s.readRemixsid()
-			vkLoginLog(dataDir, "first navigation done url=%q baseline_remixsid=%q", s.lastURL, s.baselineRemixsid)
+			vkLoginLog(dataDir, "first navigation done url=%q (baseline via async cookies)", s.lastURL)
 		}
-		s.tryHarvest()
+		// Do NOT GetCookies / web_token here — that froze the UI and blocked
+		// the QR→confirmation-code transition after the phone scan.
 	}
 	s.chromium = chromium
 	s.hwnd = hwnd
@@ -182,9 +187,8 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 
 	if settings, err := chromium.GetSettings(); err == nil && settings != nil {
 		_ = settings.PutAreDevToolsEnabled(false)
+		_ = settings.PutUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0")
 	}
-	// Do NOT Hide()/SetBackgroundColour — both historically nil-deref'd on
-	// some WebView2 builds (Controller2 missing) and killed this process.
 	if err := chromium.Show(); err != nil {
 		vkLoginLog(dataDir, "Show warn: %v", err)
 	}
@@ -196,8 +200,8 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 	vkLoginLog(dataDir, "Navigate https://vk.ru/")
 	chromium.Navigate("https://vk.ru/")
 
-	win.SetTimer(hwnd, vkWebView2TimerID, 1500, 0)
-	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически. Окно закройте сами (крестик)."})
+	win.SetTimer(hwnd, vkWebView2TimerID, vkLoginTimerMS, 0)
+	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Отсканируйте QR — в этом окне появится код, подтвердите вход здесь"})
 	vkLoginLog(dataDir, "message loop enter")
 
 	var msg win.MSG
@@ -210,109 +214,153 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) (err e
 	return nil
 }
 
-func (s *vkWebView2Session) readRemixsid() string {
-	remixsid, _ := s.readVKCookies()
-	return remixsid
+func (s *vkWebView2Session) onTimer() {
+	defer func() {
+		if r := recover(); r != nil {
+			vkLoginLog(s.dataDir, "onTimer panic: %v\n%s", r, debug.Stack())
+		}
+	}()
+	if s.done.Load() || !s.ready.Load() || !s.navDone.Load() {
+		return
+	}
+	s.applyValidateResult()
+	s.requestCookiesAsync()
 }
 
-func (s *vkWebView2Session) readVKCookies() (remixsid, pCookie string) {
-	if s.chromium == nil || !s.ready.Load() {
-		return "", ""
+func (s *vkWebView2Session) applyValidateResult() {
+	if s.validateOK.CompareAndSwap(true, false) {
+		header, _ := s.validateHeader.Load().(string)
+		if header == "" || s.done.Load() {
+			return
+		}
+		s.done.Store(true)
+		vkLoginLog(s.dataDir, "login ok — closing window")
+		s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
+		if s.hwnd != 0 {
+			win.DestroyWindow(s.hwnd)
+		}
+		return
+	}
+	if s.validateFail.CompareAndSwap(true, false) {
+		errStr, _ := s.validateErr.Load().(string)
+		vkLoginLog(s.dataDir, "web_token not ready: %s url=%q", errStr, s.lastURL)
+		s.validating.Store(false)
+	}
+}
+
+func (s *vkWebView2Session) requestCookiesAsync() {
+	if s.done.Load() || s.validating.Load() {
+		return
+	}
+	if !s.fetching.CompareAndSwap(false, true) {
+		return
+	}
+	if s.chromium == nil {
+		s.fetching.Store(false)
+		return
 	}
 	cm, err := s.chromium.GetCookieManager()
 	if err != nil {
+		s.fetching.Store(false)
+		vkLoginLog(s.dataDir, "GetCookieManager: %v", err)
+		return
+	}
+	// Empty URI = all profile cookies (one async round-trip).
+	keep, err := cm.GetCookiesAsync("", func(list *edge.ICoreWebView2CookieList, err error) {
+		defer cm.Release()
+		defer s.fetching.Store(false)
+		if err != nil {
+			vkLoginLog(s.dataDir, "GetCookiesAsync: %v", err)
+			return
+		}
+		remixsid, pCookie := parseVKCookieList(list)
+		if list != nil {
+			list.Release()
+		}
+		s.onCookies(remixsid, pCookie)
+	})
+	if err != nil {
+		cm.Release()
+		s.fetching.Store(false)
+		vkLoginLog(s.dataDir, "GetCookiesAsync start: %v", err)
+		return
+	}
+	s.cookieKeepAlive.Store(keep)
+}
+
+func parseVKCookieList(list *edge.ICoreWebView2CookieList) (remixsid, pCookie string) {
+	if list == nil {
 		return "", ""
 	}
-	defer cm.Release()
-
-	uris := []string{
-		"https://vk.ru/", "https://vk.com/",
-		"https://login.vk.ru/", "https://login.vk.com/",
-		"https://id.vk.ru/", "https://id.vk.com/",
-		"https://m.vk.ru/", "https://m.vk.com/",
-	}
-	for _, uri := range uris {
-		list, err := cm.GetCookies(uri)
-		if err != nil || list == nil {
+	count, _ := list.GetCount()
+	for i := uint32(0); i < count; i++ {
+		c, err := list.GetItem(i)
+		if err != nil || c == nil {
 			continue
 		}
-		count, _ := list.GetCount()
-		for i := uint32(0); i < count; i++ {
-			c, err := list.GetItem(i)
-			if err != nil || c == nil {
-				continue
-			}
-			name, _ := c.GetName()
-			val, _ := c.GetValue()
-			dom, _ := c.GetDomain()
-			if name == "remixsid" && vkCookieDomainOK(dom, ".vk.com", ".vk.ru") && val != "" {
-				remixsid = val
-			}
-			// p may sit on login.* or on bare .vk.ru / .vk.com after domain migration
-			if name == "p" && val != "" && (vkCookieDomainOK(dom, ".login.vk.com", ".login.vk.ru") ||
-				vkCookieDomainOK(dom, ".vk.com", ".vk.ru")) {
-				pCookie = val
-			}
-			c.Release()
+		name, _ := c.GetName()
+		val, _ := c.GetValue()
+		dom, _ := c.GetDomain()
+		if name == "remixsid" && vkCookieDomainOK(dom, ".vk.com", ".vk.ru") && val != "" {
+			remixsid = val
 		}
-		list.Release()
+		if name == "p" && val != "" && (vkCookieDomainOK(dom, ".login.vk.com", ".login.vk.ru") ||
+			vkCookieDomainOK(dom, ".vk.com", ".vk.ru")) {
+			pCookie = val
+		}
+		c.Release()
 	}
 	return remixsid, pCookie
 }
 
-func (s *vkWebView2Session) tryHarvest() {
-	defer func() {
-		if r := recover(); r != nil {
-			vkLoginLog(s.dataDir, "tryHarvest panic: %v\n%s", r, debug.Stack())
-		}
-	}()
-	if s.done.Load() || s.chromium == nil || !s.navDone.Load() {
+func (s *vkWebView2Session) onCookies(remixsid, pCookie string) {
+	if s.done.Load() {
 		return
 	}
-	// GetCookies nests a message pump; ignore re-entrant timer/nav callbacks.
-	if !s.busy.CompareAndSwap(false, true) {
+	if !s.baselineOK.Load() {
+		s.baselineRemixsid = remixsid
+		s.baselineOK.Store(true)
+		vkLoginLog(s.dataDir, "baseline remixsid=%q p=%t url=%q", trimSID(remixsid), pCookie != "", s.lastURL)
 		return
 	}
-	defer s.busy.Store(false)
-
-	remixsid, pCookie := s.readVKCookies()
-
-	// Never rewrite baseline after first navigation — that poisoned harvest:
-	// QR page got a new remixsid → baseline updated → real login looked "old".
+	if s.chromium != nil {
+		// Refresh URL if possible via last NavigationCompleted; leave as-is.
+	}
 	if !vkLoginURLAllowsCookieHarvest(s.lastURL) {
-		vkLoginLog(s.dataDir, "harvest wait auth-flow url=%q remix=%t p=%t", s.lastURL, remixsid != "", pCookie != "")
-		return
-	}
-	if strings.TrimSpace(remixsid) == "" {
 		return
 	}
 	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
+		return
+	}
+	if !s.validating.CompareAndSwap(false, true) {
 		return
 	}
 	header := "remixsid=" + remixsid
 	if strings.TrimSpace(pCookie) != "" {
 		header += "; p=" + pCookie
 	}
-	if err := core.ValidateVKCookieHeader(header); err != nil {
-		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q remix_new=1 p=%t", err, s.lastURL, pCookie != "")
+	vkLoginLog(s.dataDir, "new remixsid — validate off UI thread url=%q p=%t", s.lastURL, pCookie != "")
+	go s.validateHeaderAsync(header)
+}
+
+func (s *vkWebView2Session) validateHeaderAsync(header string) {
+	// Off UI thread — never call web_token from the WebView message loop
+	// (that froze QR SPA and prevented the confirmation-code screen).
+	err := core.ValidateVKCookieHeader(header)
+	if err != nil {
+		s.validateErr.Store(err.Error())
+		s.validateFail.Store(true)
 		return
 	}
-	now := time.Now()
-	if s.pendingHeader != header {
-		s.pendingHeader = header
-		s.pendingSince = now
-		vkLoginLog(s.dataDir, "harvest pending url=%q", s.lastURL)
-		return
+	s.validateHeader.Store(header)
+	s.validateOK.Store(true)
+}
+
+func trimSID(s string) string {
+	if len(s) <= 8 {
+		return s
 	}
-	if now.Sub(s.pendingSince) < vkLoginPendingStable {
-		return
-	}
-	s.done.Store(true)
-	vkLoginLog(s.dataDir, "login ok remixsid=%s… url=%q — closing window", remixsid[:min(8, len(remixsid))], s.lastURL)
-	s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
-	if s.hwnd != 0 {
-		win.DestroyWindow(s.hwnd)
-	}
+	return s[:8] + "…"
 }
 
 func vkLoginLog(dataDir, format string, args ...any) {
