@@ -44,7 +44,9 @@ func (a *App) StartVKLogin() (VKLoginStartResult, error) {
 		return VKLoginStartResult{Active: true, Native: true}, nil
 	}
 
-	ctx, cancel := context.WithCancel(a.ctx)
+	// Independent of app ctx — quitting/re-render of Wails must not cancel the
+	// login worker (that killed the window via StopVKLogin → killProcessTree).
+	ctx, cancel := context.WithCancel(context.Background())
 	vkLoginWin.cancel = cancel
 	vkLoginWin.active = true
 	vkLoginWin.done = false

@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.240] — 2026-07-21
+
+### Fix — вход VK: окно больше НИКОГДА не закрывается само
+- Убран `DestroyWindow` после harvest (раньше окно гасло через 1.5с после «успеха», в т.ч. ложного).
+- ProcessFailed: без quit и без Navigate.
+- Убран `WS_EX_TOPMOST`.
+- Worker не привязан к `a.ctx` приложения.
+- go-webview2: ошибка GetAvailable… больше не делает `os.Exit`.
+- UI после cookies не зовёт StopVKLogin. Закрытие — только крестик пользователя.
+
 ## [0.3.239] — 2026-07-21
 
 ### Fix — wintun.dll снова рядом с exe

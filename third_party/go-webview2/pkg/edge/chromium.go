@@ -206,7 +206,9 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 
 	e.webview2RuntimeVersion, err = webviewloader.GetAvailableCoreWebView2BrowserVersionString(e.BrowserPath)
 	if err != nil {
-		e.errorCallback(fmt.Errorf("error getting Webview2 runtime version: %s", err.Error()))
+		// Version probe failure is not fatal — environment create may still succeed.
+		// errorCallback would os.Exit(1) and kill the VK login worker window.
+		e.nonFatalErrorCallback(fmt.Errorf("error getting Webview2 runtime version: %s", err.Error()))
 	}
 
 	var msg w32.Msg

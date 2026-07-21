@@ -46,10 +46,11 @@ export default function VKAuth({ onClose, onDone }: Props) {
     const poll = () => {
       void PollVKLogin().then(res => {
         if (res.done) {
-          setStatus(res.message || 'Готово');
+          setStatus(res.message || 'Готово — закройте окно «WDTT — вход VK» крестиком');
           window.clearInterval(pollRef.current);
           onDoneRef.current();
-          onCloseRef.current();
+          // Do NOT onClose / StopVKLogin — native window must stay until the user
+          // closes it; auto-dismiss was one of the paths that felt like «окно само закрылось».
           return;
         }
         if (res.status === 'error') {

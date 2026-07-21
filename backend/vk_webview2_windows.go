@@ -20,8 +20,7 @@ import (
 
 const (
 	vkWebView2TimerID    = 42
-	vkLoginPendingStable = 2 * time.Second
-	vkLoginDestroyDelay  = 1500 * time.Millisecond
+	vkLoginPendingStable = 3 * time.Second
 )
 
 type vkWebView2Session struct {
@@ -29,20 +28,22 @@ type vkWebView2Session struct {
 	hwnd     win.HWND
 	done     atomic.Bool
 	navDone  atomic.Bool
-	// remixsid seen while still on the login wall — must not close the window.
+	// remixsid seen while still on the login wall — must not finish harvest.
 	baselineRemixsid string
 	firstNavAt       time.Time
 	lastURL          string
 	pendingHeader    string
 	pendingSince     time.Time
-	doneAt           time.Time
 	writeSt          func(vkLoginStatusFile)
 	dataDir          string
 }
 
 // runVKWebView2Window opens a native window with WebView2 pointed at vk.ru and
-// harvests remixsid/p cookies via the WebView2 cookie manager (works with HttpOnly,
-// works elevated — no DevTools attach like chromedp). Blocks until the window closes.
+// harvests remixsid/p cookies via the WebView2 cookie manager.
+//
+// The window NEVER auto-closes: not on harvest success, not on WebView2
+// ProcessFailed, not on COM warnings. Only the user closing the window
+// (WM_DESTROY) ends the message loop.
 func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error {
 	runtime.LockOSThread()
 
@@ -60,14 +61,12 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		case win.WM_TIMER:
 			if wParam == vkWebView2TimerID {
 				s.tryHarvest()
-				if s.done.Load() {
-					if s.doneAt.IsZero() {
-						s.doneAt = time.Now()
-					} else if time.Since(s.doneAt) >= vkLoginDestroyDelay {
-						win.DestroyWindow(hwnd)
-					}
-				}
+				// Intentionally NO DestroyWindow — cookies are saved via status
+				// file; user closes the window with the title-bar X.
 			}
+		case win.WM_CLOSE:
+			win.DestroyWindow(hwnd)
+			return 0
 		case win.WM_DESTROY:
 			if !s.done.Load() {
 				writeSt(vkLoginStatusFile{Status: "cancelled", Message: "Вход отменён"})
@@ -100,7 +99,7 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 
 	title, _ := windows.UTF16PtrFromString("WDTT — вход VK")
 	hwnd := win.CreateWindowEx(
-		win.WS_EX_TOPMOST, className, title,
+		0, className, title,
 		win.WS_OVERLAPPEDWINDOW,
 		x, y, winW, winH,
 		0, 0, hInstance, nil,
@@ -116,12 +115,7 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
 	}
 	_ = os.MkdirAll(dataDir, 0700)
-	vkLoginLog(dataDir, "worker start profile=%s", dataDir)
-	// IMPORTANT: go-webview2 reports Resize/Navigate/Eval COM hiccups through
-	// this callback (nonFatalErrorCallback). Quitting here was why the login
-	// window vanished ~2–3s after open even after the os.Exit(1) fork —
-	// a stray WM_SIZE or Navigate during WebView2 bring-up called PostQuitMessage.
-	// Bootstrap failures still hard-abort via the library's own os.Exit path.
+	vkLoginLog(dataDir, "worker start profile=%s (no auto-close)", dataDir)
 	chromium.SetErrorCallback(func(err error) {
 		vkLoginLog(dataDir, "webview2 warn (ignored): %v", err)
 	})
@@ -132,18 +126,9 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 				kind = k
 			}
 		}
-		// Never PostQuitMessage here — even BROWSER_PROCESS_EXITED. Quitting the
-		// host window is what the user sees as «вход VK закрылся сам». Reload /
-		// keep the HWND so they can retry QR without reopening Settings.
-		reloadURL := s.lastURL
-		if reloadURL == "" {
-			reloadURL = "https://vk.ru/"
-		}
-		vkLoginLog(dataDir, "webview2 process failed kind=%d — reloading %q (no quit)", kind, reloadURL)
-		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 перезагрузка… отсканируйте QR снова"})
-		if s.chromium != nil {
-			s.chromium.Navigate(reloadURL)
-		}
+		vkLoginLog(dataDir, "webview2 process failed kind=%d — ignored (no quit, no reload)", kind)
+		writeSt(vkLoginStatusFile{Status: "waiting", Message: "WebView2 сбой процесса — закройте окно и войдите снова, если страница пустая"})
+		// No PostQuitMessage, no Navigate — both have historically killed the window.
 	}
 	chromium.NavigationCompletedCallback = func(sender *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
 		if sender != nil {
@@ -176,14 +161,12 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
 	win.ShowWindow(hwnd, win.SW_SHOWNORMAL)
 	win.UpdateWindow(hwnd)
-	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_SHOWWINDOW)
 	win.SetForegroundWindow(hwnd)
 	chromium.Resize()
-	// VK migrates vk.com → vk.ru; start on .ru so login/QR and cookies land consistently.
 	chromium.Navigate("https://vk.ru/")
 
 	win.SetTimer(hwnd, vkWebView2TimerID, 1500, 0)
-	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически"})
+	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Войдите в VK — cookies сохранятся автоматически. Окно закройте сами (крестик)."})
 
 	var msg win.MSG
 	for win.GetMessage(&msg, 0, 0, 0) > 0 {
@@ -247,8 +230,6 @@ func (s *vkWebView2Session) tryHarvest() {
 	}
 	remixsid, pCookie := s.readVKCookies()
 
-	// Login wall is often https://vk.ru/ with QR overlay — keep absorbing
-	// guest remixsid into baseline and never finish until a post-login URL.
 	if !vkLoginURLLooksLoggedIn(s.lastURL) {
 		if remixsid != "" && remixsid != s.baselineRemixsid {
 			vkLoginLog(s.dataDir, "auth-wall baseline %q → %q url=%q", s.baselineRemixsid, remixsid, s.lastURL)
@@ -257,8 +238,6 @@ func (s *vkWebView2Session) tryHarvest() {
 		return
 	}
 
-	// On feed/im/…: accept session if remixsid changed OR same cookie validates
-	// (VK may upgrade guest remixsid in place after QR success).
 	if strings.TrimSpace(remixsid) == "" || strings.TrimSpace(pCookie) == "" {
 		return
 	}
@@ -267,8 +246,6 @@ func (s *vkWebView2Session) tryHarvest() {
 		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q", err, s.lastURL)
 		return
 	}
-	// Never finish on the same remixsid seen on the QR wall — that closed the
-	// window when VK briefly reported a "logged-in" URL with guest cookies.
 	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
 		vkLoginLog(s.dataDir, "skip harvest: remixsid still baseline url=%q", s.lastURL)
 		return
@@ -283,8 +260,8 @@ func (s *vkWebView2Session) tryHarvest() {
 		return
 	}
 	s.done.Store(true)
-	vkLoginLog(s.dataDir, "login ok remixsid=%s… url=%q", remixsid[:min(8, len(remixsid))], s.lastURL)
-	s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
+	vkLoginLog(s.dataDir, "login ok remixsid=%s… url=%q (window stays open until user closes)", remixsid[:min(8, len(remixsid))], s.lastURL)
+	s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены — можете закрыть окно", Cookie: header})
 }
 
 func vkLoginLog(dataDir, format string, args ...any) {
