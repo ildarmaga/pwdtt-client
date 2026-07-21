@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	// Cookie-path host is vkWebHost (vk.ru). See vk_host.go.
 	vkCookieAppID      = "6287487"
 	vkCookieAPIVersion = "5.280"
 	vkCookieAppVersion = "1.1"
@@ -42,8 +43,8 @@ func getVKCredsViaCookies(ctx context.Context, linkID string, streamID int, cook
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent", getRandomProfile().UserAgent)
-		req.Header.Set("Origin", "https://vk.com")
-		req.Header.Set("Referer", "https://vk.com/")
+		req.Header.Set("Origin", vkWebOrigin())
+		req.Header.Set("Referer", vkWebReferer())
 		req.Header.Set("Cookie", cookieHeader)
 		if bearer != "" {
 			req.Header.Set("Authorization", "Bearer "+bearer)
@@ -65,7 +66,7 @@ func getVKCredsViaCookies(ctx context.Context, linkID string, streamID int, cook
 	}
 
 	log.Printf("[STREAM %d] [VK Cookie] web_token...", streamID)
-	webResp, err := doForm("https://login.vk.com/?act=web_token",
+	webResp, err := doForm("https://"+vkLoginHost()+"/?act=web_token",
 		neturl.Values{"version": {"1"}, "app_id": {vkCookieAppID}}, "")
 	if err != nil {
 		return "", "", nil, fmt.Errorf("web_token: %w", err)
@@ -76,7 +77,7 @@ func getVKCredsViaCookies(ctx context.Context, linkID string, streamID int, cook
 		return "", "", nil, fmt.Errorf("web_token: empty access_token (cookies expired?) resp=%v", truncResp(webResp))
 	}
 
-	settingsResp, err := doForm("https://api.vk.com/method/calls.getSettings",
+	settingsResp, err := doForm("https://"+vkAPIHost()+"/method/calls.getSettings",
 		neturl.Values{"v": {vkCookieAPIVersion}}, vkToken)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("calls.getSettings: %w", err)
@@ -93,7 +94,7 @@ func getVKCredsViaCookies(ctx context.Context, linkID string, streamID int, cook
 		appKey = "CGMMEJLGDIHBABABA"
 	}
 
-	callTokenResp, err := doForm("https://api.vk.com/method/messages.getCallToken",
+	callTokenResp, err := doForm("https://"+vkAPIHost()+"/method/messages.getCallToken",
 		neturl.Values{"v": {vkCookieAPIVersion}, "env": {"production"}}, vkToken)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("messages.getCallToken: %w", err)
@@ -140,8 +141,8 @@ func getVKCredsViaCookies(ctx context.Context, linkID string, streamID int, cook
 	}
 
 	okJoinLink := joinLink
-	previewResp, err := doForm("https://api.vk.com/method/calls.getCallPreview",
-		neturl.Values{"v": {vkCookieAPIVersion}, "vk_join_link": {"https://vk.com/call/join/" + joinLink}}, vkToken)
+	previewResp, err := doForm("https://"+vkAPIHost()+"/method/calls.getCallPreview",
+		neturl.Values{"v": {vkCookieAPIVersion}, "vk_join_link": {vkCallJoinURL(joinLink)}}, vkToken)
 	if err == nil {
 		if jl := vkOKJoinLink(joinLink, previewResp); jl != "" {
 			okJoinLink = jl

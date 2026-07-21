@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.227] — 2026-07-21
+
+### Change — VK `vk.com` → `vk.ru` (как anton48 builds 169–171)
+- Join links и cookie-path (`web_token` / `api.*`) шлём на `vk.ru`; парсеры принимают оба домена.
+- Captcha `domain=` берётся из `redirect_uri` (не хардкод); Origin captcha API → `id.vk.ru`.
+
 ## [0.3.226] — 2026-07-21
 
 ### Fix — быстрый первый коннект SOCKS (~2–3s)

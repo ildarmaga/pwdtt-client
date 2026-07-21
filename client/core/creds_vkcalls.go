@@ -26,7 +26,7 @@ func getVKCredsViaVKCallsPath(ctx context.Context, linkID string, streamID int) 
 	deviceID := uuid.New().String()
 	name := generateName()
 	ua := getRandomProfile().UserAgent
-	linkURL := neturl.QueryEscape("https://vk.com/call/join/" + linkID)
+	linkURL := neturl.QueryEscape(vkCallJoinURL(linkID))
 	nameEnc := neturl.QueryEscape(name)
 
 	log.Printf("[STREAM %d] [VK Calls] identity name=%s device_id=%s host=%s", streamID, name, deviceID, vkCallsAPIHost)

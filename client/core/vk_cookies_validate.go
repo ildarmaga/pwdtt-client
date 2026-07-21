@@ -14,7 +14,7 @@ import (
 const (
 	vkCookieCheckAppID = "6287487"
 	vkCookieCheckTTL   = 3 * time.Minute
-	vkCookieExpiredHint = "Cookies устарели — обновите remixsid (войдите на vk.com и сохраните заново)."
+	vkCookieExpiredHint = "Cookies устарели — обновите remixsid (войдите на vk.ru и сохраните заново)."
 )
 
 var (
@@ -35,14 +35,14 @@ func invalidateVKCookieStatusCache() {
 
 func vkCheckWebToken(cookieHeader string) error {
 	form := url.Values{"version": {"1"}, "app_id": {vkCookieCheckAppID}}
-	req, err := http.NewRequest(http.MethodPost, "https://login.vk.com/?act=web_token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, "https://"+vkLoginHost()+"/?act=web_token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Origin", "https://vk.com")
-	req.Header.Set("Referer", "https://vk.com/")
+	req.Header.Set("Origin", vkWebOrigin())
+	req.Header.Set("Referer", vkWebReferer())
 	req.Header.Set("Cookie", cookieHeader)
 	resp, err := vkCookieCheckClient.Do(req)
 	if err != nil {
@@ -67,7 +67,7 @@ func vkCheckWebToken(cookieHeader string) error {
 	return nil
 }
 
-// ValidateVKCookieHeader checks remixsid live via login.vk.com web_token (no cache).
+// ValidateVKCookieHeader checks remixsid live via login.<vkWebHost> web_token (no cache).
 func ValidateVKCookieHeader(header string) error {
 	return vkCheckWebToken(header)
 }
