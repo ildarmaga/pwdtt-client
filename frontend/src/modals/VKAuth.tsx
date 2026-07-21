@@ -14,6 +14,15 @@ export default function VKAuth({ onClose, onDone }: Props) {
   const [error, setError] = useState('');
   const pollRef = useRef(0);
   const nativeRef = useRef(false);
+  // Only true once StartVKLogin resolved as the non-native (iframe) fallback.
+  // Native logins run in a separate process that self-manages its lifecycle, so
+  // cleanup must NOT StopVKLogin them. Defaulting to false also means the async
+  // race window (before StartVKLogin resolves) never kills the native worker.
+  const stoppableRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  const onDoneRef = useRef(onDone);
+  onCloseRef.current = onClose;
+  onDoneRef.current = onDone;
 
   useEffect(() => {
     let cancelled = false;
@@ -25,6 +34,7 @@ export default function VKAuth({ onClose, onDone }: Props) {
           nativeRef.current = true;
           setNativeWindow(true);
         } else {
+          stoppableRef.current = true;
           setUrl(res.url);
           setStatus('Войдите в VK — cookies сохранятся автоматически');
         }
@@ -38,8 +48,8 @@ export default function VKAuth({ onClose, onDone }: Props) {
         if (res.done) {
           setStatus(res.message || 'Готово');
           window.clearInterval(pollRef.current);
-          onDone();
-          onClose();
+          onDoneRef.current();
+          onCloseRef.current();
           return;
         }
         if (res.status === 'error') {
@@ -57,13 +67,16 @@ export default function VKAuth({ onClose, onDone }: Props) {
     return () => {
       cancelled = true;
       window.clearInterval(pollRef.current);
-      // Native WebView2 runs in a separate process — do not kill it on React
-      // remount (Strict Mode / parent re-render closes the login window early).
-      if (!nativeRef.current) {
+      // Never stop the native WebView2 worker here. It lives in a separate
+      // process and closes itself on success/cancel; killing it on a React
+      // remount (Strict Mode double-mount / parent re-render with new inline
+      // onClose/onDone) closed the login window ~1s after it opened. Explicit
+      // user close still goes through handleClose → StopVKLogin.
+      if (stoppableRef.current) {
         void StopVKLogin();
       }
     };
-  }, [onClose, onDone]);
+  }, []);
 
   const handleClose = () => {
     window.clearInterval(pollRef.current);

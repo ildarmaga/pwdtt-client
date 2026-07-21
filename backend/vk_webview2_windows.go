@@ -122,10 +122,32 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 		writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: " + err.Error() + " — установите Microsoft Edge WebView2 Runtime"})
 		win.PostQuitMessage(1)
 	})
-	chromium.ProcessFailedCallback = func(_ *edge.ICoreWebView2, _ *edge.ICoreWebView2ProcessFailedEventArgs) {
-		vkLoginLog(dataDir, "webview2 process failed")
-		writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: процесс браузера завершился — перезапустите вход"})
-		win.PostQuitMessage(1)
+	chromium.ProcessFailedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2ProcessFailedEventArgs) {
+		var kind edge.COREWEBVIEW2_PROCESS_FAILED_KIND = edge.COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED
+		if args != nil {
+			if k, err := args.GetProcessFailedKind(); err == nil {
+				kind = k
+			}
+		}
+		// Only the main browser process dying is unrecoverable (WebView moves to
+		// Closed). Renderer/GPU/frame crashes are recoverable — VK's QR canvas is
+		// heavy and often kills the render process (blank white QR); previously we
+		// quit the whole login window ~1s after it opened. Reload instead so the
+		// user can still scan the QR / enter credentials.
+		if kind == edge.COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+			vkLoginLog(dataDir, "webview2 browser process exited — fatal")
+			writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: процесс браузера завершился — перезапустите вход"})
+			win.PostQuitMessage(1)
+			return
+		}
+		reloadURL := s.lastURL
+		if reloadURL == "" {
+			reloadURL = "https://vk.ru/"
+		}
+		vkLoginLog(dataDir, "webview2 process failed kind=%d — reloading %q", kind, reloadURL)
+		if s.chromium != nil {
+			s.chromium.Navigate(reloadURL)
+		}
 	}
 	chromium.NavigationCompletedCallback = func(sender *edge.ICoreWebView2, _ *edge.ICoreWebView2NavigationCompletedEventArgs) {
 		if sender != nil {
