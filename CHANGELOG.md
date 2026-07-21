@@ -1,6 +1,17 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.241] — 2026-07-21
+
+### Fix — вход VK: полный разбор причины «окно само закрывается»
+Цепочка: worker пишет `done` → parent helper выходит (`active=false`) → любой повторный `StartVKLogin` делал `taskkill` PID из `status.json` + `RemoveAll(profile)` **пока окно ещё открыто** → QR гас. Плюс vendored go-webview2: `errorCallback` → `os.Exit(1)` на COM (PutBoundsMode / Add* handlers).
+
+- `errorCallback` больше **никогда** не зовёт `os.Exit`; Embed возвращает false при nil controller.
+- После `done` helper продолжает poll, пока процесс окна жив.
+- Живой worker: attach, без kill/wipe profile.
+- Убран React `StrictMode` (dev double-mount).
+- Лог: `data/webview-vk/vk-login.log` (StopVKLogin / spawn / death).
+
 ## [0.3.240] — 2026-07-21
 
 ### Fix — вход VK: окно больше НИКОГДА не закрывается само

@@ -148,24 +148,17 @@ func (e *Chromium) ShuttingDown() {
 }
 
 func (e *Chromium) errorCallback(err error) {
+	// Never os.Exit here. Upstream go-webview2 used Exit(1) on any COM hiccup
+	// during controller bootstrap (PutBoundsMode, Add* handlers, …). That
+	// silently killed the WDTT VK login worker process — the native window
+	// vanished 1–2s after opening with no dialog. Callers must tolerate a
+	// failed Embed (nil controller) instead of relying on process death.
 	e.globalErrorCallback(err)
-	os.Exit(1)
 }
 
 // nonFatalErrorCallback reports an error through the same channel as
-// errorCallback but does NOT terminate the process.
-//
-// errorCallback's unconditional os.Exit(1) is safe only for the one-time
-// environment/controller bootstrap in CreateCoreWebView2ControllerCompleted,
-// where callers keep dereferencing possibly-nil COM pointers right after the
-// call and rely on the hard-exit to never reach that code. Every other
-// call site below simply returns after reporting the error, so calling this
-// instead of errorCallback is safe and prevents transient/one-off COM
-// failures (a WM_SIZE landing while the controller is being recreated after
-// a renderer/GPU crash, a Navigate() racing a process-failed recovery, an
-// Eval()/ExecuteScript() hiccup during normal use, etc.) from silently
-// killing the entire host process — which previously looked like the whole
-// window/app vanishing with no error dialog.
+// errorCallback. Kept as a separate name at call sites that historically
+// must not abort; both paths are non-fatal now.
 func (e *Chromium) nonFatalErrorCallback(err error) {
 	e.globalErrorCallback(err)
 }
@@ -188,6 +181,7 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		_, err = windows.GetModuleFileName(windows.Handle(0), &currentExePath[0], windows.MAX_PATH)
 		if err != nil {
 			e.errorCallback(err)
+			return false
 		}
 		currentExeName := filepath.Base(windows.UTF16ToString(currentExePath))
 		dataPath = filepath.Join(os.Getenv("AppData"), currentExeName)
@@ -196,12 +190,14 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 	if e.BrowserPath != "" {
 		if _, err = os.Stat(e.BrowserPath); errors.Is(err, os.ErrNotExist) {
 			e.errorCallback(fmt.Errorf("browser path '%s' does not exist", e.BrowserPath))
+			return false
 		}
 	}
 
 	browserArgs := strings.Join(e.AdditionalBrowserArgs, " ")
 	if err := createCoreWebView2EnvironmentWithOptions(e.BrowserPath, dataPath, e.envCompleted, browserArgs); err != nil {
 		e.errorCallback(fmt.Errorf("error calling Webview2Loader: %s", err.Error()))
+		return false
 	}
 
 	e.webview2RuntimeVersion, err = webviewloader.GetAvailableCoreWebView2BrowserVersionString(e.BrowserPath)
@@ -227,6 +223,10 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 		}
 		w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		w32.User32DispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
+	}
+	if e.controller == nil || e.webview == nil {
+		e.nonFatalErrorCallback(fmt.Errorf("webview2 embed incomplete (controller/webview nil)"))
+		return false
 	}
 	e.Init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}")
 	return true
@@ -332,6 +332,7 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 		if e.globalErrorCallback != nil {
 			e.globalErrorCallback(fmt.Errorf("failed to create WebView2 environment: %w", err))
 		}
+		atomic.StoreUintptr(&e.inited, 1) // unblock Embed → false
 		return res
 	}
 
@@ -343,13 +344,16 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 	err := env.CreateCoreWebView2Controller(e.hwnd, e.controllerCompleted)
 	if err != nil {
 		e.errorCallback(err)
+		atomic.StoreUintptr(&e.inited, 1)
 	}
 	return 0
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int32(res) < 0 {
+	if int32(res) < 0 || controller == nil {
 		e.errorCallback(fmt.Errorf("error creating controller with %08x: %s", res, syscall.Errno(res)))
+		atomic.StoreUintptr(&e.inited, 1) // unblock Embed; it will return false
+		return res
 	}
 
 	var err error
@@ -361,49 +365,51 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	if controller3 := e.controller.GetICoreWebView2Controller3(); controller3 != nil {
 		// Use raw pixels mode for better performance during resize
 		if err := controller3.PutBoundsMode(COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS); err != nil {
-			e.errorCallback(err)
+			e.nonFatalErrorCallback(err)
 		}
 
 		// Disable monitor scale changes since we're using raw pixels
 		if err := controller3.PutShouldDetectMonitorScaleChanges(false); err != nil {
-			e.errorCallback(err)
+			e.nonFatalErrorCallback(err)
 		}
 	}
 	var token _EventRegistrationToken
 	e.webview, err = e.controller.GetCoreWebView2()
 	if err != nil {
 		e.errorCallback(err)
+		atomic.StoreUintptr(&e.inited, 1)
+		return 0
 	}
 
 	e.webview.vtbl.AddRef.Call(uintptr(unsafe.Pointer(e.webview)))
 	err = e.webview.AddWebMessageReceived(e.webMessageReceived, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 	err = e.webview.AddPermissionRequested(e.permissionRequested, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 	err = e.webview.AddWebResourceRequested(e.webResourceRequested, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 	err = e.webview.AddNavigationCompleted(e.navigationCompleted, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 	err = e.webview.AddProcessFailed(e.processFailed, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 	err = e.webview.AddContainsFullScreenElementChanged(e.containsFullScreenElementChanged, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 
 	err = e.controller.AddAcceleratorKeyPressed(e.acceleratorKeyPressed, &token)
 	if err != nil {
-		e.errorCallback(err)
+		e.nonFatalErrorCallback(err)
 	}
 
 	atomic.StoreUintptr(&e.inited, 1)
