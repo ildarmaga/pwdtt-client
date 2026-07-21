@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.228] — 2026-07-21
+
+### Fix — окно «вход VK» больше не закрывается сразу
+- WebView2: 6s grace — guest/QR cookies становятся baseline; harvest только после ухода с `id.vk`/`login`.
+- Старт на `vk.ru`; cookies `.vk.com` и `.vk.ru`.
+
 ## [0.3.227] — 2026-07-21
 
 ### Change — VK `vk.com` → `vk.ru` (как anton48 builds 169–171)

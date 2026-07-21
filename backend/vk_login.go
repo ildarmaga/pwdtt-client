@@ -80,7 +80,7 @@ func (a *App) StartVKLogin() (VKLoginStartResult, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-		lastHost: "vk.com",
+		lastHost: "vk.ru",
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -153,9 +153,13 @@ func vkHarvestCookieHeader(jar *cookiejar.Jar) (string, bool) {
 	}
 	var remixsid, pCookie *http.Cookie
 	urls := []string{
+		"https://vk.ru/",
 		"https://vk.com/",
+		"https://login.vk.ru/",
 		"https://login.vk.com/",
+		"https://id.vk.ru/",
 		"https://id.vk.com/",
+		"https://m.vk.ru/",
 		"https://m.vk.com/",
 		"https://oauth.vk.com/",
 	}
@@ -169,10 +173,10 @@ func vkHarvestCookieHeader(jar *cookiejar.Jar) (string, bool) {
 			if !strings.HasPrefix(dom, ".") {
 				dom = "." + dom
 			}
-			if c.Name == "remixsid" && strings.HasSuffix(dom, ".vk.com") && c.Value != "" {
+			if c.Name == "remixsid" && vkCookieDomainOK(dom, ".vk.com", ".vk.ru") && c.Value != "" {
 				remixsid = c
 			}
-			if c.Name == "p" && strings.HasSuffix(dom, ".login.vk.com") && c.Value != "" {
+			if c.Name == "p" && vkCookieDomainOK(dom, ".login.vk.com", ".login.vk.ru") && c.Value != "" {
 				pCookie = c
 			}
 		}
@@ -194,7 +198,7 @@ func (st *vkLoginSession) loginPrefix() string {
 func (st *vkLoginSession) handleAll(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	if p == "/" || p == "" {
-		target, err := url.Parse("https://vk.com/")
+		target, err := url.Parse("https://vk.ru/")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -404,7 +408,7 @@ func vkLoginParseTarget(r *http.Request, _ string) (*url.URL, error) {
 		u.RawQuery = r.URL.RawQuery
 		return u, nil
 	}
-	u, err := url.Parse("https://vk.com" + r.URL.Path)
+	u, err := url.Parse("https://vk.ru" + r.URL.Path)
 	if err != nil {
 		return nil, err
 	}

@@ -37,3 +37,47 @@ func TestVKLoginCookiesReady(t *testing.T) {
 		}
 	}
 }
+
+func TestVKCookieDomainOK(t *testing.T) {
+	if !vkCookieDomainOK(".vk.ru", ".vk.com", ".vk.ru") {
+		t.Fatal("expected .vk.ru ok")
+	}
+	if !vkCookieDomainOK("vk.com", ".vk.com", ".vk.ru") {
+		t.Fatal("expected vk.com ok")
+	}
+	if vkCookieDomainOK(".evil.com", ".vk.com", ".vk.ru") {
+		t.Fatal("evil domain")
+	}
+	if !vkCookieDomainOK(".login.vk.ru", ".login.vk.com", ".login.vk.ru") {
+		t.Fatal("expected login.vk.ru ok")
+	}
+}
+
+func TestVKLoginURLStillAuthFlow(t *testing.T) {
+	auth := []string{
+		"",
+		"about:blank",
+		"https://id.vk.ru/qr_auth",
+		"https://id.vk.com/auth",
+		"https://login.vk.ru/?act=login",
+		"https://oauth.vk.com/authorize",
+		"https://vk.ru/login",
+		"https://id.vk.ru/not_robot_captcha?x=1",
+	}
+	for _, u := range auth {
+		if !vkLoginURLStillAuthFlow(u) {
+			t.Fatalf("expected auth flow: %q", u)
+		}
+	}
+	ok := []string{
+		"https://vk.ru/",
+		"https://vk.ru/feed",
+		"https://vk.com/feed",
+		"https://m.vk.ru/id1",
+	}
+	for _, u := range ok {
+		if vkLoginURLStillAuthFlow(u) {
+			t.Fatalf("expected logged-in page: %q", u)
+		}
+	}
+}
