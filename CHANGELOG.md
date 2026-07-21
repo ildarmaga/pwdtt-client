@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.226] — 2026-07-21
+
+### Fix — быстрый первый коннект SOCKS (~2–3s)
+- Убрано пустое ожидание carrier rebound 5s + лишний pre-SOCKS RestartLink на первом connect.
+- Нужен relay из сервера ≥1.4.85 (CI тянет wbstream-wbt).
+
 ## [0.3.225] — 2026-07-21
 
 ### Fix — soft-rebind без ложного полного reconnect
