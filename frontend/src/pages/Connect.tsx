@@ -594,10 +594,9 @@ export default function Connect() {
           flex-direction: column;
           align-items: center;
           gap: 6px;
-          width: min(300px, calc(100vw - 80px));
+          width: min(280px, calc(100vw - 80px));
         }
-        .protocol-bar--locked > .protocol-seg,
-        .protocol-bar--locked > .protocol-hint { opacity: 0.92; pointer-events: none; }
+        .protocol-bar--locked { opacity: 0.92; pointer-events: none; }
         .protocol-seg {
           display: flex;
           width: 100%;
@@ -851,7 +850,6 @@ export default function Connect() {
             settingsStore.patch({ tunnelProtocol: p });
             logStore.push('INFO', 'Протокол: ' + (p === 'vk' ? 'VK · TURN' : 'WB · WebRTC'));
           }}
-          below={tunnelProtocol === 'vk' ? <VKAuthBar locked={selectionLocked} /> : null}
         />
 
         <button className="btn-add" onClick={() => setAddServerOpen(true)}>
@@ -883,6 +881,9 @@ export default function Connect() {
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               {workersDisplay != null && (
                 <span title="Активные TURN-воркеры из назначенных">Воркеры: <strong>{workersDisplay}</strong></span>
+              )}
+              {tunnelProtocol === 'vk' && (
+                <VKAuthBar locked={selectionLocked} />
               )}
               {tunnelProtocol === 'wb' && socksEp && tunnelState === 'connected' && (
                 <button
