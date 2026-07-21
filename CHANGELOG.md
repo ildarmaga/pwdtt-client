@@ -1,6 +1,10 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.229] — 2026-07-21
+
+### Fix — Windows CI: unused import в WebView2 login
+
 ## [0.3.228] — 2026-07-21
 
 ### Fix — окно «вход VK» больше не закрывается сразу
