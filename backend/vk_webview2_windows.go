@@ -21,7 +21,7 @@ import (
 
 const (
 	vkWebView2TimerID    = 42
-	vkLoginPendingStable = 3 * time.Second
+	vkLoginPendingStable = 1 * time.Second
 )
 
 type vkWebView2Session struct {
@@ -248,7 +248,9 @@ func (s *vkWebView2Session) readVKCookies() (remixsid, pCookie string) {
 			if name == "remixsid" && vkCookieDomainOK(dom, ".vk.com", ".vk.ru") && val != "" {
 				remixsid = val
 			}
-			if name == "p" && vkCookieDomainOK(dom, ".login.vk.com", ".login.vk.ru") && val != "" {
+			// p may sit on login.* or on bare .vk.ru / .vk.com after domain migration
+			if name == "p" && val != "" && (vkCookieDomainOK(dom, ".login.vk.com", ".login.vk.ru") ||
+				vkCookieDomainOK(dom, ".vk.com", ".vk.ru")) {
 				pCookie = val
 			}
 			c.Release()
@@ -275,38 +277,42 @@ func (s *vkWebView2Session) tryHarvest() {
 
 	remixsid, pCookie := s.readVKCookies()
 
-	if !vkLoginURLLooksLoggedIn(s.lastURL) {
-		if remixsid != "" && remixsid != s.baselineRemixsid {
-			vkLoginLog(s.dataDir, "auth-wall baseline %q → %q url=%q", s.baselineRemixsid, remixsid, s.lastURL)
-			s.baselineRemixsid = remixsid
-		}
+	// Never rewrite baseline after first navigation — that poisoned harvest:
+	// QR page got a new remixsid → baseline updated → real login looked "old".
+	if !vkLoginURLAllowsCookieHarvest(s.lastURL) {
+		vkLoginLog(s.dataDir, "harvest wait auth-flow url=%q remix=%t p=%t", s.lastURL, remixsid != "", pCookie != "")
 		return
 	}
-
-	if strings.TrimSpace(remixsid) == "" || strings.TrimSpace(pCookie) == "" {
-		return
-	}
-	header := "remixsid=" + remixsid + "; p=" + pCookie
-	if err := core.ValidateVKCookieHeader(header); err != nil {
-		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q", err, s.lastURL)
+	if strings.TrimSpace(remixsid) == "" {
 		return
 	}
 	if !vkRemixsidIsNew(remixsid, s.baselineRemixsid) {
-		vkLoginLog(s.dataDir, "skip harvest: remixsid still baseline url=%q", s.lastURL)
+		return
+	}
+	header := "remixsid=" + remixsid
+	if strings.TrimSpace(pCookie) != "" {
+		header += "; p=" + pCookie
+	}
+	if err := core.ValidateVKCookieHeader(header); err != nil {
+		vkLoginLog(s.dataDir, "web_token not ready: %v url=%q remix_new=1 p=%t", err, s.lastURL, pCookie != "")
 		return
 	}
 	now := time.Now()
 	if s.pendingHeader != header {
 		s.pendingHeader = header
 		s.pendingSince = now
+		vkLoginLog(s.dataDir, "harvest pending url=%q", s.lastURL)
 		return
 	}
 	if now.Sub(s.pendingSince) < vkLoginPendingStable {
 		return
 	}
 	s.done.Store(true)
-	vkLoginLog(s.dataDir, "login ok remixsid=%s… url=%q (window stays open until user closes)", remixsid[:min(8, len(remixsid))], s.lastURL)
-	s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены — можете закрыть окно", Cookie: header})
+	vkLoginLog(s.dataDir, "login ok remixsid=%s… url=%q — closing window", remixsid[:min(8, len(remixsid))], s.lastURL)
+	s.writeSt(vkLoginStatusFile{Done: true, Status: "done", Message: "Cookies сохранены", Cookie: header})
+	if s.hwnd != 0 {
+		win.DestroyWindow(s.hwnd)
+	}
 }
 
 func vkLoginLog(dataDir, format string, args ...any) {

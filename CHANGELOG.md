@@ -1,6 +1,15 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.243] — 2026-07-21
+
+### Fix — вход VK: после QR не ловились cookies + автозакрытие
+- Баг: на QR-стене новый remixsid записывался в baseline → после входа
+  harvest думал, что сессия «старая», и молчал.
+- Harvest по cookies+web_token на `https://vk.ru/` (не только `/feed`).
+- Cookie `p` принимается и с `.vk.ru` / `.vk.com`.
+- После успешного harvest окно снова закрывается само; UI-модалка тоже.
+
 ## [0.3.242] — 2026-07-21
 
 ### Fix — вход VK: process dies «неожиданно закрылось» (корень)

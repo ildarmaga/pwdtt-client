@@ -67,7 +67,7 @@ func TestVKLoginURLStillAuthFlow(t *testing.T) {
 }
 
 func TestVKLoginURLLooksLoggedIn(t *testing.T) {
-	// QR / login wall on site root — must stay open
+	// QR / login wall on site root — classic path check stays strict
 	wall := []string{
 		"https://vk.ru/",
 		"https://vk.com/",
@@ -91,6 +91,27 @@ func TestVKLoginURLLooksLoggedIn(t *testing.T) {
 	for _, u := range ok {
 		if !vkLoginURLLooksLoggedIn(u) {
 			t.Fatalf("expected logged-in: %q", u)
+		}
+	}
+}
+
+func TestVKLoginURLAllowsCookieHarvest(t *testing.T) {
+	// Root QR page: cookies+web_token may complete login without /feed redirect.
+	if !vkLoginURLAllowsCookieHarvest("https://vk.ru/") {
+		t.Fatal("vk.ru/ must allow cookie harvest")
+	}
+	if !vkLoginURLAllowsCookieHarvest("https://vk.ru/feed") {
+		t.Fatal("feed must allow")
+	}
+	blocked := []string{
+		"https://id.vk.ru/qr",
+		"https://login.vk.ru/?act=login",
+		"https://oauth.vk.com/authorize",
+		"",
+	}
+	for _, u := range blocked {
+		if vkLoginURLAllowsCookieHarvest(u) {
+			t.Fatalf("must block auth flow: %q", u)
 		}
 	}
 }

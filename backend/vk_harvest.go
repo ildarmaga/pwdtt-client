@@ -56,9 +56,9 @@ func vkLoginURLStillAuthFlow(raw string) bool {
 	return false
 }
 
-// vkLoginURLLooksLoggedIn is a positive check: only harvest after leaving the
-// login wall. VK shows QR on https://vk.ru/ (empty path) — that must NOT count
-// as logged-in or the window closes before the user can scan.
+// vkLoginURLLooksLoggedIn is a positive check for classic post-login paths
+// (feed/im/…). QR login often finishes while the address bar is still
+// https://vk.ru/ — harvest must not rely on this alone; use cookies+web_token.
 func vkLoginURLLooksLoggedIn(raw string) bool {
 	if vkLoginURLStillAuthFlow(raw) {
 		return false
@@ -96,4 +96,19 @@ func vkLoginURLLooksLoggedIn(raw string) bool {
 		}
 	}
 	return false
+}
+
+// vkLoginURLAllowsCookieHarvest: block only while on id/login/oauth walls.
+// Root https://vk.ru/ (QR) is allowed — real login is gated by new remixsid
+// + web_token validation, not by path.
+func vkLoginURLAllowsCookieHarvest(raw string) bool {
+	if vkLoginURLStillAuthFlow(raw) {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return strings.HasSuffix(host, "vk.ru") || strings.HasSuffix(host, "vk.com")
 }
