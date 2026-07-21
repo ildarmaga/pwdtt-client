@@ -252,6 +252,7 @@ function installGoMock() {
           localStorage.removeItem(VK_COOKIES_RAW_KEY);
         },
         GetAppVersion: async () => '0.3.90',
+        GetDataDir: async () => '/tmp/wdtt-data',
         CheckForUpdate: async () => ({
           current: '0.3.90',
           latest: '0.3.90',

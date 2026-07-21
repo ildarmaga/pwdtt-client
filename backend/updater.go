@@ -232,7 +232,7 @@ type pendingUpdateRecord struct {
 }
 
 func ensureUpdateDir() (string, error) {
-	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "WDTT", "update")
+	dir := filepath.Join(DataDir(), "update")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
@@ -322,7 +322,10 @@ func MaybeRunUpdateApply(args []string) bool {
 }
 
 func runUpdateApply(pid int, dest string) {
-	logPath := filepath.Join(os.Getenv("LOCALAPPDATA"), "WDTT", "update", "apply.log")
+	// Apply runs from data/update/wdtt-new.exe — log next to the real app's data/.
+	updateDir := filepath.Join(filepath.Dir(dest), portableDataDirName, "update")
+	_ = os.MkdirAll(updateDir, 0700)
+	logPath := filepath.Join(updateDir, "apply.log")
 	logf, _ := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	logln := func(format string, args ...any) {
 		if logf != nil {

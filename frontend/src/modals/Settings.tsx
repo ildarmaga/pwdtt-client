@@ -14,6 +14,7 @@ import {
   SetTrayEnabled, SetAutoStart, GetAutoStart,
   GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
   CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading,
+  GetDataDir,
 } from '../../wailsjs/go/backend/App';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
@@ -102,6 +103,7 @@ export default function Settings({ onClose }: Props) {
   const updateProgress = updateSnap.percent;
   const updateProgressMsg = updateSnap.message;
   const [vkAuthOpen, setVkAuthOpen] = useState(false);
+  const [dataDir, setDataDir] = useState('');
   const isMobile = useMobileUI();
   const protocol = useTunnelProtocol();
   const isVk = isVkProtocol(protocol);
@@ -121,6 +123,9 @@ export default function Settings({ onClose }: Props) {
   };
 
   useEffect(refreshProfileHashes, []);
+  useEffect(() => {
+    void GetDataDir().then(setDataDir).catch(() => setDataDir(''));
+  }, []);
 
   const refreshVkStatus = () => {
     GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
@@ -290,6 +295,11 @@ export default function Settings({ onClose }: Props) {
 
           <div className="st-modal-body">
           <div className="st-section-title">Приложение</div>
+          {dataDir && (
+            <div className="st-hint" style={{ marginBottom: 8, wordBreak: 'break-all', fontSize: 11, opacity: 0.75 }}>
+              Данные: {dataDir}
+            </div>
+          )}
 
           {!isMobile && (
             <>

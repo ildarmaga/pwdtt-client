@@ -35,7 +35,7 @@ func runVKLoginWorker(statusPath, profile string) error {
 	writeSt(vkLoginStatusFile{Status: "waiting", Message: "Загрузка VK…"})
 
 	if profile == "" {
-		profile = filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk", "profile")
+		profile = filepath.Join(DataDir(), "webview-vk", "profile")
 	}
 	return runVKWebView2Window(profile, writeSt)
 }

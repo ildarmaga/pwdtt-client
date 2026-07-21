@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.235] — 2026-07-21
+
+### Change — portable data рядом с exe
+- Все данные в `<папка_exe>/data/`: profiles, secrets, settings, logs, webview-vk, webview-ui, update.
+- При первом запуске — миграция из `%APPDATA%\pwdtt`, `%LOCALAPPDATA%\WDTT\update` и профиля WebView2 UI (копия, старое не удаляется). Лог: `data/migrate.log`.
+- Если рядом с exe нельзя писать (например `/usr/bin`) — fallback на прежний AppData.
+
 ## [0.3.234] — 2026-07-21
 
 ### Fix — вход VK: окно всё ещё закрывалось через 2–3 сек после 0.3.233

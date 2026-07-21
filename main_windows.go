@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -28,6 +29,7 @@ func main() {
 	if backend.MaybeRunUpdateApply(os.Args[1:]) {
 		return
 	}
+	dataDir := backend.InitDataDir()
 	if exit, err := backend.MaybeRunVKLoginWorker(os.Args[1:]); exit {
 		if err != nil {
 			os.Exit(1)
@@ -61,6 +63,7 @@ func main() {
 		Windows: &windows.Options{
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
+			WebviewUserDataPath:  filepath.Join(dataDir, "webview-ui"),
 		},
 	})
 	if err != nil {

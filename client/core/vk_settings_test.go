@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
 func resetVKAuthSettings() {
 	vkUseCookies.Store(false)
+	vkSettingsOnce = sync.Once{}
 }
 
 func TestVKUseCookiesDefaultOff(t *testing.T) {

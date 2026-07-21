@@ -33,7 +33,7 @@ type vkLoginStatusFile struct {
 }
 
 func vkLoginDataDir() string {
-	return filepath.Join(os.Getenv("APPDATA"), "pwdtt", "webview-vk")
+	return filepath.Join(DataDir(), "webview-vk")
 }
 
 func (a *App) StartVKLogin() (VKLoginStartResult, error) {

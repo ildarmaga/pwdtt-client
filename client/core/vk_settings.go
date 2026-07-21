@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 )
 
@@ -11,14 +12,13 @@ type vkAuthSettings struct {
 	UseCookies bool `json:"use_cookies"`
 }
 
-var vkUseCookies atomic.Bool
+var (
+	vkUseCookies   atomic.Bool
+	vkSettingsOnce sync.Once
+)
 
 var vkSettingsPath = func() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = os.Getenv("HOME")
-	}
-	return filepath.Join(base, "pwdtt", "settings", "vk-auth.json")
+	return filepath.Join(ConfigRoot(), "settings", "vk-auth.json")
 }
 
 func loadVKAuthSettings() {
@@ -45,17 +45,24 @@ func saveVKAuthSettings(useCookies bool) error {
 	return os.WriteFile(vkSettingsPath(), raw, 0600)
 }
 
-func init() {
+// ReloadVKAuthSettings re-reads settings after ConfigRoot is switched (portable migrate).
+func ReloadVKAuthSettings() {
 	loadVKAuthSettings()
+}
+
+func ensureVKAuthSettingsLoaded() {
+	vkSettingsOnce.Do(loadVKAuthSettings)
 }
 
 // VKUseCookies — тумблер в настройках: true = только cookie-path, false = anonymous (VK Calls + legacy).
 func VKUseCookies() bool {
+	ensureVKAuthSettingsLoaded()
 	return vkUseCookies.Load()
 }
 
 // SetVKUseCookies сохраняет выбор пользователя.
 func SetVKUseCookies(v bool) error {
+	ensureVKAuthSettingsLoaded()
 	vkUseCookies.Store(v)
 	return saveVKAuthSettings(v)
 }

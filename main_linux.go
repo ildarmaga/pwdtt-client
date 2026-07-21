@@ -23,6 +23,7 @@ var appIcon []byte
 var trayIcon []byte
 
 func main() {
+	backend.InitDataDir()
 	app := backend.NewApp(trayIcon)
 
 	err := wails.Run(&options.App{

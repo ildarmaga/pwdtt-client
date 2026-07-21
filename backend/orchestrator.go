@@ -165,11 +165,7 @@ func classifyLevel(msg string) string {
 }
 
 func configDir() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = os.Getenv("HOME")
-	}
-	dir := filepath.Join(base, "pwdtt")
+	dir := DataDir()
 	_ = os.MkdirAll(dir, 0755)
 	return dir
 }

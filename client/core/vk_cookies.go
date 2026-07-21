@@ -16,14 +16,10 @@ type vkCookieEntry struct {
 }
 
 var vkCookiesPath = func() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = os.Getenv("HOME")
-	}
-	return filepath.Join(base, "pwdtt", "secrets", "cookies-vk.json")
+	return filepath.Join(ConfigRoot(), "secrets", "cookies-vk.json")
 }
 
-// LoadVKCookieHeader reads ~/.config/pwdtt/secrets/cookies-vk.json.
+// LoadVKCookieHeader reads <data>/secrets/cookies-vk.json.
 func LoadVKCookieHeader() (string, error) {
 	raw, err := os.ReadFile(vkCookiesPath())
 	if err != nil {
