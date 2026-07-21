@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.225] — 2026-07-21
+
+### Fix — soft-rebind без ложного полного reconnect
+- После RestartLink старые SOCKS-dial’ы сыпали `closed pipe` → клиент сразу делал полный reconnect.
+- 12s ignore OpenStream после rebind; dial-hold на joiner; при сбое — ещё soft WebRTC-сессия, полный reconnect только после исчерпания soft.
+- Сервер ≥1.4.84.
+
 ## [0.3.224] — 2026-07-21
 
 ### Fix — восстановление WB после смены сети (SOCKS / v2rayN)

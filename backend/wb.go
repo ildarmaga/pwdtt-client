@@ -66,8 +66,11 @@ const (
 	wbSoftRecoverCooldown = 90 * time.Second
 	wbSoftRecoverCooldownDead = 15 * time.Second // RTT dead — retry faster
 
-	// OpenStream/closed pipe flood after soft rebound → full reconnect (SOCKS).
-	wbTunnelErrBurstRecover = 12
+	// OpenStream/closed pipe after soft rebound: only escalate AFTER settle.
+	// During RestartLink, in-flight dials die with closed pipe — that must not
+	// trigger full reconnect (user wants soft recovery).
+	wbTunnelErrBurstRecover   = 20
+	wbTunnelErrIgnoreAfterRebind = 12 * time.Second
 )
 
 var wbProbeURLs = []string{
@@ -118,8 +121,9 @@ type WBManager struct {
 	softRecoverCount int
 	lastSoftRecover  time.Time
 	lastRTT          int64 // ms — adaptive probe interval on mobile
-	tunnelErrBurst   int
-	lastTunnelErrLog time.Time
+	tunnelErrBurst        int
+	lastTunnelErrLog      time.Time
+	ignoreTunnelErrUntil  time.Time // after soft rebind: ignore stale OpenStream deaths
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
@@ -474,6 +478,7 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 				m.recoverVerifyUntil = time.Time{}
 				socksVerify := m.socksOnly
 				trafficAt := m.lastTrafficAt
+				softCountV := m.softRecoverCount
 				m.mu.Unlock()
 				ok := false
 				if socksVerify {
@@ -487,6 +492,25 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 					m.softRecoverCount = 0
 					m.mu.Unlock()
 					probeFails = 0
+				} else if softCountV < wbSoftRecoverMax {
+					// Prefer another soft WebRTC session before full reconnect.
+					m.emitLog("WARN", "[WB] Soft-rebind без трафика — ещё одна WebRTC-сессия (без полного reconnect)…")
+					m.mu.Lock()
+					m.softRecoverCount++
+					m.lastSoftRecover = now
+					if socksVerify {
+						m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+						m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
+						m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
+					} else {
+						m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
+						m.recoverVerifyUntil = now.Add(wbRecoverVerifyWait)
+						m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
+					}
+					m.tunnelErrBurst = 0
+					m.mu.Unlock()
+					m.softRecover(true)
+					continue
 				} else {
 					m.emitLog("WARN", "[WB] Восстановление не помогло — полное переподключение…")
 					runtime.EventsEmit(m.ctx, "state_changed", "connecting")
@@ -539,6 +563,21 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 					continue
 				}
 				if !inGrace && wbTrafficStalled(now, lastTraffic, lastTrafficBytes) {
+					canSoftStall := softCount < wbSoftRecoverMax &&
+						(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
+					if canSoftStall {
+						m.emitLog("WARN", "[WB] SOCKS без трафика — soft WebRTC-сессия (без полного reconnect)…")
+						m.mu.Lock()
+						m.softRecoverCount++
+						m.lastSoftRecover = now
+						m.tunnelErrBurst = 0
+						m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
+						m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+						m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
+						m.mu.Unlock()
+						m.softRecover(true)
+						continue
+					}
 					m.emitLog("WARN", "[WB] SOCKS туннель без трафика — полное переподключение…")
 					runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 					m.reconnect(gen)
@@ -793,12 +832,15 @@ func (m *WBManager) onStatus(code string) {
 	case "TUNNEL_RECONNECTING":
 		m.emitLog("WARN", "[WB] Переподключение WebRTC без снятия VPN…")
 		m.mu.Lock()
+		now := time.Now()
+		m.tunnelErrBurst = 0
+		m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
 		if m.socksOnly {
-			m.probeGraceUntil = time.Now().Add(wbSocksProbeGraceAfterRebind)
-			m.recoverVerifyUntil = time.Now().Add(wbSocksRecoverVerifyWait)
+			m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+			m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
 		} else {
-			m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
-			m.recoverVerifyUntil = time.Now().Add(wbRecoverVerifyWait)
+			m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
+			m.recoverVerifyUntil = now.Add(wbRecoverVerifyWait)
 		}
 		m.mu.Unlock()
 	case "TRAFFIC_READY":
@@ -834,30 +876,57 @@ func (m *WBManager) onStatus(code string) {
 func (m *WBManager) logRelay(raw string) {
 	if strings.Contains(raw, "carrier rebind") || strings.Contains(raw, "carrier rebound") {
 		m.mu.Lock()
+		now := time.Now()
+		m.tunnelErrBurst = 0
+		m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
 		if m.socksOnly {
-			m.probeGraceUntil = time.Now().Add(wbSocksProbeGraceAfterRebind)
-			m.recoverVerifyUntil = time.Now().Add(wbSocksRecoverVerifyWait)
+			m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+			m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
 		} else {
-			m.probeGraceUntil = time.Now().Add(wbProbeGraceAfterRebind)
+			m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
 		}
 		m.mu.Unlock()
 	}
 	if strings.Contains(raw, "OpenStream:") || strings.Contains(raw, "remote not ready") {
 		m.mu.Lock()
 		now := time.Now()
+		// Stale dials die during RestartLink — expected, not a reason to full-reconnect.
+		if !m.ignoreTunnelErrUntil.IsZero() && now.Before(m.ignoreTunnelErrUntil) {
+			m.mu.Unlock()
+			return
+		}
 		if now.Sub(m.lastTunnelErrLog) > 5*time.Second {
 			m.tunnelErrBurst = 0
 		}
 		m.tunnelErrBurst++
 		m.lastTunnelErrLog = now
 		burst := m.tunnelErrBurst
+		softCount := m.softRecoverCount
+		socks := m.socksOnly
 		gen := m.runGen.Load()
 		stopped := m.stop
 		m.mu.Unlock()
-		// Soft rebound left smux dead: floor RTT stays "healthy", SOCKS shows -1.
-		// Escalate to full reconnect instead of flooding logs forever.
+		// After settle: prefer another soft WebRTC session; full reconnect last.
 		if burst == wbTunnelErrBurstRecover && !stopped && !m.reconnecting.Load() {
-			m.emitLog("WARN", "[WB] OpenStream/smux мёртв после rebind — полное переподключение…")
+			if softCount < wbSoftRecoverMax {
+				m.emitLog("WARN", "[WB] OpenStream после settle — soft WebRTC-сессия (без полного reconnect)…")
+				m.mu.Lock()
+				m.softRecoverCount++
+				m.lastSoftRecover = now
+				m.tunnelErrBurst = 0
+				m.ignoreTunnelErrUntil = now.Add(wbTunnelErrIgnoreAfterRebind)
+				if socks {
+					m.probeGraceUntil = now.Add(wbSocksProbeGraceAfterRebind)
+					m.recoverVerifyUntil = now.Add(wbSocksRecoverVerifyWait)
+				} else {
+					m.probeGraceUntil = now.Add(wbProbeGraceAfterRebind)
+					m.recoverVerifyUntil = now.Add(wbRecoverVerifyWait)
+				}
+				m.mu.Unlock()
+				m.softRecover(true)
+				return
+			}
+			m.emitLog("WARN", "[WB] OpenStream/smux мёртв — полное переподключение…")
 			runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 			go m.reconnect(gen)
 			return
