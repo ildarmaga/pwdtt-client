@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { IconDownload, IconX } from '@tabler/icons-react';
-import { CheckForUpdate, DownloadAndApplyUpdate, GetUpdateDownloadState, IsUpdateDownloading } from '../../wailsjs/go/backend/App';
+import { CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
 import { updateStore } from '../lib/stores/updateStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
@@ -95,6 +95,19 @@ export default function UpdateBanner() {
             <IconDownload size={15} />
             {ready ? 'Ждёт отключения' : applying ? (progress > 0 ? `${progress}%` : '…') : (locked ? 'Скачать' : 'Установить')}
           </button>
+          {applying && (
+            <button
+              type="button"
+              className="upd-banner__btn"
+              onClick={async () => {
+                try { await CancelUpdateDownload(); } catch { /* ignore */ }
+                updateStore.finish();
+                setHint('Скачивание отменено — можно запустить снова');
+              }}
+            >
+              Отменить
+            </button>
+          )}
           <button type="button" className="upd-banner__close" aria-label="Скрыть" onClick={dismiss}>
             <IconX size={16} />
           </button>

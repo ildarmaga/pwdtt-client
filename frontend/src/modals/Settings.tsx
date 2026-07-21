@@ -13,7 +13,7 @@ import { saveServerProfile } from '../lib/utils/profileSync';
 import {
   SetTrayEnabled, SetAutoStart, GetAutoStart,
   GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
-  CheckForUpdate, DownloadAndApplyUpdate, GetUpdateDownloadState, IsUpdateDownloading,
+  CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading,
 } from '../../wailsjs/go/backend/App';
 import VKAuth from './VKAuth';
 import type { backend } from '../../wailsjs/go/models';
@@ -386,6 +386,21 @@ export default function Settings({ onClose }: Props) {
                   }}
                 >
                   {updateReady ? 'Ждёт отключения VPN' : updateApplying ? (updateProgress > 0 ? `${updateProgress}%` : 'Скачивание…') : (locked ? `Скачать ${updateInfo.latest}` : `Установить ${updateInfo.latest}`)}
+                </button>
+              )}
+              {updateApplying && (
+                <button
+                  type="button"
+                  className="st-vk-btn"
+                  onClick={async () => {
+                    try {
+                      await CancelUpdateDownload();
+                    } catch { /* ignore */ }
+                    updateStore.finish();
+                    setUpdateMsg('Скачивание отменено — можно запустить снова');
+                  }}
+                >
+                  Отменить
                 </button>
               )}
             </div>

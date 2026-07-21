@@ -96,3 +96,10 @@ require (
 replace wg-turn-client => ./client
 
 replace github.com/ildarmaga/whitelist-bypass/relay => ../wbstream-wbt/whitelist-bypass/relay
+
+// Vendored fork: upstream Chromium.errorCallback calls os.Exit(1) on ANY
+// WebView2 COM error, including transient runtime ones (Navigate/Resize/Eval
+// after a renderer or GPU crash). That silently killed the VK login worker
+// process (and could kill the whole app) a few seconds after opening, with
+// no error dialog — see backend/vk_webview2_windows.go and CHANGELOG 0.3.233.
+replace github.com/wailsapp/go-webview2 => ./third_party/go-webview2

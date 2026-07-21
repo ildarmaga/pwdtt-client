@@ -3,7 +3,9 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +20,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sys/windows"
 )
+
+var errUpdateCancelled = errors.New("скачивание отменено")
 
 // IsTunnelRunning reports whether VK or WB tunnel is active.
 func (a *App) IsTunnelRunning() bool {
@@ -38,45 +42,70 @@ func (a *App) IsUpdateDownloading() bool {
 	return a.updateActive
 }
 
+// CancelUpdateDownload aborts an in-flight download so the user can retry.
+func (a *App) CancelUpdateDownload() {
+	a.updateMu.Lock()
+	cancel := a.updateCancel
+	a.updateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // DownloadAndApplyUpdate downloads the latest Windows exe; applies immediately when
 // VPN is off, otherwise stores the package and installs on disconnect.
 func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
-	if a.IsUpdateDownloading() {
+	ctx, ok := a.beginUpdateDownload()
+	if !ok {
 		return UpdateApplyResult{Message: "Обновление уже скачивается"}
 	}
-
-	info := a.CheckForUpdate()
-	if info.Error != "" && info.DownloadURL == "" {
-		return UpdateApplyResult{Message: info.Error}
-	}
-	if !info.HasUpdate {
-		if info.Latest != "" {
-			return UpdateApplyResult{Message: "Уже установлена " + info.Latest}
-		}
-		return UpdateApplyResult{Message: "Обновлений нет"}
-	}
-	rawURL := strings.TrimSpace(info.DownloadURL)
-	if rawURL == "" {
-		return UpdateApplyResult{Message: "Нет ссылки на скачивание"}
-	}
-
-	updateDir, err := ensureUpdateDir()
-	if err != nil {
-		return UpdateApplyResult{Message: err.Error()}
-	}
-	newExe := filepath.Join(updateDir, pendingUpdateExe)
-
-	a.setUpdateActive(true)
 	defer func() {
 		a.updateMu.Lock()
 		phase := a.updateProgress.Phase
+		a.updateCancel = nil
 		a.updateMu.Unlock()
 		if phase != "ready" && phase != "applying" {
 			a.setUpdateActive(false)
 		}
 	}()
 
-	if err := a.downloadFileWithProgress(rawURL, newExe); err != nil {
+	info := a.checkForUpdate(ctx)
+	if err := ctx.Err(); err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: errUpdateCancelled.Error()})
+		return UpdateApplyResult{Message: errUpdateCancelled.Error()}
+	}
+	if info.Error != "" && info.DownloadURL == "" {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: info.Error})
+		return UpdateApplyResult{Message: info.Error}
+	}
+	if !info.HasUpdate {
+		msg := "Обновлений нет"
+		if info.Latest != "" {
+			msg = "Уже установлена " + info.Latest
+		}
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: msg})
+		return UpdateApplyResult{Message: msg}
+	}
+	rawURL := strings.TrimSpace(info.DownloadURL)
+	if rawURL == "" {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: "Нет ссылки на скачивание"})
+		return UpdateApplyResult{Message: "Нет ссылки на скачивание"}
+	}
+
+	updateDir, err := ensureUpdateDir()
+	if err != nil {
+		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
+		return UpdateApplyResult{Message: err.Error()}
+	}
+	newExe := filepath.Join(updateDir, pendingUpdateExe)
+
+	if err := a.downloadFileWithProgress(ctx, rawURL, newExe); err != nil {
+		if errors.Is(err, errUpdateCancelled) || errors.Is(err, context.Canceled) {
+			a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: errUpdateCancelled.Error()})
+			_ = os.Remove(newExe)
+			_ = os.Remove(newExe + ".part")
+			return UpdateApplyResult{Message: errUpdateCancelled.Error()}
+		}
 		a.emitUpdateProgress(UpdateProgress{Phase: "error", Message: err.Error()})
 		return UpdateApplyResult{Message: "Скачивание: " + err.Error()}
 	}
@@ -438,11 +467,27 @@ func verifyWindowsExe(path string) error {
 	return nil
 }
 
+func (a *App) beginUpdateDownload() (context.Context, bool) {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	if a.updateActive {
+		return nil, false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.updateCancel = cancel
+	a.updateActive = true
+	a.updateProgress = UpdateProgress{Phase: "downloading", Message: "Скачивание…"}
+	return ctx, true
+}
+
 func (a *App) setUpdateActive(active bool) {
 	a.updateMu.Lock()
 	a.updateActive = active
-	if !active && a.updateProgress.Phase == "downloading" {
-		a.updateProgress = UpdateProgress{}
+	if !active {
+		a.updateCancel = nil
+		if a.updateProgress.Phase == "downloading" {
+			a.updateProgress = UpdateProgress{}
+		}
 	}
 	a.updateMu.Unlock()
 }
@@ -455,6 +500,7 @@ func (a *App) emitUpdateProgress(p UpdateProgress) {
 		a.updateActive = true
 	case "error", "ready":
 		a.updateActive = false
+		a.updateCancel = nil
 	}
 	a.updateMu.Unlock()
 	if a.ctx == nil {
@@ -463,7 +509,7 @@ func (a *App) emitUpdateProgress(p UpdateProgress) {
 	runtime.EventsEmit(a.ctx, "update_progress", p)
 }
 
-func (a *App) downloadFileWithProgress(rawURL, dest string) error {
+func (a *App) downloadFileWithProgress(ctx context.Context, rawURL, dest string) error {
 	host := ""
 	if u, err := url.Parse(rawURL); err == nil {
 		host = u.Hostname()
@@ -485,24 +531,34 @@ func (a *App) downloadFileWithProgress(rawURL, dest string) error {
 	client := newUpdateHTTPClient(15*time.Minute, viaTunnel)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return errUpdateCancelled
+		}
 		if attempt > 1 {
 			a.emitUpdateProgress(UpdateProgress{
 				Phase:   "downloading",
 				Percent: 0,
 				Message: fmt.Sprintf("Повтор %d/3…", attempt),
 			})
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			select {
+			case <-ctx.Done():
+				return errUpdateCancelled
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
 		}
-		lastErr = a.downloadOnce(client, rawURL, dest, attempt == 1)
+		lastErr = a.downloadOnce(ctx, client, rawURL, dest, attempt == 1)
 		if lastErr == nil {
 			return nil
+		}
+		if errors.Is(lastErr, errUpdateCancelled) || errors.Is(lastErr, context.Canceled) {
+			return errUpdateCancelled
 		}
 	}
 	return lastErr
 }
 
-func (a *App) downloadOnce(client *http.Client, rawURL, dest string, emitStart bool) error {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+func (a *App) downloadOnce(ctx context.Context, client *http.Client, rawURL, dest string, emitStart bool) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
 	}
@@ -514,6 +570,9 @@ func (a *App) downloadOnce(client *http.Client, rawURL, dest string, emitStart b
 
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return errUpdateCancelled
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -533,6 +592,11 @@ func (a *App) downloadOnce(client *http.Client, rawURL, dest string, emitStart b
 	lastEmit := time.Now()
 
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+			return errUpdateCancelled
+		}
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := f.Write(buf[:n]); wErr != nil {
@@ -562,6 +626,9 @@ func (a *App) downloadOnce(client *http.Client, rawURL, dest string, emitStart b
 		if readErr != nil {
 			_ = f.Close()
 			_ = os.Remove(tmp)
+			if errors.Is(readErr, context.Canceled) {
+				return errUpdateCancelled
+			}
 			return readErr
 		}
 	}

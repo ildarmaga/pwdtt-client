@@ -6,6 +6,8 @@ func (a *App) DownloadAndApplyUpdate() UpdateApplyResult {
 	return UpdateApplyResult{Message: "in-app update only on Windows"}
 }
 
+func (a *App) CancelUpdateDownload() {}
+
 func (a *App) IsTunnelRunning() bool {
 	return a.orch.IsRunning() || a.wb.IsRunning()
 }

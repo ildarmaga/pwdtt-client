@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,6 +47,10 @@ type ghRelease struct {
 }
 
 func (a *App) CheckForUpdate() UpdateInfo {
+	return a.checkForUpdate(context.Background())
+}
+
+func (a *App) checkForUpdate(ctx context.Context) UpdateInfo {
 	cur := a.GetAppVersion()
 	out := UpdateInfo{
 		Current:   cur,
@@ -64,7 +69,7 @@ func (a *App) CheckForUpdate() UpdateInfo {
 		defer withUpdateDirectEgress()()
 	}
 	client := newUpdateHTTPClient(12*time.Second, viaTunnel)
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/latest", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/latest", nil)
 	if err != nil {
 		out.Error = err.Error()
 		return out

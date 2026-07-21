@@ -270,6 +270,7 @@ function installGoMock() {
           }
           return { ok: true, message: 'dev mock — обновление' };
         },
+        CancelUpdateDownload: asyncVoid,
         StartVKLogin: async () => ({ url: '', active: true, native: true }),
         StopVKLogin: asyncVoid,
         PollVKLogin: async () => ({ done: false, status: 'waiting', message: 'dev mock' }),

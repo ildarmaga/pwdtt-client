@@ -29,6 +29,7 @@ type App struct {
 	updateMu       sync.Mutex
 	updateProgress UpdateProgress
 	updateActive   bool
+	updateCancel   context.CancelFunc
 }
 
 func NewApp(trayIcon []byte) *App { return &App{trayIcon: trayIcon} }
