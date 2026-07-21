@@ -17,6 +17,10 @@ var updateBypassHosts = []string{
 	"objects.githubusercontent.com",
 }
 
+// withUpdateDirectEgress installs /32 routes past WDTT TUN so GitHub is
+// reachable on the LAN path. Only use when the tunnel is OFF — while VPN is
+// up, GitHub is often blocked on ISP and must go through the tunnel instead
+// (same path as the system browser).
 func withUpdateDirectEgress(extraHosts ...string) func() {
 	hosts := append(append([]string(nil), updateBypassHosts...), extraHosts...)
 	cleanup, err := desktoptun.DirectBypassHosts(hosts...)
@@ -26,20 +30,25 @@ func withUpdateDirectEgress(extraHosts ...string) func() {
 	return cleanup
 }
 
-func newUpdateHTTPClient(timeout time.Duration) *http.Client {
+// newUpdateHTTPClient builds the updater client.
+// viaTunnel=true: bind nothing special — traffic follows the VPN default route.
+// viaTunnel=false: bind LAN IP so we do not accidentally egress via a stale TUN.
+func newUpdateHTTPClient(timeout time.Duration, viaTunnel bool) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   45 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	if ip := desktoptun.DefaultLocalIPv4(); ip != "" {
-		if parsed := net.ParseIP(ip); parsed != nil {
-			dialer.LocalAddr = &net.TCPAddr{IP: parsed}
+	if !viaTunnel {
+		if ip := desktoptun.DefaultLocalIPv4(); ip != "" {
+			if parsed := net.ParseIP(ip); parsed != nil {
+				dialer.LocalAddr = &net.TCPAddr{IP: parsed}
+			}
 		}
 	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			// Never use system/v2rayN HTTP_PROXY — updates must go direct.
+			// Never use system/v2rayN HTTP_PROXY — that can loop or blackhole.
 			Proxy:                 nil,
 			DialContext:           dialer.DialContext,
 			TLSHandshakeTimeout:   90 * time.Second,

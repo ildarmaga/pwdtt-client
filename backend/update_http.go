@@ -9,7 +9,7 @@ import (
 
 func withUpdateDirectEgress(...string) func() { return func() {} }
 
-func newUpdateHTTPClient(timeout time.Duration) *http.Client {
+func newUpdateHTTPClient(timeout time.Duration, _ bool) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{

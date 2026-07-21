@@ -468,10 +468,21 @@ func (a *App) downloadFileWithProgress(rawURL, dest string) error {
 	if u, err := url.Parse(rawURL); err == nil {
 		host = u.Hostname()
 	}
-	cleanup := withUpdateDirectEgress(host)
-	defer cleanup()
+	// VPN on → download via tunnel (GitHub often unreachable on bare ISP).
+	// VPN off → /32 LAN bypass so a leftover TUN route cannot blackhole us.
+	viaTunnel := a.IsTunnelRunning()
+	if !viaTunnel {
+		cleanup := withUpdateDirectEgress(host)
+		defer cleanup()
+	} else {
+		a.emitUpdateProgress(UpdateProgress{
+			Phase:   "downloading",
+			Percent: 0,
+			Message: "Скачивание через VPN…",
+		})
+	}
 
-	client := newUpdateHTTPClient(15 * time.Minute)
+	client := newUpdateHTTPClient(15*time.Minute, viaTunnel)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		if attempt > 1 {

@@ -56,8 +56,14 @@ func (a *App) CheckForUpdate() UpdateInfo {
 		return out
 	}
 
-	client := newUpdateHTTPClient(12 * time.Second)
-	defer withUpdateDirectEgress()()
+	// While WDTT VPN is up, hit GitHub through the tunnel (browser path).
+	// Direct ISP egress is often blocked in RU and only worked for regions
+	// where GitHub is reachable without a proxy.
+	viaTunnel := a.IsTunnelRunning()
+	if !viaTunnel {
+		defer withUpdateDirectEgress()()
+	}
+	client := newUpdateHTTPClient(12*time.Second, viaTunnel)
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/latest", nil)
 	if err != nil {
 		out.Error = err.Error()
