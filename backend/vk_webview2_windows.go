@@ -114,13 +114,18 @@ func runVKWebView2Window(dataDir string, writeSt func(vkLoginStatusFile)) error 
 	chromium.DataPath = dataDir
 	chromium.AdditionalBrowserArgs = []string{
 		"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+		"--disable-gpu",
+		"--disable-gpu-compositing",
 	}
 	_ = os.MkdirAll(dataDir, 0700)
 	vkLoginLog(dataDir, "worker start profile=%s", dataDir)
+	// IMPORTANT: go-webview2 reports Resize/Navigate/Eval COM hiccups through
+	// this callback (nonFatalErrorCallback). Quitting here was why the login
+	// window vanished ~2–3s after open even after the os.Exit(1) fork —
+	// a stray WM_SIZE or Navigate during WebView2 bring-up called PostQuitMessage.
+	// Bootstrap failures still hard-abort via the library's own os.Exit path.
 	chromium.SetErrorCallback(func(err error) {
-		vkLoginLog(dataDir, "webview2 error: %v", err)
-		writeSt(vkLoginStatusFile{Status: "error", Message: "WebView2: " + err.Error() + " — установите Microsoft Edge WebView2 Runtime"})
-		win.PostQuitMessage(1)
+		vkLoginLog(dataDir, "webview2 warn (ignored): %v", err)
 	})
 	chromium.ProcessFailedCallback = func(_ *edge.ICoreWebView2, args *edge.ICoreWebView2ProcessFailedEventArgs) {
 		var kind edge.COREWEBVIEW2_PROCESS_FAILED_KIND = edge.COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED

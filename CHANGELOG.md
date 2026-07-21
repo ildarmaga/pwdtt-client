@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.234] — 2026-07-21
+
+### Fix — вход VK: окно всё ещё закрывалось через 2–3 сек после 0.3.233
+- 0.3.233 убрал `os.Exit` в go-webview2, но наш `SetErrorCallback` на любую COM-ошибку (Resize/Navigate при старте) всё равно делал `PostQuitMessage` → окно исчезало.
+- Callback теперь только пишет в лог. Плюс `--disable-gpu` для WebView2 login (меньше крашей QR-canvas).
+
 ## [0.3.233] — 2026-07-21
 
 ### Fix — вход VK: окно больше не убивается через 2–3 сек
