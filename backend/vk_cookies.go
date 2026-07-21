@@ -22,7 +22,8 @@ func (a *App) GetVKCookiesStatus() VKCookiesStatus {
 	useCookies := core.VKUseCookies()
 	ok, hint := core.VKCookiesStatus()
 	header, loadErr := core.LoadVKCookieHeader()
-	expired := useCookies && loadErr == nil && header != "" && !ok
+	hasFile := loadErr == nil && header != ""
+	expired := hasFile && !ok
 	return VKCookiesStatus{
 		OK:         ok,
 		Hint:       hint,
@@ -30,6 +31,11 @@ func (a *App) GetVKCookiesStatus() VKCookiesStatus {
 		Expired:    expired,
 		UseCookies: useCookies,
 	}
+}
+
+// GetVKCookiesRaw returns cookies-vk.json contents for the Settings textarea.
+func (a *App) GetVKCookiesRaw() (string, error) {
+	return core.ReadVKCookiesRaw()
 }
 
 func (a *App) SaveVKCookies(payload string) error {

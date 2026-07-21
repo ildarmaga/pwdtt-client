@@ -212,33 +212,35 @@ function installGoMock() {
           const useCookies = readVkUseCookies();
           const raw = readVkCookiesRaw();
           const hasCookies = !!raw.trim();
+          const path = 'localStorage · pwdtt_vk_cookies_raw';
           if (!hasCookies) {
             return {
               ok: false,
               expired: false,
               useCookies,
-              hint: 'Cookies не сохранены',
-              path: '',
+              hint: 'Cookies не заданы — войдите через VK или вставьте вручную',
+              path,
             };
           }
-          if (useCookies) {
-            const ok = vkCookiesHasRemix(raw);
+          const ok = vkCookiesHasRemix(raw);
+          if (!ok) {
             return {
-              ok,
-              expired: !ok,
+              ok: false,
+              expired: true,
               useCookies,
-              hint: ok ? '' : 'remixsid не найден — проверьте формат cookies',
-              path: 'localStorage · pwdtt_vk_cookies_raw',
+              hint: 'remixsid не найден — проверьте формат cookies',
+              path,
             };
           }
           return {
-            ok: false,
+            ok: true,
             expired: false,
             useCookies,
-            hint: '',
-            path: 'localStorage · pwdtt_vk_cookies_raw',
+            hint: useCookies ? 'Cookies действительны' : 'Cookies действительны (тумблер выключен)',
+            path,
           };
         },
+        GetVKCookiesRaw: async () => readVkCookiesRaw(),
         GetVKUseCookies: async () => readVkUseCookies(),
         SetVKUseCookies: async (v: unknown) => {
           localStorage.setItem(VK_USE_COOKIES_KEY, v ? '1' : '0');

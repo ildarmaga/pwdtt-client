@@ -98,25 +98,32 @@ func ClearVKCookies() error {
 }
 
 // VKCookiesStatus reports whether remixsid is configured and still valid.
+// Hint is always set so the Settings UI can show OK / missing / expired.
 func VKCookiesStatus() (ok bool, hint string) {
 	header, err := LoadVKCookieHeader()
 	hasCookies := err == nil && header != ""
-	if !VKUseCookies() {
-		if hasCookies {
-			if err := vkCookiesLiveValid(header); err != nil {
-				return false, vkCookieExpiredHint
-			}
-			return true, ""
-		}
-		return false, ""
-	}
 	if !hasCookies {
-		return false, ""
+		return false, "Cookies не заданы — войдите через VK или вставьте вручную"
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
 		return false, vkCookieExpiredHint
 	}
-	return true, ""
+	if !VKUseCookies() {
+		return true, "Cookies действительны (тумблер выключен)"
+	}
+	return true, "Cookies действительны"
+}
+
+// ReadVKCookiesRaw returns the raw secrets file for the Settings textarea.
+func ReadVKCookiesRaw() (string, error) {
+	raw, err := os.ReadFile(vkCookiesPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(raw), nil
 }
 
 // VKCookiesPathForUI returns the path shown in settings.

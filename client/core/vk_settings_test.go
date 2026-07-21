@@ -81,7 +81,7 @@ func TestVKUseCookiesToggleOffAfterOn(t *testing.T) {
 	}
 }
 
-func TestVKCookiesStatusAnonymousNoHint(t *testing.T) {
+func TestVKCookiesStatusMissingHint(t *testing.T) {
 	dir := t.TempDir()
 	oldSettings := vkSettingsPath
 	oldCookies := vkCookiesPath
@@ -94,9 +94,12 @@ func TestVKCookiesStatusAnonymousNoHint(t *testing.T) {
 	}()
 
 	resetVKAuthSettings()
-	_, hint := VKCookiesStatus()
-	if hint != "" {
-		t.Fatalf("expected empty hint, got %q", hint)
+	ok, hint := VKCookiesStatus()
+	if ok {
+		t.Fatal("expected ok=false without cookies file")
+	}
+	if hint == "" {
+		t.Fatal("expected non-empty hint when cookies missing")
 	}
 }
 

@@ -12,7 +12,7 @@ import { useTunnelProtocol, isVkProtocol } from '../lib/useTunnelProtocol';
 import { saveServerProfile } from '../lib/utils/profileSync';
 import {
   SetTrayEnabled, SetAutoStart, GetAutoStart,
-  GetVKCookiesStatus, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
+  GetVKCookiesStatus, GetVKCookiesRaw, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
   CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading,
   GetDataDir,
 } from '../../wailsjs/go/backend/App';
@@ -130,6 +130,9 @@ export default function Settings({ onClose }: Props) {
   const refreshVkStatus = () => {
     GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
     GetVKUseCookies().then(setVkUseCookies).catch(() => setVkUseCookies(false));
+    GetVKCookiesRaw()
+      .then(raw => setVkCookies(raw ?? ''))
+      .catch(() => { /* keep textarea as-is */ });
   };
 
   useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
@@ -489,11 +492,11 @@ export default function Settings({ onClose }: Props) {
             </div>
             {vkStatus === null ? (
               <div className="st-vk-status">Проверка…</div>
-            ) : vkStatus.hint ? (
-              <div className={`st-vk-status${vkStatus.ok ? ' st-vk-status--ok' : vkStatus.expired ? ' st-vk-status--bad' : ''}`}>
-                {vkStatus.hint}
+            ) : (
+              <div className={`st-vk-status${vkStatus.ok ? ' st-vk-status--ok' : vkStatus.expired || !vkStatus.ok ? ' st-vk-status--bad' : ''}`}>
+                {vkStatus.hint || (vkStatus.ok ? 'Cookies действительны' : 'Cookies не заданы')}
               </div>
-            ) : null}
+            )}
             {vkStatus?.path && (
               <div className="st-vk-hint" style={{ marginBottom: 8 }}>{vkStatus.path}</div>
             )}
