@@ -28,6 +28,9 @@ export function isLinkManagedServer(s: Server): boolean {
 /** Протокол туннеля на экране подключения. VK — TURN/VK Calls; WB — WB Stream WebRTC. */
 export type TunnelProtocol = 'vk' | 'wb';
 
+/** Маскировка RTP под медиа: audio=OPUS PT111, video=VP8-like PT96. */
+export type ObfsMode = 'audio' | 'video';
+
 /** In-app update download progress (EventsOn update_progress). */
 export interface UpdateProgressEvent {
   phase?: string;
@@ -51,6 +54,8 @@ export interface AppSettings {
   vkThroughTunnel: boolean;
   /** Выбранный протокол на главном экране */
   tunnelProtocol: TunnelProtocol;
+  /** VK TURN: маскировка DTLS под аудио (OPUS) или видео (VP8) */
+  obfsMode: ObfsMode;
   /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;
   /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
@@ -84,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   metricsRefreshSec: 0,
   vkThroughTunnel: true,
   tunnelProtocol: 'vk',
+  obfsMode: 'audio',
   // RelayBridge (kulikov0): dual-track off by default — SFU often drops
   // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.
   wbDualTrack: false,

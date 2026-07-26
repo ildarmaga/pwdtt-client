@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 // obfs.go — WebRTC SRTP-like obfuscation for DTLS traffic
 // Each UDP packet is wrapped in an RTP header making it indistinguishable
-// from a real WebRTC OPUS audio stream to DPI systems.
+// from a real WebRTC media stream to DPI systems.
+//
+// Modes (client wrap):
+//   audio — PT 111 (OPUS), padding ≤24
+//   video — PT 96  (VP8-like), padding ≤60
 //
 // Packet format:
 //   [RTP Header 12 bytes][ChaCha20-Poly1305 payload+tag][Padding 0-N bytes][PadLen 1 byte]
@@ -45,18 +49,27 @@ func getAEAD(key []byte) (cipher.AEAD, error) {
 // ObfsConfig holds per-session obfuscation parameters.
 type ObfsConfig struct {
 	SSRC        uint32 // Synchronization Source — random per session
-	PayloadType uint8  // RTP payload type (111 = OPUS dynamic)
+	PayloadType uint8  // RTP payload type (111 = OPUS, 96 = VP8-like)
 	PaddingMax  int    // Max random padding bytes appended
 }
 
-// NewObfsConfig creates a config with random SSRC and sane defaults.
-func NewObfsConfig() *ObfsConfig {
+// NewObfsConfig creates a config with random SSRC.
+// mode: "video" → PT 96 / pad 60; anything else → audio (PT 111 / pad 24).
+func NewObfsConfig(mode string) *ObfsConfig {
 	var buf [4]byte
 	rand.Read(buf[:])
+
+	pt := uint8(111)
+	pad := 24
+	if mode == "video" {
+		pt = 96
+		pad = 60
+	}
+
 	return &ObfsConfig{
 		SSRC:        binary.BigEndian.Uint32(buf[:]),
-		PayloadType: 111, // dynamic PT for OPUS
-		PaddingMax:  24,
+		PayloadType: pt,
+		PaddingMax:  pad,
 	}
 }
 
@@ -224,7 +237,7 @@ func obfsIsRTPPacket(wire []byte) bool {
 	if (wire[0] >> 6) != 2 {
 		return false
 	}
-	// Our payload type = 111
+	// audio (OPUS) or video (VP8-like)
 	pt := wire[1] & 0x7F
-	return pt == 111
+	return pt == 111 || pt == 96
 }

@@ -220,7 +220,7 @@ func RunSession(
 	var obfsCfg *ObfsConfig
 	var obfsWriteState *ObfsState
 	if useWrap {
-		obfsCfg = NewObfsConfig()
+		obfsCfg = NewObfsConfig(tp.ObfsMode)
 		obfsWriteState = NewObfsState()
 	}
 
@@ -235,7 +235,8 @@ func RunSession(
 		defer relayWg.Done()
 		defer sessCancel()
 		// Max incoming: RTP header (12) + AEAD tag (16) + padding.
-		readBufLen := readBufSize + 80
+		// RTP(12)+tag(16)+pad≤61 — запас под video padding
+		readBufLen := readBufSize + 100
 		buf := make([]byte, readBufLen)
 		plain := make([]byte, readBufSize)
 		for {

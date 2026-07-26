@@ -53,6 +53,9 @@ export const settingsStore = {
     if (merged.tunnelProtocol !== 'vk' && merged.tunnelProtocol !== 'wb') {
       merged.tunnelProtocol = DEFAULT_SETTINGS.tunnelProtocol;
     }
+    if (merged.obfsMode !== 'audio' && merged.obfsMode !== 'video') {
+      merged.obfsMode = DEFAULT_SETTINGS.obfsMode;
+    }
     if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 120) {
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
     }

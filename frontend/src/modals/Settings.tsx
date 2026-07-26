@@ -461,6 +461,33 @@ export default function Settings({ onClose }: Props) {
             <button className={`st-toggle st-toggle--${settings.useGlobalHashes ? 'on' : 'off'}`} onClick={() => update('useGlobalHashes', !settings.useGlobalHashes)} />
           </div>
 
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
+            <div>
+              <span>Маскировка</span>
+              <div className="st-row-hint" style={{ marginTop: 4 }}>
+                RTP под аудио (OPUS) или видео (VP8) — как на Android
+              </div>
+            </div>
+            <div className="st-seg">
+              <button
+                type="button"
+                className={`st-seg-btn${settings.obfsMode !== 'video' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('obfsMode', 'audio')}
+              >
+                Аудио
+              </button>
+              <button
+                type="button"
+                className={`st-seg-btn${settings.obfsMode === 'video' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('obfsMode', 'video')}
+              >
+                Видео
+              </button>
+            </div>
+          </div>
+
           <button
             className="st-hash-btn"
             onClick={() => {

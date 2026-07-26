@@ -387,7 +387,7 @@ export default function Connect() {
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
     logStore.push('INFO', 'Подключение VK…');
-    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))}`);
+    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode === 'video' ? 'video' : 'audio'}`);
     try {
       const workers = s.useGlobalHashes
         ? (s.power || 9)
@@ -400,6 +400,7 @@ export default function Connect() {
         mtu: s.mtu || 1280,
         hashes,
         vkThroughTunnel: true,
+        obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
       });
     } catch (e) {
       tunnelStore.set('idle');

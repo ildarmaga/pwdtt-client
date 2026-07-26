@@ -22,6 +22,7 @@ type Config struct {
 	Workers     int      // -n
 	CaptchaMode string   // -captcha-mode
 	MTU         int      // 0 = default 1380
+	ObfsMode    string   // audio|video — RTP маскировка (PT 111 / 96)
 }
 
 // EventType — тип события от ядра.
@@ -156,10 +157,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	n := NormalizeWorkers(c.cfg.Workers)
 
 	tp := &TurnParams{
-		Host:    c.cfg.TurnHost,
-		Port:    c.cfg.TurnPort,
-		Hashes:  c.cfg.Hashes,
-		WrapKey: wrapKey,
+		Host:     c.cfg.TurnHost,
+		Port:     c.cfg.TurnPort,
+		Hashes:   c.cfg.Hashes,
+		WrapKey:  wrapKey,
+		ObfsMode: c.cfg.ObfsMode,
 	}
 
 	localConn, err := net.ListenPacket("udp", c.cfg.Listen)

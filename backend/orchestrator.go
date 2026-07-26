@@ -196,6 +196,7 @@ type ConnectParams struct {
 	MTU             int      `json:"mtu,omitempty"`
 	Hashes          []string `json:"hashes,omitempty"`
 	VKThroughTunnel bool     `json:"vkThroughTunnel,omitempty"`
+	ObfsMode        string   `json:"obfsMode,omitempty"` // audio|video
 }
 
 func loadProfile(name string) (*ProfileData, error) {
@@ -639,6 +640,11 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		workers = 9
 	}
 
+	obfsMode := p.ObfsMode
+	if obfsMode != "video" {
+		obfsMode = "audio"
+	}
+
 	cfg := core.Config{
 		PeerAddr:    prof.PeerAddr,
 		Password:    prof.Password,
@@ -650,6 +656,7 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		Workers:     workers,
 		CaptchaMode: p.CaptchaMode,
 		MTU:         p.MTU,
+		ObfsMode:    obfsMode,
 	}
 	if len(p.Hashes) > 0 {
 		cfg.Hashes = p.Hashes
