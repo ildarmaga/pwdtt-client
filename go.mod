@@ -95,7 +95,7 @@ require (
 
 replace wg-turn-client => ./client
 
-replace github.com/ildarmaga/whitelist-bypass/relay => ../wbstream-wbt/whitelist-bypass/relay
+replace github.com/ildarmaga/whitelist-bypass/relay => ./third_party/relay
 
 // Vendored fork: upstream Chromium.errorCallback calls os.Exit(1) on ANY
 // WebView2 COM error, including transient runtime ones (Navigate/Resize/Eval

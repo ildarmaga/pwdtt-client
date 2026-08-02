@@ -1,17 +1,21 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.253] — 2026-08-03
+
+### Fix — Soft-rebind на живом ICE (WB) + CI без приватного репо
+ICE renegotiation (`sub offer`) больше не делает `SwapTunnel` → `RestartLink`
+пока WBT carrier жив → нет цикла «Soft-rebind без трафика».
+
+В логах: `WBT carrier alive, skip KCP/smux restart`.
+
+`relay` завендорен в `third_party/relay` (sync: `scripts/sync-relay.sh`).
+CI больше не нужен `WBSTREAM_REPO_TOKEN`.
+
 ## [0.3.252] — 2026-08-03
 
 ### Fix — Soft-rebind на живом ICE (WB)
-ICE renegotiation (`sub offer`) больше не делает `SwapTunnel` → `RestartLink`
-пока WBT carrier жив. Раньше smux joiner/creator расходились →
-`invalid protocol` и цикл «Soft-rebind без трафика».
-
-В логах при ICE: `WBT carrier alive, skip KCP/smux restart` (вместо
-`carrier rebind (ICE renegotiation)`). Полный rebind только после `tunnelLost`.
-
-Зависит от wbstream-wbt `relay/wbstream` (HEAD с ICE skip).
+Релиз CI не собрался (протухший `WBSTREAM_REPO_TOKEN`). См. 0.3.253.
 
 ## [0.3.251] — 2026-07-26
 
