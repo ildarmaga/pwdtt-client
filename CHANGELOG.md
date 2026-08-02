@@ -1,6 +1,18 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.252] — 2026-08-03
+
+### Fix — Soft-rebind на живом ICE (WB)
+ICE renegotiation (`sub offer`) больше не делает `SwapTunnel` → `RestartLink`
+пока WBT carrier жив. Раньше smux joiner/creator расходились →
+`invalid protocol` и цикл «Soft-rebind без трафика».
+
+В логах при ICE: `WBT carrier alive, skip KCP/smux restart` (вместо
+`carrier rebind (ICE renegotiation)`). Полный rebind только после `tunnelLost`.
+
+Зависит от wbstream-wbt `relay/wbstream` (HEAD с ICE skip).
+
 ## [0.3.251] — 2026-07-26
 
 ### Feature — маскировка Видео (как Android)
