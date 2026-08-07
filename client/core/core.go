@@ -218,6 +218,12 @@ func (c *Core) Start() (<-chan Event, error) {
 	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw")
 
 	configCh := make(chan string, 1)
+	// RAW: один gate на все группы — иначе группа #2 без configCh → nil gate →
+	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
+	var sharedRawGate *wgConfigGate
+	if tunnelMode == "raw" {
+		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP)
+	}
 
 	go func() {
 		select {
@@ -277,7 +283,7 @@ func (c *Core) Start() (<-chan Event, error) {
 			go func(groupID int, isFirstGroup bool, configChan chan<- string, workerIds []int, startHashIndex int, waitR <-chan struct{}, sigR chan<- struct{}) {
 				defer wg.Done()
 				WorkerGroup(ctx, groupID, startHashIndex, tp, peer, disp, localPort,
-					isFirstGroup, configChan, workerIds, &c.pauseFlag,
+					isFirstGroup, configChan, sharedRawGate, workerIds, &c.pauseFlag,
 					c.cfg.DeviceID, c.cfg.Password, stats, waitR, sigR,
 					c.CaptchaResultChan, c.getCaptchaMode, emitCaptchaRequest, c.AddTurnIPs)
 			}(gID, isFirst, cc, ids, g, myWaitReady, mySignalReady)

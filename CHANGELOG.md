@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.258] — 2026-08-07
+
+### Fix — RAWCONF для всех групп воркеров
+Группа #2+ получала `configGate=nil` → READY без `RAWCONF` → DTLS шёл в WG-путь
+на сервере, а sticky отдавал туда TCP → спидтест 0. Теперь один shared RAW gate
+на все группы; на сервере должно быть RAW≈N, не только 9 при 18 воркерах.
+
 ## [0.3.257] — 2026-08-07
 
 ### Fix — RAW sticky flow + UI воркеров

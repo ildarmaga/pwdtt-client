@@ -69,6 +69,7 @@ func WorkerGroup(
 	localPort string,
 	getConfig bool,
 	configCh chan<- string,
+	sharedGate *wgConfigGate, // RAW: общий gate на все группы; WG: nil
 	workerIDs []int,
 	pauseFlag *int32,
 	deviceID, password string,
@@ -104,10 +105,14 @@ func WorkerGroup(
 	}
 
 	var configSent int32
-	cfgGate := newWGConfigGate(configCh, tp.TunnelMode, tp.MTU, tp.RawPrimaryIP)
+	cfgGate := sharedGate
+	if cfgGate == nil {
+		cfgGate = newWGConfigGate(configCh, tp.TunnelMode, tp.MTU, tp.RawPrimaryIP)
+	}
 	if !getConfig {
 		configSent = 1
-		if cfgGate != nil {
+		// Не трогаем shared RAW gate: иначе группа #2 пометит sent до RAWCONF группы #1.
+		if cfgGate != nil && cfgGate.tunnelMode != "raw" {
 			cfgGate.sent.Store(1)
 		}
 	}

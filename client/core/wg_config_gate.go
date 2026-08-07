@@ -18,11 +18,13 @@ type wgConfigGate struct {
 }
 
 func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string) *wgConfigGate {
-	if ch == nil {
-		return nil
-	}
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
+	}
+	// WG без канала = нет GETCONF. RAW: ch может быть nil у вторичных групп,
+	// но gate всё равно нужен — каждый воркер шлёт свой RAWCONF.
+	if ch == nil && tunnelMode != "raw" {
+		return nil
 	}
 	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu}
 	if tunnelMode == "raw" {
@@ -93,11 +95,15 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 			if g.PrimaryIP() == nil {
 				g.primaryIP.Store(append(net.IP(nil), workerIP...))
 			}
-			select {
-			case g.ch <- conf:
-				log.Printf("[ВОРКЕР #%d] RAW-конфиг получен (primary ip=%s, worker=%s)", sessionID, g.PrimaryIP(), workerIP)
-			default:
-				log.Printf("[ВОРКЕР #%d] RAW-конфиг уже доставлен", sessionID)
+			if g.ch != nil {
+				select {
+				case g.ch <- conf:
+					log.Printf("[ВОРКЕР #%d] RAW-конфиг получен (primary ip=%s, worker=%s)", sessionID, g.PrimaryIP(), workerIP)
+				default:
+					log.Printf("[ВОРКЕР #%d] RAW-конфиг уже доставлен", sessionID)
+				}
+			} else {
+				log.Printf("[ВОРКЕР #%d] RAW-сессия ip=%s (primary=%s)", sessionID, workerIP, g.PrimaryIP())
 			}
 		} else {
 			log.Printf("[ВОРКЕР #%d] RAW-сессия ip=%s (primary=%s)", sessionID, workerIP, g.PrimaryIP())
