@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.259] — 2026-08-07
+
+### Fix — RAW affinity + без дропа uplink
+Sticky `hash%N` перепривязывал TCP при join/leave воркеров → другой `10.70.x.y`
+и мёртвый NAT. Теперь affinity map по worker ID (TTL 3 мин). Очередь на воркер
+1024 + блокирующая отправка (раньше non-blocking drop при 128 → спидтест ~0).
+
 ## [0.3.258] — 2026-08-07
 
 ### Fix — RAWCONF для всех групп воркеров

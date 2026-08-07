@@ -36,7 +36,10 @@ const (
 	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
 	// rawWorkerSendBuf — очередь на воркер в RAW sticky-режиме.
-	rawWorkerSendBuf = 128
+	// Не дропать под спидтестом: 128 мало, TCP схлопывается в 0.
+	rawWorkerSendBuf = 1024
+	flowAffTTL       = 3 * time.Minute
+	flowAffMax       = 8192
 )
 
 type WorkerSlot struct {
@@ -49,6 +52,10 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
+	// flowAff: 5-tuple → worker ID. Нельзя hash%len(workers) — при join/leave
+	// тот же TCP уезжает на другой IP и соединение мёртво.
+	flowAff map[uint64]int
+	flowExp map[uint64]int64
 	// SendCh — ОБЩАЯ очередь (WG). RAW sticky шлёт в WorkerSlot.SendCh.
 	SendCh    chan []byte
 	ReturnCh  chan []byte
@@ -66,6 +73,8 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
 		rawSticky: rawSticky,
+		flowAff:   make(map[uint64]int),
+		flowExp:   make(map[uint64]int64),
 		ctx:       dctx,
 		cancel:    dcancel,
 		stats:     stats,
@@ -101,13 +110,19 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 			break
 		}
 	}
+	// Сбрасываем affinity мёртвого воркера — новые пакеты выберут живого.
+	for k, id := range d.flowAff {
+		if id == slot.ID {
+			delete(d.flowAff, k)
+			delete(d.flowExp, k)
+		}
+	}
 	remaining := len(d.workers)
 	d.mu.Unlock()
 	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
-// flowHash — 5-tuple IPv4 (или src/dst если портов нет). Один TCP/UDP-поток
-// всегда на одном воркере → один src IP после rewrite (иначе ломается NAT/TCP).
+// flowHash — 5-tuple IPv4 (или src/dst если портов нет).
 func flowHash(pkt []byte) uint32 {
 	if len(pkt) < 20 || pkt[0]>>4 != 4 {
 		var h uint32
@@ -126,27 +141,70 @@ func flowHash(pkt []byte) uint32 {
 	return h
 }
 
-func (d *Dispatcher) dispatchSticky(pkt []byte) {
-	d.mu.Lock()
+func flowKey(pkt []byte) uint64 {
+	return uint64(flowHash(pkt))
+}
+
+func (d *Dispatcher) workerByIDLocked(id int) *WorkerSlot {
+	for _, w := range d.workers {
+		if w.ID == id {
+			return w
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
 	n := len(d.workers)
 	if n == 0 {
-		d.mu.Unlock()
-		putPktBuf(pkt)
-		return
+		return nil
 	}
+	now := time.Now().UnixNano()
+	key := flowKey(pkt)
+
+	if id, ok := d.flowAff[key]; ok {
+		if exp, ok2 := d.flowExp[key]; ok2 && now <= exp {
+			if w := d.workerByIDLocked(id); w != nil {
+				d.flowExp[key] = now + int64(flowAffTTL)
+				return w
+			}
+		}
+		delete(d.flowAff, key)
+		delete(d.flowExp, key)
+	}
+
 	w := d.workers[flowHash(pkt)%uint32(n)]
-	ch := w.SendCh
+	if len(d.flowAff) >= flowAffMax {
+		// Грубый prune просроченных.
+		for k, exp := range d.flowExp {
+			if now > exp {
+				delete(d.flowAff, k)
+				delete(d.flowExp, k)
+			}
+		}
+	}
+	d.flowAff[key] = w.ID
+	d.flowExp[key] = now + int64(flowAffTTL)
+	return w
+}
+
+func (d *Dispatcher) dispatchSticky(pkt []byte) {
+	d.mu.Lock()
+	w := d.pickStickyLocked(pkt)
+	var ch chan []byte
+	if w != nil {
+		ch = w.SendCh
+	}
 	d.mu.Unlock()
 	if ch == nil {
 		putPktBuf(pkt)
 		return
 	}
+	// Блокирующая отправка: дроп ломает TCP (спидтест → 0). Backpressure в TUN.
 	select {
 	case ch <- pkt:
 		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
 	case <-d.ctx.Done():
-		putPktBuf(pkt)
-	default:
 		putPktBuf(pkt)
 	}
 }
@@ -154,7 +212,7 @@ func (d *Dispatcher) dispatchSticky(pkt []byte) {
 // readLoop читает пакеты с локального UDP (TUN bridge) и кладёт в очередь(и).
 //
 // WG: общая SendCh (work-stealing) — WireGuard терпит reorder.
-// RAW: sticky по 5-tuple на WorkerSlot.SendCh — иначе src-rewrite ломает TCP.
+// RAW: sticky affinity по 5-tuple → worker ID (стабильно при churn воркеров).
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
