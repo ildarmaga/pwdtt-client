@@ -40,7 +40,7 @@ func parseRawConfig(conf string) (ip, dns string, mtu int, err error) {
 	if ip == "" {
 		return "", "", 0, fmt.Errorf("IP not found in raw config")
 	}
-	// Strip CIDR if present; we always use /24 for 10.70.66.x.
+	// Strip CIDR if present; iface uses /16 (qWDTT multi-worker pool).
 	if i := strings.IndexByte(ip, '/'); i >= 0 {
 		ip = ip[:i]
 	}

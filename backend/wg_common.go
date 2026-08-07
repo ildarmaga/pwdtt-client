@@ -8,12 +8,25 @@ import (
 )
 
 var softReconnectPreserve atomic.Bool
+var activeRawPrimaryIP atomic.Value // string — IP TUN в RAW (для soft-reconnect rewrite)
 
 // SetSoftReconnectPreserve — soft-reconnect: не трогать wg-turn, только перезапуск core/воркеров.
 func SetSoftReconnectPreserve(v bool) { softReconnectPreserve.Store(v) }
 
 // SoftReconnectPreserve reports whether the next applyWGConfig should skip teardown.
 func SoftReconnectPreserve() bool { return softReconnectPreserve.Load() }
+
+func setActiveRawPrimaryIP(ip string) {
+	activeRawPrimaryIP.Store(strings.TrimSpace(ip))
+}
+
+func clearActiveRawPrimaryIP() { activeRawPrimaryIP.Store("") }
+
+// ActiveRawPrimaryIP — адрес сохранённого RAW TUN (пустая строка если нет).
+func ActiveRawPrimaryIP() string {
+	v, _ := activeRawPrimaryIP.Load().(string)
+	return v
+}
 
 const wgIface = "wg-turn"
 

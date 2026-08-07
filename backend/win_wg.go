@@ -186,7 +186,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return err
 	}
-	addr := ip + "/24"
+	addr := ip + "/16"
 
 	tunDev, err := tun.CreateTUN(wgIface, mtu)
 	if err != nil {
@@ -194,6 +194,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	}
 	activeTun = tunDev
 	activeDevice = nil
+	setActiveRawPrimaryIP(ip)
 
 	host, mask, _ := parseCIDR(addr)
 	if err := run("netsh", "interface", "ip", "set", "address",
@@ -255,6 +256,7 @@ func teardownWG() {
 		activeTun.Close()
 		activeTun = nil
 	}
+	clearActiveRawPrimaryIP()
 }
 
 // uapiConf converts a wg-setconf-compatible config (with [Interface]/[Peer] sections)

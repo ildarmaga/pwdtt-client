@@ -129,9 +129,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		return fmt.Errorf("create TUN: %w", err)
 	}
 	activeRawTun = tunDev
+	setActiveRawPrimaryIP(ip)
 
 	_ = run("ip", "addr", "flush", "dev", wgIface)
-	if err := run("ip", "addr", "add", ip+"/24", "dev", wgIface); err != nil {
+	if err := run("ip", "addr", "add", ip+"/16", "dev", wgIface); err != nil {
 		teardownWG()
 		return fmt.Errorf("ip addr add: %w", err)
 	}
@@ -202,6 +203,7 @@ func teardownWG() {
 	} else {
 		_ = run("ip", "link", "del", wgIface)
 	}
+	clearActiveRawPrimaryIP()
 	clearWGRouteState()
 }
 

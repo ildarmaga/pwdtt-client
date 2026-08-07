@@ -108,7 +108,7 @@ func TestLiveRawConfAgainstLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(conf, "IP = 10.70.66.") {
+	if !strings.Contains(conf, "IP = 10.70.") {
 		t.Fatalf("unexpected conf: %q", conf)
 	}
 	t.Logf("RAW OK:\n%s", conf)

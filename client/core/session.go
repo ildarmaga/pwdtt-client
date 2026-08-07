@@ -343,17 +343,25 @@ func RunSession(
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	// Запрос конфига (WG: GETCONF один раз; RAW: RAWCONF на каждый DTLS-conn)
+	// Запрос конфига (WG: GETCONF один раз; RAW: RAWCONF на каждый DTLS-conn → свой IP)
+	var rawWorkerIP net.IP
+	var rawPrimaryIP net.IP
 	if configGate != nil && configGate.needsConfig() {
-		delivered, confErr := configGate.tryDeliver(sessionID, dtlsConn, localPort, deviceID, password)
+		delivered, workerIP, confErr := configGate.tryDeliver(sessionID, dtlsConn, localPort, deviceID, password)
 		if confErr != nil {
 			return false, confErr
 		}
 		if delivered {
 			configDelivered = true
+			rawWorkerIP = workerIP
 		} else if configGate.tunnelMode == "raw" {
-			// Не datapath-воркер — не проксируем (иначе пакеты уйдут не в raw-сессию).
 			return false, fmt.Errorf("RAW: пропуск воркера без RAWCONF")
+		}
+	}
+	if configGate != nil && configGate.tunnelMode == "raw" {
+		rawPrimaryIP = configGate.PrimaryIP()
+		if rawWorkerIP == nil || rawPrimaryIP == nil {
+			return false, fmt.Errorf("RAW: нет IP воркера/primary для rewrite")
 		}
 	}
 
@@ -427,6 +435,9 @@ func RunSession(
 				if !ok {
 					return
 				}
+				if rawWorkerIP != nil {
+					_ = rewriteIPv4SrcInPlace(pkt, rawWorkerIP)
+				}
 				_ = dtlsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				_, writeErr := dtlsConn.Write(pkt)
 				putPktBuf(pkt)
@@ -477,6 +488,9 @@ func RunSession(
 			}
 
 			pkt = pkt[:n]
+			if rawPrimaryIP != nil {
+				_ = rewriteIPv4DstInPlace(pkt, rawPrimaryIP)
+			}
 			select {
 			case d.ReturnCh <- pkt:
 			case <-sessCtx.Done():

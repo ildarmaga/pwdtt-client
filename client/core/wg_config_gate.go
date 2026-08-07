@@ -14,24 +14,41 @@ type wgConfigGate struct {
 	mtu        int
 	sent       atomic.Int32
 	inFlight   atomic.Int32
+	primaryIP  atomic.Value // net.IP (IPv4) — адрес TUN с первого RAWCONF
 }
 
-func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int) *wgConfigGate {
+func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string) *wgConfigGate {
 	if ch == nil {
 		return nil
 	}
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
 	}
-	return &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu}
+	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu}
+	if tunnelMode == "raw" {
+		if ip := net.ParseIP(strings.TrimSpace(primaryHint)); ip != nil {
+			if ip4 := ip.To4(); ip4 != nil {
+				g.primaryIP.Store(append(net.IP(nil), ip4...))
+			}
+		}
+	}
+	return g
 }
 
 func (g *wgConfigGate) delivered() bool {
 	return g == nil || g.sent.Load() == 1
 }
 
+func (g *wgConfigGate) PrimaryIP() net.IP {
+	if g == nil {
+		return nil
+	}
+	v, _ := g.primaryIP.Load().(net.IP)
+	return v
+}
+
 // needsConfig — для WG один GETCONF на группу; для RAW каждый DTLS-коннект
-// заново шлёт RAWCONF (сервер привязывает raw-сессию к этому conn).
+// заново шлёт RAWCONF (сервер выдаёт уникальный IP на сессию).
 func (g *wgConfigGate) needsConfig() bool {
 	if g == nil {
 		return false
@@ -42,56 +59,78 @@ func (g *wgConfigGate) needsConfig() bool {
 	return !g.delivered()
 }
 
-func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, deviceID, password string) (bool, error) {
+// tryDeliver возвращает (ok, workerIP, err).
+// RAW: каждый воркер получает свой IP; первый конфиг поднимает TUN (primaryIP).
+// WG: как раньше — один GETCONF на группу.
+func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, deviceID, password string) (bool, net.IP, error) {
 	if g == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	if g.tunnelMode != "raw" && g.delivered() {
-		return false, nil
+		return false, nil, nil
 	}
-	if !g.inFlight.CompareAndSwap(0, 1) {
-		// RAW: другой воркер уже в полёте — этот conn не для datapath.
-		if g.tunnelMode == "raw" {
-			return false, nil
-		}
-		return false, nil
-	}
-	defer func() {
-		g.inFlight.Store(0)
-	}()
 
-	var conf string
-	var err error
 	if g.tunnelMode == "raw" {
-		conf, err = RequestRawConfig(conn, deviceID, password, g.mtu)
-	} else {
-		conf, err = RequestConfig(conn, localPort, deviceID, password)
+		conf, err := RequestRawConfig(conn, deviceID, password, g.mtu)
+		if err != nil {
+			if strings.Contains(err.Error(), "FATAL_AUTH") {
+				return false, nil, err
+			}
+			log.Printf("[ВОРКЕР #%d] Ошибка RAWCONF: %v", sessionID, err)
+			return false, nil, nil
+		}
+		if conf == "" {
+			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал RAW-конфиг, повторим позже", sessionID)
+			return false, nil, nil
+		}
+		workerIP := parseRawConfIP(conf)
+		if workerIP == nil {
+			log.Printf("[ВОРКЕР #%d] RAWCONF без IP: %q", sessionID, trimProtoPreview(conf, 64))
+			return false, nil, nil
+		}
+		if g.sent.CompareAndSwap(0, 1) {
+			// Soft-reconnect: primary уже с TUN — не перезаписывать.
+			if g.PrimaryIP() == nil {
+				g.primaryIP.Store(append(net.IP(nil), workerIP...))
+			}
+			select {
+			case g.ch <- conf:
+				log.Printf("[ВОРКЕР #%d] RAW-конфиг получен (primary ip=%s, worker=%s)", sessionID, g.PrimaryIP(), workerIP)
+			default:
+				log.Printf("[ВОРКЕР #%d] RAW-конфиг уже доставлен", sessionID)
+			}
+		} else {
+			log.Printf("[ВОРКЕР #%d] RAW-сессия ip=%s (primary=%s)", sessionID, workerIP, g.PrimaryIP())
+		}
+		return true, append(net.IP(nil), workerIP...), nil
 	}
+
+	// WG: один GETCONF
+	if !g.inFlight.CompareAndSwap(0, 1) {
+		return false, nil, nil
+	}
+	defer g.inFlight.Store(0)
+
+	conf, err := RequestConfig(conn, localPort, deviceID, password)
 	if err != nil {
 		if strings.Contains(err.Error(), "FATAL_AUTH") {
-			return false, err
+			return false, nil, err
 		}
 		log.Printf("[ВОРКЕР #%d] Ошибка конфига: %v", sessionID, err)
-		return false, nil
+		return false, nil, nil
 	}
 	if conf == "" {
 		log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал конфиг, повторим позже", sessionID)
-		return false, nil
+		return false, nil, nil
 	}
 
 	if g.sent.CompareAndSwap(0, 1) {
 		select {
 		case g.ch <- conf:
-			if g.tunnelMode == "raw" {
-				log.Printf("[ВОРКЕР #%d] RAW-конфиг получен", sessionID)
-			} else {
-				log.Printf("[ВОРКЕР #%d] Конфиг получен", sessionID)
-			}
+			log.Printf("[ВОРКЕР #%d] Конфиг получен", sessionID)
 		default:
 			log.Printf("[ВОРКЕР #%d] Конфиг уже был доставлен другим воркером", sessionID)
 		}
-	} else if g.tunnelMode == "raw" {
-		log.Printf("[ВОРКЕР #%d] RAW-сессия перепривязана к новому DTLS", sessionID)
 	}
-	return true, nil
+	return true, nil, nil
 }

@@ -22,8 +22,9 @@ type Config struct {
 	Workers     int      // -n
 	CaptchaMode string   // -captcha-mode
 	MTU         int      // 0 = default 1380
-	ObfsMode    string   // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode  string   // wg|raw — raw = IP over DTLS без WireGuard
+	ObfsMode       string // audio|video — RTP маскировка (PT 111 / 96)
+	TunnelMode     string // wg|raw — raw = IP over DTLS без WireGuard
+	RawPrimaryIP   string // soft-reconnect: IP сохранённого TUN для rewrite
 }
 
 // EventType — тип события от ядра.
@@ -167,13 +168,14 @@ func (c *Core) Start() (<-chan Event, error) {
 	}
 
 	tp := &TurnParams{
-		Host:       c.cfg.TurnHost,
-		Port:       c.cfg.TurnPort,
-		Hashes:     c.cfg.Hashes,
-		WrapKey:    wrapKey,
-		ObfsMode:   c.cfg.ObfsMode,
-		TunnelMode: tunnelMode,
-		MTU:        mtu,
+		Host:         c.cfg.TurnHost,
+		Port:         c.cfg.TurnPort,
+		Hashes:       c.cfg.Hashes,
+		WrapKey:      wrapKey,
+		ObfsMode:     c.cfg.ObfsMode,
+		TunnelMode:   tunnelMode,
+		MTU:          mtu,
+		RawPrimaryIP: c.cfg.RawPrimaryIP,
 	}
 
 	localConn, err := net.ListenPacket("udp", c.cfg.Listen)
@@ -193,10 +195,6 @@ func (c *Core) Start() (<-chan Event, error) {
 
 	numGroups := n / workersPerGroup
 	perGroup := workersPerGroup
-	if tunnelMode == "raw" {
-		numGroups = 1
-		perGroup = 1
-	}
 
 	stats := NewStats()
 	emitCaptchaRequest := func(mode, redirectURI, sessionToken string) {

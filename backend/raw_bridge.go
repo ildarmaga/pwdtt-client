@@ -9,6 +9,9 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
+// Headroom for Linux virtioNetHdr (≥10). Harmless on Windows wintun.
+const rawTunWriteOffset = 16
+
 var (
 	rawBridgeMu   sync.Mutex
 	rawBridgeStop chan struct{}
@@ -107,9 +110,9 @@ func startRawBridge(tunDev tun.Device, listenPort string) error {
 			if nr < 20 || buf[0]>>4 != 4 {
 				continue
 			}
-			pkt := make([]byte, nr)
-			copy(pkt, buf[:nr])
-			if _, err := tunDev.Write([][]byte{pkt}, 0); err != nil {
+			pkt := make([]byte, rawTunWriteOffset+nr)
+			copy(pkt[rawTunWriteOffset:], buf[:nr])
+			if _, err := tunDev.Write([][]byte{pkt}, rawTunWriteOffset); err != nil {
 				return
 			}
 		}

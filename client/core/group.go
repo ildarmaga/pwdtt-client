@@ -104,7 +104,7 @@ func WorkerGroup(
 	}
 
 	var configSent int32
-	cfgGate := newWGConfigGate(configCh, tp.TunnelMode, tp.MTU)
+	cfgGate := newWGConfigGate(configCh, tp.TunnelMode, tp.MTU, tp.RawPrimaryIP)
 	if !getConfig {
 		configSent = 1
 		if cfgGate != nil {
@@ -524,13 +524,14 @@ func normalizeVKJoinHash(input string) string {
 
 // TurnParams — конфигурация TURN
 type TurnParams struct {
-	Host       string
-	Port       string
-	Hashes     []string
-	WrapKey    []byte // Password-derived WRAP key (32 bytes), nil = disabled
-	ObfsMode   string // audio|video
-	TunnelMode string // wg|raw
-	MTU        int    // для RAWCONF
+	Host         string
+	Port         string
+	Hashes       []string
+	WrapKey      []byte // Password-derived WRAP key (32 bytes), nil = disabled
+	ObfsMode     string // audio|video
+	TunnelMode   string // wg|raw
+	MTU          int    // для RAWCONF
+	RawPrimaryIP string // soft-reconnect: IP сохранённого TUN
 }
 
 // Credentials — учетные данные TURN

@@ -737,23 +737,24 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
 	}
-	if tunnelMode == "raw" {
-		workers = 1
-	}
 
 	cfg := core.Config{
-		PeerAddr:    prof.PeerAddr,
-		Password:    prof.Password,
-		Hashes:      prof.Hashes,
-		Listen:      prof.Listen,
-		TurnHost:    prof.TurnHost,
-		TurnPort:    prof.TurnPort,
-		DeviceID:    prof.DeviceID,
-		Workers:     workers,
-		CaptchaMode: p.CaptchaMode,
-		MTU:         p.MTU,
-		ObfsMode:    obfsMode,
-		TunnelMode:  tunnelMode,
+		PeerAddr:     prof.PeerAddr,
+		Password:     prof.Password,
+		Hashes:       prof.Hashes,
+		Listen:       prof.Listen,
+		TurnHost:     prof.TurnHost,
+		TurnPort:     prof.TurnPort,
+		DeviceID:     prof.DeviceID,
+		Workers:      workers,
+		CaptchaMode:  p.CaptchaMode,
+		MTU:          p.MTU,
+		ObfsMode:     obfsMode,
+		TunnelMode:   tunnelMode,
+		RawPrimaryIP: "",
+	}
+	if tunnelMode == "raw" && SoftReconnectPreserve() {
+		cfg.RawPrimaryIP = ActiveRawPrimaryIP()
 	}
 	if len(p.Hashes) > 0 {
 		cfg.Hashes = p.Hashes

@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.256] — 2026-08-07
+
+### Feature — RAW multi-worker
+Как qWDTT: несколько TURN/DTLS-воркеров в RAW. Каждый воркер делает свой `RAWCONF`
+(уникальный `10.70.x.y` на сервере ≥1.4.122), uplink/downlink переписывает src/dst IP.
+TUN с маской `/16`. Нужен сервер с пулом `/16` (wbstream ≥1.4.122).
+
 ## [0.3.255] — 2026-08-07
 
 ### Feature — режим туннеля WG / RAW
