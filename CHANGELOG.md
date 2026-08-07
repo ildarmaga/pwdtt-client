@@ -1,6 +1,16 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.255] — 2026-08-07
+
+### Feature — режим туннеля WG / RAW
+В Настройках сегмент **WG | RAW** (как маскировка). Чип: `VK Calls · WG` / `· RAW`.
+
+- **WG** — прежний путь (`GETCONF` + wireguard-go).
+- **RAW** — `RAWCONF` → TUN без WireGuard, IP поверх DTLS (qWDTT 1.4). Нужен сервер
+  с поддержкой RAW (wbstream ≥1.4.118). На старом сервере — явная ошибка в логе.
+- Soft-recover сохраняет raw TUN так же, как WG-интерфейс.
+
 ## [0.3.254] — 2026-08-07
 
 ### Fix — soft-recover не рвёт VK auth / DNS через мёртвый WG

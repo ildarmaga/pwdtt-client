@@ -179,11 +179,13 @@ export default function Connect() {
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
+  const [tunnelMode, setTunnelMode] = useState<'wg' | 'raw'>(() => settingsStore.get().tunnelMode === 'raw' ? 'raw' : 'wg');
   const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
   const [socksOpen, setSocksOpen] = useState(false);
   useEffect(() => settingsStore.subscribe(s => {
     setMetricsRefreshSec(s.metricsRefreshSec);
     setTunnelProtocol(s.tunnelProtocol);
+    setTunnelMode(s.tunnelMode === 'raw' ? 'raw' : 'wg');
   }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
   useEffect(() => wbSocksStore.subscribe(setSocksEp), []);
@@ -387,7 +389,8 @@ export default function Connect() {
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
     logStore.push('INFO', 'Подключение VK…');
-    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode === 'video' ? 'video' : 'audio'}`);
+    const mode = s.tunnelMode === 'raw' ? 'raw' : 'wg';
+    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode === 'video' ? 'video' : 'audio'} · mode ${mode}`);
     try {
       const workers = s.useGlobalHashes
         ? (s.power || 9)
@@ -401,6 +404,7 @@ export default function Connect() {
         hashes,
         vkThroughTunnel: true,
         obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
+        tunnelMode: mode,
       });
     } catch (e) {
       tunnelStore.set('idle');
@@ -846,6 +850,7 @@ export default function Connect() {
       <main className="main">
         <ProtocolSelector
           value={tunnelProtocol}
+          tunnelMode={tunnelMode}
           locked={selectionLocked}
           onChange={p => {
             settingsStore.patch({ tunnelProtocol: p });

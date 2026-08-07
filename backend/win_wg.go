@@ -83,10 +83,10 @@ func placeWintunNextTo(dir string) error {
 	return writeWintunFile(filepath.Join(dir, "wintun.dll"))
 }
 
-func wgTunnelActive() bool { return activeDevice != nil }
+func wgTunnelActive() bool { return activeDevice != nil || activeTun != nil }
 
 func applyWGConfig(conf string, turnIPs []string) error {
-	if SoftReconnectPreserve() && wgTunnelActive() {
+	if SoftReconnectPreserve() && activeDevice != nil {
 		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
 		return nil
 	}
@@ -171,7 +171,73 @@ func applyWGConfig(conf string, turnIPs []string) error {
 	return nil
 }
 
+func applyRawConfig(conf string, turnIPs []string) error {
+	if SoftReconnectPreserve() && activeTun != nil && activeDevice == nil {
+		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		return nil
+	}
+	teardownWG()
+
+	if err := extractWintun(); err != nil {
+		return fmt.Errorf("extract wintun.dll: %w", err)
+	}
+
+	ip, _, mtu, err := parseRawConfig(conf)
+	if err != nil {
+		return err
+	}
+	addr := ip + "/24"
+
+	tunDev, err := tun.CreateTUN(wgIface, mtu)
+	if err != nil {
+		return fmt.Errorf("create TUN: %w", err)
+	}
+	activeTun = tunDev
+	activeDevice = nil
+
+	host, mask, _ := parseCIDR(addr)
+	if err := run("netsh", "interface", "ip", "set", "address",
+		"name="+wgIface, "source=static", host, mask); err != nil {
+		log.Printf("[RAW] netsh address: %v", err)
+	}
+
+	gw := defaultGateway()
+	rememberWGGateway(gw)
+	if gw != "" {
+		desktoptun.RememberPhysicalEgress(gw, desktoptun.DefaultLocalIPv4())
+		var excludes []string
+		for _, tip := range turnIPs {
+			excludes = append(excludes, tip+"/32")
+		}
+		for _, cidr := range excludes {
+			rip, rmask, err := parseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			_ = run("route", "add", rip, "mask", rmask, gw)
+		}
+		activeExcludeRoutes = excludes
+		if err := installVKExcludeRoutes(gw); err == nil {
+			markVKExcludeInstalled()
+		}
+	}
+
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		_ = run("netsh", "interface", "ip", "add", "route", cidr, wgIface)
+	}
+
+	if err := startRawBridge(tunDev, "9000"); err != nil {
+		teardownWG()
+		return fmt.Errorf("raw bridge: %w", err)
+	}
+
+	log.Printf("[RAW] Туннель %s поднят (ip=%s mtu=%d, без WireGuard)", wgIface, ip, mtu)
+	return nil
+}
+
 func teardownWG() {
+	stopRawBridge()
+
 	for _, cidr := range activeExcludeRoutes {
 		ip, _, _ := parseCIDR(cidr)
 		if ip != "" {

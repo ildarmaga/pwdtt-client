@@ -122,7 +122,7 @@ function useWailsEvents() {
         });
       }),
       EventsOn('event', (name: unknown) => {
-        if (name === 'wg_config') tunnelStore.set('connected');
+        if (name === 'wg_config' || name === 'raw_config') tunnelStore.set('connected');
       }),
       EventsOn('update_progress', (p: UpdateProgressEvent) => {
         updateStore.applyEvent(p);

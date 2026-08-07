@@ -56,6 +56,8 @@ export interface AppSettings {
   tunnelProtocol: TunnelProtocol;
   /** VK TURN: маскировка DTLS под аудио (OPUS) или видео (VP8) */
   obfsMode: ObfsMode;
+  /** wg = WireGuard поверх TURN; raw = IP поверх DTLS без WireGuard (нужен сервер с RAW) */
+  tunnelMode: 'wg' | 'raw';
   /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;
   /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
@@ -90,6 +92,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vkThroughTunnel: true,
   tunnelProtocol: 'vk',
   obfsMode: 'audio',
+  tunnelMode: 'wg',
   // RelayBridge (kulikov0): dual-track off by default — SFU often drops
   // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.
   wbDualTrack: false,

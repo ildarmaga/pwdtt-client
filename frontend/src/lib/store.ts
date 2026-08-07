@@ -56,6 +56,9 @@ export const settingsStore = {
     if (merged.obfsMode !== 'audio' && merged.obfsMode !== 'video') {
       merged.obfsMode = DEFAULT_SETTINGS.obfsMode;
     }
+    if (merged.tunnelMode !== 'wg' && merged.tunnelMode !== 'raw') {
+      merged.tunnelMode = DEFAULT_SETTINGS.tunnelMode;
+    }
     if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 120) {
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
     }

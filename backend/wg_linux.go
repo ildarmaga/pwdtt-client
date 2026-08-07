@@ -10,11 +10,14 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 var (
 	activeRoutes   []string
 	activeRoutesMu sync.Mutex
+	activeRawTun   tun.Device
 )
 
 func wgTunnelActive() bool {
@@ -22,7 +25,7 @@ func wgTunnelActive() bool {
 }
 
 func applyWGConfig(conf string, turnIPs []string) error {
-	if SoftReconnectPreserve() && wgTunnelActive() {
+	if SoftReconnectPreserve() && wgTunnelActive() && activeRawTun == nil {
 		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
 		return nil
 	}
@@ -105,7 +108,81 @@ func applyWGConfig(conf string, turnIPs []string) error {
 	return nil
 }
 
+func applyRawConfig(conf string, turnIPs []string) error {
+	if SoftReconnectPreserve() && activeRawTun != nil && wgTunnelActive() {
+		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		return nil
+	}
+	teardownWG()
+
+	if err := exec.Command("sudo", "-n", "true").Run(); err != nil {
+		return fmt.Errorf("sudo недоступен (нет прав или требует пароль): %w", err)
+	}
+
+	ip, _, mtu, err := parseRawConfig(conf)
+	if err != nil {
+		return err
+	}
+
+	tunDev, err := tun.CreateTUN(wgIface, mtu)
+	if err != nil {
+		return fmt.Errorf("create TUN: %w", err)
+	}
+	activeRawTun = tunDev
+
+	_ = run("ip", "addr", "flush", "dev", wgIface)
+	if err := run("ip", "addr", "add", ip+"/24", "dev", wgIface); err != nil {
+		teardownWG()
+		return fmt.Errorf("ip addr add: %w", err)
+	}
+	_ = run("ip", "link", "set", wgIface, "mtu", fmt.Sprintf("%d", mtu))
+	if err := run("ip", "link", "set", wgIface, "up"); err != nil {
+		teardownWG()
+		return fmt.Errorf("ip link set up: %w", err)
+	}
+
+	var routes []string
+	gw := defaultGateway()
+	rememberWGGateway(gw)
+	if gw != "" {
+		for _, tip := range turnIPs {
+			cidr := tip + "/32"
+			if run("ip", "route", "add", cidr, "via", gw) == nil {
+				routes = append(routes, cidr)
+			}
+		}
+		if err := installVKExcludeRoutes(gw); err == nil {
+			markVKExcludeInstalled()
+		}
+		for _, dns := range localDNSServers() {
+			cidr := dns + "/32"
+			if run("ip", "route", "add", cidr, "via", gw) == nil {
+				routes = append(routes, cidr)
+			}
+		}
+	}
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		if run("ip", "route", "add", cidr, "dev", wgIface) == nil {
+			routes = append(routes, "dev:"+cidr)
+		}
+	}
+
+	activeRoutesMu.Lock()
+	activeRoutes = routes
+	activeRoutesMu.Unlock()
+
+	if err := startRawBridge(tunDev, "9000"); err != nil {
+		teardownWG()
+		return fmt.Errorf("raw bridge: %w", err)
+	}
+
+	log.Printf("[RAW] Туннель %s поднят (ip=%s mtu=%d, без WireGuard)", wgIface, ip, mtu)
+	return nil
+}
+
 func teardownWG() {
+	stopRawBridge()
+
 	activeRoutesMu.Lock()
 	routes := activeRoutes
 	activeRoutes = nil
@@ -119,7 +196,12 @@ func teardownWG() {
 			_ = run("ip", "route", "del", entry)
 		}
 	}
-	_ = run("ip", "link", "del", wgIface)
+	if activeRawTun != nil {
+		_ = activeRawTun.Close()
+		activeRawTun = nil
+	} else {
+		_ = run("ip", "link", "del", wgIface)
+	}
 	clearWGRouteState()
 }
 

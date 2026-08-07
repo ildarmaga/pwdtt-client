@@ -343,14 +343,17 @@ func RunSession(
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	// Запрос конфига (любой воркер группы #1 может доставить wg_config)
-	if configGate != nil {
+	// Запрос конфига (WG: GETCONF один раз; RAW: RAWCONF на каждый DTLS-conn)
+	if configGate != nil && configGate.needsConfig() {
 		delivered, confErr := configGate.tryDeliver(sessionID, dtlsConn, localPort, deviceID, password)
 		if confErr != nil {
 			return false, confErr
 		}
 		if delivered {
 			configDelivered = true
+		} else if configGate.tunnelMode == "raw" {
+			// Не datapath-воркер — не проксируем (иначе пакеты уйдут не в raw-сессию).
+			return false, fmt.Errorf("RAW: пропуск воркера без RAWCONF")
 		}
 	}
 

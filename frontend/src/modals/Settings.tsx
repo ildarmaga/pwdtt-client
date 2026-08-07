@@ -463,6 +463,33 @@ export default function Settings({ onClose }: Props) {
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
+              <span>Режим туннеля</span>
+              <div className="st-row-hint" style={{ marginTop: 4 }}>
+                WG — классика. RAW — IP без WireGuard (нужен сервер ≥1.4.118)
+              </div>
+            </div>
+            <div className="st-seg">
+              <button
+                type="button"
+                className={`st-seg-btn${settings.tunnelMode !== 'raw' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('tunnelMode', 'wg')}
+              >
+                WG
+              </button>
+              <button
+                type="button"
+                className={`st-seg-btn${settings.tunnelMode === 'raw' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('tunnelMode', 'raw')}
+              >
+                RAW
+              </button>
+            </div>
+          </div>
+
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
+            <div>
               <span>Маскировка</span>
               <div className="st-row-hint" style={{ marginTop: 4 }}>
                 RTP под аудио (OPUS) или видео (VP8) — как на Android

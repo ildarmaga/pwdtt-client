@@ -196,7 +196,8 @@ type ConnectParams struct {
 	MTU             int      `json:"mtu,omitempty"`
 	Hashes          []string `json:"hashes,omitempty"`
 	VKThroughTunnel bool     `json:"vkThroughTunnel,omitempty"`
-	ObfsMode        string   `json:"obfsMode,omitempty"` // audio|video
+	ObfsMode        string   `json:"obfsMode,omitempty"`    // audio|video
+	TunnelMode      string   `json:"tunnelMode,omitempty"` // wg|raw
 }
 
 func loadProfile(name string) (*ProfileData, error) {
@@ -666,7 +667,11 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		return fmt.Errorf("уже подключено")
 	}
 	o.lastParams = p
-	o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
+	if p.TunnelMode == "raw" {
+		o.assignedWorkers = 1
+	} else {
+		o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
+	}
 	o.connectedAt = time.Time{}
 	o.resetWorkersLostState()
 	if SoftReconnectPreserve() {
@@ -728,6 +733,13 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	if obfsMode != "video" {
 		obfsMode = "audio"
 	}
+	tunnelMode := p.TunnelMode
+	if tunnelMode != "raw" {
+		tunnelMode = "wg"
+	}
+	if tunnelMode == "raw" {
+		workers = 1
+	}
 
 	cfg := core.Config{
 		PeerAddr:    prof.PeerAddr,
@@ -741,6 +753,7 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		CaptchaMode: p.CaptchaMode,
 		MTU:         p.MTU,
 		ObfsMode:    obfsMode,
+		TunnelMode:  tunnelMode,
 	}
 	if len(p.Hashes) > 0 {
 		cfg.Hashes = p.Hashes
@@ -802,19 +815,27 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 			runtime.EventsEmit(o.appCtx, "error", friendly)
 			runtime.EventsEmit(o.appCtx, "log", "ERROR", fmt.Sprintf("[ОШИБКА] %s", friendly))
 		case core.EventEvent:
-			if ev.Name == "wg_config" {
+			if ev.Name == "wg_config" || ev.Name == "raw_config" {
 				turnIPs := sess.c.GetTurnIPs()
-				if err := applyWGConfig(ev.Data, turnIPs); err != nil {
-					msg := fmt.Sprintf("[WG] Ошибка применения конфига: %v", err)
+				tag := "WG"
+				var applyErr error
+				if ev.Name == "raw_config" {
+					tag = "RAW"
+					applyErr = applyRawConfig(ev.Data, turnIPs)
+				} else {
+					applyErr = applyWGConfig(ev.Data, turnIPs)
+				}
+				if applyErr != nil {
+					msg := fmt.Sprintf("[%s] Ошибка применения конфига: %v", tag, applyErr)
 					runtime.EventsEmit(o.appCtx, "error", msg)
 					runtime.EventsEmit(o.appCtx, "log", "ERROR", msg)
 				} else {
 					connected = true
 					o.tunnelUp = true
 					if err := applyVKRouting(); err != nil {
-						runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[WG] VK-маршрутизация: %v", err))
+						runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[%s] VK-маршрутизация: %v", tag, err))
 					} else if VKThroughTunnel() {
-						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] VK идёт через туннель (веб/API), TURN-транспорт напрямую")
+						runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] VK идёт через туннель (веб/API), TURN-транспорт напрямую", tag))
 					}
 					if o.sessionWatchUntil.IsZero() || time.Now().After(o.sessionWatchUntil) {
 						o.sessionWatchUntil = time.Now().Add(sessionWatchAfterConnect)
@@ -834,7 +855,9 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 					}
 					runtime.EventsEmit(o.appCtx, "state_changed", "running", "")
 					if SoftReconnectPreserve() && wgTunnelActive() {
-						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Soft-reconnect: wg-turn сохранён, воркеры поднимаются")
+						runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] Soft-reconnect: интерфейс сохранён, воркеры поднимаются", tag))
+					} else if tag == "RAW" {
+						runtime.EventsEmit(o.appCtx, "log", "INFO", "[RAW] Конфиг применён, туннель активен (без WireGuard) ✓")
 					} else {
 						runtime.EventsEmit(o.appCtx, "log", "INFO", "[WG] Конфиг применён, туннель активен ✓")
 					}

@@ -23,6 +23,7 @@ type Config struct {
 	CaptchaMode string   // -captcha-mode
 	MTU         int      // 0 = default 1380
 	ObfsMode    string   // audio|video — RTP маскировка (PT 111 / 96)
+	TunnelMode  string   // wg|raw — raw = IP over DTLS без WireGuard
 }
 
 // EventType — тип события от ядра.
@@ -156,12 +157,23 @@ func (c *Core) Start() (<-chan Event, error) {
 	// Нормализуем количество воркеров
 	n := NormalizeWorkers(c.cfg.Workers)
 
+	tunnelMode := c.cfg.TunnelMode
+	if tunnelMode != "raw" {
+		tunnelMode = "wg"
+	}
+	mtu := c.cfg.MTU
+	if mtu <= 0 {
+		mtu = 1280
+	}
+
 	tp := &TurnParams{
-		Host:     c.cfg.TurnHost,
-		Port:     c.cfg.TurnPort,
-		Hashes:   c.cfg.Hashes,
-		WrapKey:  wrapKey,
-		ObfsMode: c.cfg.ObfsMode,
+		Host:       c.cfg.TurnHost,
+		Port:       c.cfg.TurnPort,
+		Hashes:     c.cfg.Hashes,
+		WrapKey:    wrapKey,
+		ObfsMode:   c.cfg.ObfsMode,
+		TunnelMode: tunnelMode,
+		MTU:        mtu,
 	}
 
 	localConn, err := net.ListenPacket("udp", c.cfg.Listen)
@@ -180,6 +192,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	}
 
 	numGroups := n / workersPerGroup
+	perGroup := workersPerGroup
+	if tunnelMode == "raw" {
+		numGroups = 1
+		perGroup = 1
+	}
 
 	stats := NewStats()
 	emitCaptchaRequest := func(mode, redirectURI, sessionToken string) {
@@ -208,6 +225,10 @@ func (c *Core) Start() (<-chan Event, error) {
 		select {
 		case rawConf, ok := <-configCh:
 			if !ok || rawConf == "" {
+				return
+			}
+			if tunnelMode == "raw" {
+				c.emit(Event{Type: EventEvent, Name: "raw_config", Data: rawConf})
 				return
 			}
 			finalConf := patchWGConfig(rawConf, c.cfg.MTU)
@@ -242,7 +263,7 @@ func (c *Core) Start() (<-chan Event, error) {
 				prevWaitReady = ch
 			}
 
-			ids := make([]int, workersPerGroup)
+			ids := make([]int, perGroup)
 			for i := range ids {
 				ids[i] = workerIDCounter
 				workerIDCounter++
