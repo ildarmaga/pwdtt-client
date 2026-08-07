@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.260] — 2026-08-07
+
+### Test — RAW sticky affinity + CI
+Покрытие: affinity при росте 1→18, rebind после Unregister, блокирующая
+отправка без дропа, concurrent pick. В CI добавлен `go test ./client/core`.
+
 ## [0.3.259] — 2026-08-07
 
 ### Fix — RAW affinity + без дропа uplink
