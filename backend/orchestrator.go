@@ -667,11 +667,7 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 		return fmt.Errorf("уже подключено")
 	}
 	o.lastParams = p
-	if p.TunnelMode == "raw" {
-		o.assignedWorkers = 1
-	} else {
-		o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
-	}
+	o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
 	o.connectedAt = time.Time{}
 	o.resetWorkersLostState()
 	if SoftReconnectPreserve() {

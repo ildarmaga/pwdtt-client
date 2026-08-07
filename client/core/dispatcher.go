@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"log"
 	"net"
 	"sync"
@@ -32,14 +33,15 @@ func putPktBuf(b []byte) {
 
 const (
 	returnChBuf = 384
-	// sendChBuf — глубина общей очереди отправки. Все воркеры читают из неё;
-	// при кратковременной просадке числа живых воркеров (рециклинг VK-relay)
-	// пакеты копятся здесь, а не дропаются, пока буфер не переполнен.
+	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
+	// rawWorkerSendBuf — очередь на воркер в RAW sticky-режиме.
+	rawWorkerSendBuf = 128
 )
 
 type WorkerSlot struct {
-	ID int
+	ID     int
+	SendCh chan []byte // RAW sticky: личный канал; WG: nil → общий Dispatcher.SendCh
 }
 
 type Dispatcher struct {
@@ -47,26 +49,23 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
-	// SendCh — ОБЩАЯ очередь отправки (app→туннель). Все воркеры читают из неё
-	// (work-stealing): кто свободен, тот забирает следующий пакет. Смерть одного
-	// воркера не теряет «полосу» — остальные продолжают качать из той же очереди,
-	// поэтому туннель не прерывается при рециклинге VK-relay. Модель эталонного
-	// vk-turn-proxy (один sendCh на все conn'ы) вместо прежнего пуша пачками в
-	// канал конкретного воркера (где смерть воркера = дроп его пакетов).
-	SendCh   chan []byte
-	ReturnCh chan []byte
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	stats    *Stats
+	// SendCh — ОБЩАЯ очередь (WG). RAW sticky шлёт в WorkerSlot.SendCh.
+	SendCh    chan []byte
+	ReturnCh  chan []byte
+	rawSticky bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	stats     *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) *Dispatcher {
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawSticky bool) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
 	d := &Dispatcher{
 		localConn: localConn,
 		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
+		rawSticky: rawSticky,
 		ctx:       dctx,
 		cancel:    dcancel,
 		stats:     stats,
@@ -85,6 +84,9 @@ func (d *Dispatcher) Shutdown() {
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
+	if d.rawSticky && w.SendCh == nil {
+		w.SendCh = make(chan []byte, rawWorkerSendBuf)
+	}
 	d.workers = append(d.workers, w)
 	count := len(d.workers)
 	d.mu.Unlock()
@@ -104,16 +106,55 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
-// readLoop читает WireGuard-пакеты и кладёт их в ОБЩУЮ очередь SendCh.
+// flowHash — 5-tuple IPv4 (или src/dst если портов нет). Один TCP/UDP-поток
+// всегда на одном воркере → один src IP после rewrite (иначе ломается NAT/TCP).
+func flowHash(pkt []byte) uint32 {
+	if len(pkt) < 20 || pkt[0]>>4 != 4 {
+		var h uint32
+		for i := 0; i < len(pkt) && i < 64; i++ {
+			h = h*131 + uint32(pkt[i])
+		}
+		return h
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	h := binary.BigEndian.Uint32(pkt[12:16]) ^ binary.BigEndian.Uint32(pkt[16:20])
+	h ^= uint32(pkt[9]) * 0x9e3779b9
+	if len(pkt) >= ihl+4 && (pkt[9] == 6 || pkt[9] == 17) {
+		h ^= uint32(binary.BigEndian.Uint16(pkt[ihl : ihl+2]))
+		h ^= uint32(binary.BigEndian.Uint16(pkt[ihl+2:ihl+4])) << 16
+	}
+	return h
+}
+
+func (d *Dispatcher) dispatchSticky(pkt []byte) {
+	d.mu.Lock()
+	n := len(d.workers)
+	if n == 0 {
+		d.mu.Unlock()
+		putPktBuf(pkt)
+		return
+	}
+	w := d.workers[flowHash(pkt)%uint32(n)]
+	ch := w.SendCh
+	d.mu.Unlock()
+	if ch == nil {
+		putPktBuf(pkt)
+		return
+	}
+	select {
+	case ch <- pkt:
+		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
+	case <-d.ctx.Done():
+		putPktBuf(pkt)
+	default:
+		putPktBuf(pkt)
+	}
+}
+
+// readLoop читает пакеты с локального UDP (TUN bridge) и кладёт в очередь(и).
 //
-// Все воркеры конкурентно читают из этой очереди (work-stealing): свободный
-// воркер забирает следующий пакет. Смерть одного воркера (рециклинг VK-relay)
-// не теряет «полосу» — остальные продолжают качать из той же очереди, поэтому
-// туннель не прерывается. Это модель эталонного vk-turn-proxy (один sendCh на
-// все conn'ы) вместо прежнего пуша пачками в канал конкретного воркера.
-//
-// Порядок пакетов между воркерами не гарантируется, но WireGuard устойчив к
-// переупорядочиванию (anti-replay window), поэтому это допустимо.
+// WG: общая SendCh (work-stealing) — WireGuard терпит reorder.
+// RAW: sticky по 5-tuple на WorkerSlot.SendCh — иначе src-rewrite ломает TCP.
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
@@ -137,6 +178,11 @@ func (d *Dispatcher) readLoop() {
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
 
+		if d.rawSticky {
+			d.dispatchSticky(pkt)
+			continue
+		}
+
 		select {
 		case d.SendCh <- pkt:
 			atomic.AddInt64(&d.stats.TotalBytesUp, int64(n))
@@ -144,7 +190,6 @@ func (d *Dispatcher) readLoop() {
 			putPktBuf(pkt)
 			return
 		default:
-			// Очередь переполнена (все воркеры залипли/мертвы) — дроп.
 			putPktBuf(pkt)
 		}
 	}

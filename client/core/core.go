@@ -215,7 +215,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	disp := NewDispatcher(ctx, localConn, stats)
+	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw")
 
 	configCh := make(chan string, 1)
 

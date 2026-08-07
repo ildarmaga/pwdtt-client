@@ -369,11 +369,14 @@ func RunSession(
 	becameReady = true
 	readyAt = time.Now()
 
-	// Регистрация в диспетчере (только для учёта/логов — отправка идёт
-	// через общую очередь d.SendCh).
+	// RAW sticky: личный SendCh (flow→воркер). WG: общий d.SendCh.
 	slot := &WorkerSlot{ID: sessionID}
 	d.Register(slot)
 	defer d.Unregister(slot)
+	sendCh := d.SendCh
+	if slot.SendCh != nil {
+		sendCh = slot.SendCh
+	}
 
 	// Proxy DTLS ↔ Dispatcher
 	var proxyWg sync.WaitGroup
@@ -421,9 +424,8 @@ func RunSession(
 		}
 	}()
 
-	// Writer: общая очередь диспетчера → DTLS. Все воркеры читают из одного
-	// d.SendCh (work-stealing): свободный воркер забирает следующий пакет, и
-	// смерть соседнего воркера не создаёт паузы в туннеле.
+	// Writer: очередь → DTLS. WG — общий SendCh; RAW — sticky slot.SendCh
+	// (один 5-tuple → один worker IP, иначе TCP/NAT ломаются).
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
@@ -431,7 +433,7 @@ func RunSession(
 			select {
 			case <-sessCtx.Done():
 				return
-			case pkt, ok := <-d.SendCh:
+			case pkt, ok := <-sendCh:
 				if !ok {
 					return
 				}

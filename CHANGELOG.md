@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.257] — 2026-08-07
+
+### Fix — RAW sticky flow + UI воркеров
+- Трафик: пакеты одного TCP/UDP-потока больше не размазываются по воркерам с разными
+  `10.70.x.y` (work-stealing ломал NAT). Sticky по 5-tuple → один worker IP.
+- UI `9/1`: `assignedWorkers` снова = power из профиля/настроек (не принудительная 1).
+
 ## [0.3.256] — 2026-08-07
 
 ### Feature — RAW multi-worker
