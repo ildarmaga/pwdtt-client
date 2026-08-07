@@ -247,6 +247,13 @@ type Orchestrator struct {
 	preserveOnSessionEnd bool
 	sessionWatchUntil    time.Time
 	netWatchStop         chan struct{}
+	// softRecoverUntil — окно после SoftReconnect: не триггерить повторный
+	// auto-reconnect, пока идёт VK auth / TURN Allocate (иначе рвём context
+	// каждые ~10–12 с и сессия не поднимается без ребута ПК).
+	softRecoverUntil time.Time
+	// softRecoverVKDirect — во время soft-recover VK веб/API временно напрямую;
+	// после первого живого воркера вернём «через туннель».
+	softRecoverVKDirect bool
 }
 
 const networkChangeDebounce = 1500 * time.Millisecond
@@ -254,15 +261,18 @@ const networkChangeDebounce = 1500 * time.Millisecond
 const workersLostGrace = 4 * time.Second
 
 const (
-	trafficStallThreshold   = 8 * time.Second  // залипание пути (игры не терпят 20–30 с)
-	trafficActiveMinBytes   = int64(512)       // мелкие игровые пакеты
-	trafficActiveWindow     = 3 * time.Minute
+	trafficStallThreshold    = 8 * time.Second // залипание пути (игры не терпят 20–30 с)
+	trafficActiveMinBytes    = int64(512)      // мелкие игровые пакеты
+	trafficActiveWindow      = 3 * time.Minute
 	sessionWatchAfterConnect = 3 * time.Minute // после Connect всегда следим за залипанием
-	autoReconnectCooldown   = 10 * time.Second
-	autoReconnectProbeEvery = 1 * time.Second
-	internetProbeInterval   = 2 * time.Second
-	internetProbeTimeout    = 1500 * time.Millisecond
-	internetProbeFailNeed   = 2
+	autoReconnectCooldown    = 10 * time.Second
+	autoReconnectProbeEvery  = 1 * time.Second
+	internetProbeInterval    = 2 * time.Second
+	internetProbeTimeout     = 1500 * time.Millisecond
+	internetProbeFailNeed    = 2
+	// softRecoverAuthGrace — VK Calls + DNS + TURN Allocate при «мёртвом» WG
+	// легко занимают 30–60 с; 4 с workersLostGrace этого не покрывает.
+	softRecoverAuthGrace = 90 * time.Second
 )
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
@@ -280,7 +290,10 @@ func (o *Orchestrator) SetVKThroughTunnel(through bool) error {
 func (o *Orchestrator) Reconnect() error {
 	o.mu.Lock()
 	params := o.lastParams
+	o.softRecoverUntil = time.Time{}
+	o.softRecoverVKDirect = false
 	o.mu.Unlock()
+	SetSoftReconnectPreserve(false)
 	if params.Profile == "" {
 		return fmt.Errorf("нет сохранённых параметров подключения")
 	}
@@ -301,8 +314,17 @@ func (o *Orchestrator) SoftReconnect() error {
 		return fmt.Errorf("нет сохранённых параметров подключения")
 	}
 	if canPreserve {
+		// Держим флаг до первого живого воркера (finishSoftRecoverVK) —
+		// нельзя сбрасывать defer'ом сразу после Start: иначе wg_config
+		// приходит уже без preserve и сносит wg-turn посреди VK auth.
 		SetSoftReconnectPreserve(true)
-		defer SetSoftReconnectPreserve(false)
+		// WG жив как интерфейс, но TURN уже мёртв → VK API/DNS через туннель
+		// дают i/o timeout / no such host и auth никогда не завершается.
+		if err := SetVKThroughTunnel(false); err != nil {
+			runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[SOFT] VK напрямую: %v", err))
+		} else {
+			runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK временно напрямую (auth/DNS), пока поднимаются TURN-воркеры")
+		}
 	}
 	if o.IsRunning() {
 		o.stopCoreSession(!canPreserve)
@@ -313,8 +335,47 @@ func (o *Orchestrator) SoftReconnect() error {
 	o.lastTrafficBytes = 0
 	o.lastTrafficAt = time.Time{}
 	o.internetProbeFails = 0
+	if canPreserve {
+		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
+		o.softRecoverVKDirect = true
+	} else {
+		o.softRecoverUntil = time.Time{}
+		o.softRecoverVKDirect = false
+		SetSoftReconnectPreserve(false)
+	}
 	o.mu.Unlock()
-	return o.Start(params)
+	err := o.Start(params)
+	if err != nil {
+		SetSoftReconnectPreserve(false)
+		o.mu.Lock()
+		o.softRecoverUntil = time.Time{}
+		o.softRecoverVKDirect = false
+		o.mu.Unlock()
+	}
+	return err
+}
+
+func (o *Orchestrator) inSoftRecoverWindow() bool {
+	return !o.softRecoverUntil.IsZero() && time.Now().Before(o.softRecoverUntil)
+}
+
+// finishSoftRecoverVK — после первого живого воркера вернуть VK веб/API в туннель
+// и снять SoftReconnectPreserve (можно снова применять wg_config).
+func (o *Orchestrator) finishSoftRecoverVK() {
+	o.mu.Lock()
+	need := o.softRecoverVKDirect || SoftReconnectPreserve()
+	o.softRecoverVKDirect = false
+	o.softRecoverUntil = time.Time{}
+	o.mu.Unlock()
+	if !need {
+		return
+	}
+	SetSoftReconnectPreserve(false)
+	if err := SetVKThroughTunnel(true); err != nil {
+		runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[SOFT] не удалось вернуть VK в туннель: %v", err))
+		return
+	}
+	runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK снова через туннель (воркеры живы)")
 }
 
 func (o *Orchestrator) resetWorkersLostState() {
@@ -334,20 +395,33 @@ func (o *Orchestrator) emitWorkersLost(msg string) {
 func (o *Orchestrator) noteWorkerStats(workers int32) {
 	o.mu.Lock()
 	o.lastWorkers = workers
+	tunnelUp := o.tunnelUp
+	inSoft := o.inSoftRecoverWindow()
 	o.mu.Unlock()
-	if !o.tunnelUp {
+	if !tunnelUp {
 		return
 	}
 	if workers > 0 {
+		o.mu.Lock()
 		o.workersZeroAt = time.Time{}
 		o.workersLostAt = false
+		o.mu.Unlock()
+		o.finishSoftRecoverVK()
 		return
 	}
+	// Soft-reconnect: workers=0 ожидаем, пока идёт auth — не зацикливать SoftReconnect.
+	if inSoft {
+		return
+	}
+	o.mu.Lock()
 	if o.workersZeroAt.IsZero() {
 		o.workersZeroAt = time.Now()
+		o.mu.Unlock()
 		return
 	}
-	if time.Since(o.workersZeroAt) >= workersLostGrace {
+	zeroFor := time.Since(o.workersZeroAt)
+	o.mu.Unlock()
+	if zeroFor >= workersLostGrace {
 		o.triggerAutoReconnect("Нет активных воркеров — быстрое восстановление…")
 	}
 }
@@ -394,6 +468,12 @@ func (o *Orchestrator) triggerAutoReconnect(msg string) { o.triggerReconnect(msg
 func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 	o.mu.Lock()
 	if !o.tunnelUp || o.autoReconnecting || o.suppressWorkersLost {
+		o.mu.Unlock()
+		return
+	}
+	// Во время soft-recover auth окна не рвём сессию повторно (кроме forceFull —
+	// смена сети/шлюза, когда /32 к TURN устарели).
+	if !forceFull && o.inSoftRecoverWindow() {
 		o.mu.Unlock()
 		return
 	}
@@ -588,10 +668,14 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 	o.lastParams = p
 	o.assignedWorkers = int32(core.NormalizeWorkers(p.Workers))
 	o.connectedAt = time.Time{}
-	// VK через туннель — всегда включено нативно (тумблер убран из настроек).
-	vkThroughTunnel.Store(true)
 	o.resetWorkersLostState()
-	if !SoftReconnectPreserve() {
+	if SoftReconnectPreserve() {
+		// SoftReconnect уже переключил VK на direct; не форсируем again через мёртвый WG.
+	} else {
+		// VK через туннель — всегда включено нативно (тумблер убран из настроек).
+		vkThroughTunnel.Store(true)
+		o.softRecoverUntil = time.Time{}
+		o.softRecoverVKDirect = false
 		o.tunnelUp = false
 	}
 	o.suppressWorkersLost = false
@@ -834,6 +918,11 @@ func (o *Orchestrator) stopCoreSession(fullTeardown bool) {
 }
 
 func (o *Orchestrator) Stop() {
+	SetSoftReconnectPreserve(false)
+	o.mu.Lock()
+	o.softRecoverUntil = time.Time{}
+	o.softRecoverVKDirect = false
+	o.mu.Unlock()
 	o.stopCoreSession(true)
 	o.mu.Lock()
 	sess := o.sess

@@ -1,6 +1,21 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.254] — 2026-08-07
+
+### Fix — soft-recover не рвёт VK auth / DNS через мёртвый WG
+После массового падения TURN-воркеров soft-reconnect сохранял `wg-turn`, но:
+
+1. снова включал «VK через туннель» → DNS/API timeout / `no such host`;
+2. через ~4–12 с снова триггерил soft-reconnect и `context canceled` на auth;
+3. `SoftReconnectPreserve` сбрасывался до прихода `wg_config` → снос интерфейса.
+
+Теперь: 90 с окно без повторного auto-reconnect, VK временно напрямую до первого
+живого воркера, preserve держится до успеха (или полного Stop/Reconnect).
+
+`TURN квота 486` — лимит VK Allocate на креды (не панель 341/400 ГБ); клиент
+уже рефрешит креды, power 18 иногда упирается в 16–17 слотов.
+
 ## [0.3.253] — 2026-08-03
 
 ### Fix — Soft-rebind на живом ICE (WB) + CI без приватного репо
