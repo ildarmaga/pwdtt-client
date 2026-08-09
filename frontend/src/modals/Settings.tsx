@@ -490,6 +490,33 @@ export default function Settings({ onClose }: Props) {
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
+              <span>TURN транспорт</span>
+              <div className="st-row-hint" style={{ marginTop: 4 }}>
+                TCP — как qWDTT 1.4 (операторы меньше режут). UDP — старый путь
+              </div>
+            </div>
+            <div className="st-seg">
+              <button
+                type="button"
+                className={`st-seg-btn${settings.turnTransport !== 'udp' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('turnTransport', 'tcp')}
+              >
+                TCP
+              </button>
+              <button
+                type="button"
+                className={`st-seg-btn${settings.turnTransport === 'udp' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('turnTransport', 'udp')}
+              >
+                UDP
+              </button>
+            </div>
+          </div>
+
+          <div className={`st-row${locked ? ' st-locked' : ''}`}>
+            <div>
               <span>Маскировка</span>
               <div className="st-row-hint" style={{ marginTop: 4 }}>
                 RTP под аудио (OPUS) или видео (VP8) — как на Android

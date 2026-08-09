@@ -529,14 +529,15 @@ func normalizeVKJoinHash(input string) string {
 
 // TurnParams — конфигурация TURN
 type TurnParams struct {
-	Host         string
-	Port         string
-	Hashes       []string
-	WrapKey      []byte // Password-derived WRAP key (32 bytes), nil = disabled
-	ObfsMode     string // audio|video
-	TunnelMode   string // wg|raw
-	MTU          int    // для RAWCONF
-	RawPrimaryIP string // soft-reconnect: IP сохранённого TUN
+	Host          string
+	Port          string
+	Hashes        []string
+	WrapKey       []byte // Password-derived WRAP key (32 bytes), nil = disabled
+	ObfsMode      string // audio|video
+	TunnelMode    string // wg|raw
+	TurnTransport string // tcp|udp — канал к TURN (default tcp, как qWDTT 1.4)
+	MTU           int    // для RAWCONF
+	RawPrimaryIP  string // soft-reconnect: IP сохранённого TUN
 }
 
 // Credentials — учетные данные TURN

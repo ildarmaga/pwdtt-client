@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.261] — 2026-08-09
+
+### Feature — TURN TCP (как qWDTT 1.4)
+Канал клиент↔VK TURN по **TCP** по умолчанию (`STUNConn` + UDP Allocate к peer).
+Операторы меньше режут TCP → выше скорость. В Настройках сегмент **TCP | UDP**;
+при ошибке TCP — fallback на UDP. В логе: `TURN TCP (…)`.
+
 ## [0.3.260] — 2026-08-07
 
 ### Test — RAW sticky affinity + CI

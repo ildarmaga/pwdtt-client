@@ -59,6 +59,9 @@ export const settingsStore = {
     if (merged.tunnelMode !== 'wg' && merged.tunnelMode !== 'raw') {
       merged.tunnelMode = DEFAULT_SETTINGS.tunnelMode;
     }
+    if (merged.turnTransport !== 'tcp' && merged.turnTransport !== 'udp') {
+      merged.turnTransport = DEFAULT_SETTINGS.turnTransport;
+    }
     if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 120) {
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
     }

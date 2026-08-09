@@ -24,6 +24,7 @@ type Config struct {
 	MTU         int      // 0 = default 1380
 	ObfsMode       string // audio|video — RTP маскировка (PT 111 / 96)
 	TunnelMode     string // wg|raw — raw = IP over DTLS без WireGuard
+	TurnTransport  string // tcp|udp — канал клиент↔TURN (default tcp)
 	RawPrimaryIP   string // soft-reconnect: IP сохранённого TUN для rewrite
 }
 
@@ -167,15 +168,21 @@ func (c *Core) Start() (<-chan Event, error) {
 		mtu = 1280
 	}
 
+	turnTransport := c.cfg.TurnTransport
+	if turnTransport != "udp" {
+		turnTransport = "tcp"
+	}
+
 	tp := &TurnParams{
-		Host:         c.cfg.TurnHost,
-		Port:         c.cfg.TurnPort,
-		Hashes:       c.cfg.Hashes,
-		WrapKey:      wrapKey,
-		ObfsMode:     c.cfg.ObfsMode,
-		TunnelMode:   tunnelMode,
-		MTU:          mtu,
-		RawPrimaryIP: c.cfg.RawPrimaryIP,
+		Host:          c.cfg.TurnHost,
+		Port:          c.cfg.TurnPort,
+		Hashes:        c.cfg.Hashes,
+		WrapKey:       wrapKey,
+		ObfsMode:      c.cfg.ObfsMode,
+		TunnelMode:    tunnelMode,
+		TurnTransport: turnTransport,
+		MTU:           mtu,
+		RawPrimaryIP:  c.cfg.RawPrimaryIP,
 	}
 
 	localConn, err := net.ListenPacket("udp", c.cfg.Listen)

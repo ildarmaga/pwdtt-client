@@ -58,6 +58,8 @@ export interface AppSettings {
   obfsMode: ObfsMode;
   /** wg = WireGuard поверх TURN; raw = IP поверх DTLS без WireGuard (нужен сервер с RAW) */
   tunnelMode: 'wg' | 'raw';
+  /** Канал клиент↔VK TURN: tcp (по умолчанию, как qWDTT 1.4) или udp */
+  turnTransport: 'tcp' | 'udp';
   /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;
   /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
@@ -93,6 +95,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tunnelProtocol: 'vk',
   obfsMode: 'audio',
   tunnelMode: 'wg',
+  turnTransport: 'tcp',
   // RelayBridge (kulikov0): dual-track off by default — SFU often drops
   // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.
   wbDualTrack: false,

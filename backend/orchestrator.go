@@ -196,8 +196,9 @@ type ConnectParams struct {
 	MTU             int      `json:"mtu,omitempty"`
 	Hashes          []string `json:"hashes,omitempty"`
 	VKThroughTunnel bool     `json:"vkThroughTunnel,omitempty"`
-	ObfsMode        string   `json:"obfsMode,omitempty"`    // audio|video
-	TunnelMode      string   `json:"tunnelMode,omitempty"` // wg|raw
+	ObfsMode        string   `json:"obfsMode,omitempty"`       // audio|video
+	TunnelMode      string   `json:"tunnelMode,omitempty"`     // wg|raw
+	TurnTransport   string   `json:"turnTransport,omitempty"` // tcp|udp (default tcp)
 }
 
 func loadProfile(name string) (*ProfileData, error) {
@@ -733,21 +734,26 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
 	}
+	turnTransport := p.TurnTransport
+	if turnTransport != "udp" {
+		turnTransport = "tcp"
+	}
 
 	cfg := core.Config{
-		PeerAddr:     prof.PeerAddr,
-		Password:     prof.Password,
-		Hashes:       prof.Hashes,
-		Listen:       prof.Listen,
-		TurnHost:     prof.TurnHost,
-		TurnPort:     prof.TurnPort,
-		DeviceID:     prof.DeviceID,
-		Workers:      workers,
-		CaptchaMode:  p.CaptchaMode,
-		MTU:          p.MTU,
-		ObfsMode:     obfsMode,
-		TunnelMode:   tunnelMode,
-		RawPrimaryIP: "",
+		PeerAddr:      prof.PeerAddr,
+		Password:      prof.Password,
+		Hashes:        prof.Hashes,
+		Listen:        prof.Listen,
+		TurnHost:      prof.TurnHost,
+		TurnPort:      prof.TurnPort,
+		DeviceID:      prof.DeviceID,
+		Workers:       workers,
+		CaptchaMode:   p.CaptchaMode,
+		MTU:           p.MTU,
+		ObfsMode:      obfsMode,
+		TunnelMode:    tunnelMode,
+		TurnTransport: turnTransport,
+		RawPrimaryIP:  "",
 	}
 	if tunnelMode == "raw" && SoftReconnectPreserve() {
 		cfg.RawPrimaryIP = ActiveRawPrimaryIP()

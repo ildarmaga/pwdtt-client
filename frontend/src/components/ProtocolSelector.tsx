@@ -7,6 +7,8 @@ interface Props {
   locked?: boolean;
   /** Только для VK: WG или RAW */
   tunnelMode?: 'wg' | 'raw';
+  /** Только для VK: TURN tcp|udp */
+  turnTransport?: 'tcp' | 'udp';
 }
 
 const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accent: string }> = {
@@ -14,13 +16,11 @@ const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accen
   wb: { label: 'WB', hint: 'WB Stream · WebRTC', accent: '#6d6aac' },
 };
 
-export default function ProtocolSelector({ value, onChange, locked, tunnelMode = 'wg' }: Props) {
+export default function ProtocolSelector({ value, onChange, locked, tunnelMode = 'wg', turnTransport = 'tcp' }: Props) {
   const meta = PROTOCOL_META[value];
   const hint =
     value === 'vk'
-      ? tunnelMode === 'raw'
-        ? 'VK Calls · RAW'
-        : 'VK Calls · WG'
+      ? `VK Calls · ${tunnelMode === 'raw' ? 'RAW' : 'WG'} · ${turnTransport === 'udp' ? 'UDP' : 'TCP'}`
       : meta.hint;
 
   return (

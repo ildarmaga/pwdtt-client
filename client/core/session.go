@@ -63,6 +63,97 @@ type connectedUDPConn struct{ *net.UDPConn }
 
 func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) { return c.Write(p) }
 
+const turnDialTimeout = 12 * time.Second
+
+// dialTurnPacketConn открывает канал к TURN: TCP (STUNConn) или UDP.
+// Как qWDTT 1.4: TCP к TURN, Allocate всё ещё UDP-relay к peer (DTLS).
+func dialTurnPacketConn(turnAddr string, useTCP bool) (net.PacketConn, func(), error) {
+	if useTCP {
+		conn, err := net.DialTimeout("tcp", turnAddr, turnDialTimeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("TURN TCP: %w", err)
+		}
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.SetNoDelay(true)
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(30 * time.Second)
+			_ = tc.SetReadBuffer(socketBufSize)
+			_ = tc.SetWriteBuffer(socketBufSize)
+		}
+		return turn.NewSTUNConn(conn), func() { _ = conn.Close() }, nil
+	}
+	resolved, err := net.ResolveUDPAddr("udp", turnAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("резолв TURN: %w", err)
+	}
+	c, err := net.DialUDP("udp", nil, resolved)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TURN UDP: %w", err)
+	}
+	_ = c.SetReadBuffer(socketBufSize)
+	_ = c.SetWriteBuffer(socketBufSize)
+	return &connectedUDPConn{c}, func() { _ = c.Close() }, nil
+}
+
+func openTurnRelay(
+	ctx context.Context,
+	turnAddr string,
+	preferTCP bool,
+	creds *Credentials,
+	addrFamily turn.RequestedAddressFamily,
+) (*turn.Client, func(), net.PacketConn, string, error) {
+	try := func(useTCP bool) (*turn.Client, func(), net.PacketConn, string, error) {
+		label := "udp"
+		if useTCP {
+			label = "tcp"
+		}
+		pkt, closer, err := dialTurnPacketConn(turnAddr, useTCP)
+		if err != nil {
+			return nil, nil, nil, label, err
+		}
+		tc, err := turn.NewClient(&turn.ClientConfig{
+			STUNServerAddr:         turnAddr,
+			TURNServerAddr:         turnAddr,
+			Conn:                   pkt,
+			Username:               creds.User,
+			Password:               creds.Pass,
+			RequestedAddressFamily: addrFamily,
+			LoggerFactory:          &NullLoggerFactory{},
+		})
+		if err != nil {
+			closer()
+			return nil, nil, nil, label, fmt.Errorf("TURN клиент: %w", err)
+		}
+		if err = tc.Listen(); err != nil {
+			tc.Close()
+			closer()
+			return nil, nil, nil, label, fmt.Errorf("TURN Listen: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			tc.Close()
+			closer()
+			return nil, nil, nil, label, err
+		}
+		relay, err := tc.Allocate()
+		if err != nil {
+			tc.Close()
+			closer()
+			return nil, nil, nil, label, fmt.Errorf("TURN Allocate: %w", err)
+		}
+		return tc, closer, relay, label, nil
+	}
+
+	if preferTCP {
+		tc, closer, relay, label, err := try(true)
+		if err == nil {
+			return tc, closer, relay, label, nil
+		}
+		log.Printf("[TURN] TCP не вышло (%v) — fallback UDP", err)
+		return try(false)
+	}
+	return try(false)
+}
+
 func RunSession(
 	ctx context.Context,
 	tp *TurnParams,
@@ -117,21 +208,7 @@ func RunSession(
 	}
 	turnAddr := net.JoinHostPort(urlhost, urlport)
 
-	// Транспорт: всегда UDP
-	resolved, err := net.ResolveUDPAddr("udp", turnAddr)
-	if err != nil {
-		return false, fmt.Errorf("резолв TURN: %w", err)
-	}
-	c, err := net.DialUDP("udp", nil, resolved)
-	if err != nil {
-		return false, fmt.Errorf("подключение TURN UDP: %w", err)
-	}
-	defer c.Close()
-	_ = c.SetReadBuffer(socketBufSize)
-	_ = c.SetWriteBuffer(socketBufSize)
-	var turnConn net.PacketConn = &connectedUDPConn{c}
-
-	log.Printf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
+	preferTCP := tp.TurnTransport != "udp" // default tcp (как qWDTT 1.4)
 
 	// RequestedAddressFamily
 	var addrFamily turn.RequestedAddressFamily
@@ -141,32 +218,13 @@ func RunSession(
 		addrFamily = turn.RequestedAddressFamilyIPv6
 	}
 
-	// TURN Client (pion/turn/v5)
-	tc, err := turn.NewClient(&turn.ClientConfig{
-		STUNServerAddr:         turnAddr,
-		TURNServerAddr:         turnAddr,
-		Conn:                   turnConn,
-		Username:               creds.User,
-		Password:               creds.Pass,
-		RequestedAddressFamily: addrFamily,
-		LoggerFactory:          &NullLoggerFactory{},
-	})
-	if err != nil {
-		return false, fmt.Errorf("TURN клиент: %w", err)
-	}
-	defer tc.Close()
-
-	if err = tc.Listen(); err != nil {
-		return false, fmt.Errorf("TURN Listen: %w", err)
-	}
-
 	allocStart := time.Now()
 	select {
 	case turnAllocateSem <- struct{}{}:
 	case <-ctx.Done():
 		return false, ctx.Err()
 	}
-	relay, err := tc.Allocate()
+	tc, turnCloser, relay, transportLabel, err := openTurnRelay(ctx, turnAddr, preferTCP, creds, addrFamily)
 	<-turnAllocateSem
 	if err != nil {
 		if isAuthError(err) {
@@ -176,9 +234,13 @@ func RunSession(
 		if strings.Contains(errStr, "Quota") || strings.Contains(errStr, "486") {
 			return false, fmt.Errorf("TURN квота: %w", err)
 		}
-		return false, fmt.Errorf("TURN Allocate: %w", err)
+		return false, err
 	}
+	defer turnCloser()
+	defer tc.Close()
 	defer relay.Close()
+
+	log.Printf("[СЕССИЯ #%d] TURN %s (%s)", sessionID, strings.ToUpper(transportLabel), turnAddr)
 
 	atomic.StoreInt64(&stats.TurnRTTNs, time.Since(allocStart).Nanoseconds())
 
