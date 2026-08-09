@@ -35,6 +35,7 @@ const wgIface = "wg-turn"
 // маршрутизации (туннель пошёл бы сам в себя) и соединение не поднимется.
 var vkTransportCIDRs = []string{
 	"90.156.0.0/16",    // VK TURN
+	"91.231.0.0/16",    // VK Calls TURN (prod: 91.231.135.x:19302)
 	"95.163.0.0/16",    // VK TURN
 	"155.212.192.0/20", // OK/VK (calls.okcdn.ru)
 }
@@ -83,12 +84,20 @@ func clearWGRouteState() {
 	vkRouteMu.Unlock()
 }
 
-// markVKExcludeInstalled — вызывается после установки прямых VK-маршрутов на коннекте.
-// По умолчанию веб-подсети напрямую (VK direct).
+// markVKExcludeInstalled — после установки полных exclude (transport+web).
+// По умолчанию веб напрямую; если vkThroughTunnel — webDirect сбросит applyVKRouting.
 func markVKExcludeInstalled() {
 	vkRouteMu.Lock()
 	vkExcludeInstalled = true
 	vkWebDirect = true
+	vkRouteMu.Unlock()
+}
+
+// markTransportDirectInstalled — только TURN/transport напрямую, веб через туннель.
+func markTransportDirectInstalled() {
+	vkRouteMu.Lock()
+	vkExcludeInstalled = true
+	vkWebDirect = false
 	vkRouteMu.Unlock()
 }
 

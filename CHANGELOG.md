@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.265] — 2026-08-09
+
+### Fix — TURN hairpin 91.231 + mass relay EOF
+В `vkTransportCIDRs` не было `91.231.0.0/16` (VK Calls TURN) → после подъёма
+TUN воркеры ловили EOF «VK обновил relay» за 1–10s. Excludes ставятся до
+CreateTUN; остальные воркеры ждут TUN-ready; live update маршрутов при новых
+TURN IP; RAW capped at 9 воркеров (sticky не выигрывает от 18).
+
 ## [0.3.264] — 2026-08-09
 
 ### Fix — keepalive WriteDeadline убивал воркеры ~15s

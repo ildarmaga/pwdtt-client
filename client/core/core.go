@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Config — все параметры запуска (профиль + runtime).
@@ -73,25 +74,75 @@ type Core struct {
 	once              sync.Once
 	turnIPsMu         sync.Mutex
 	turnIPs           []string
+	tunReady          chan struct{}
+	tunReadyOnce      sync.Once
+	onTurnIPsUpdated  func([]string)
 }
 
 // AddTurnIPs регистрирует TURN IP-адреса (без порта) для исключения из туннеля.
 func (c *Core) AddTurnIPs(urls []string) {
 	c.turnIPsMu.Lock()
-	defer c.turnIPsMu.Unlock()
 	seen := make(map[string]struct{}, len(c.turnIPs))
 	for _, ip := range c.turnIPs {
 		seen[ip] = struct{}{}
 	}
+	changed := false
 	for _, u := range urls {
-		host, _, _ := net.SplitHostPort(strings.TrimPrefix(u, "turn:"))
+		host := strings.TrimPrefix(u, "turn:")
+		host = strings.TrimPrefix(host, "turns:")
+		if i := strings.IndexByte(host, '?'); i >= 0 {
+			host = host[:i]
+		}
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.TrimSpace(host)
 		if host == "" {
-			host = u
+			continue
 		}
 		if _, ok := seen[host]; !ok {
 			seen[host] = struct{}{}
 			c.turnIPs = append(c.turnIPs, host)
+			changed = true
 		}
+	}
+	ips := append([]string(nil), c.turnIPs...)
+	cb := c.onTurnIPsUpdated
+	c.turnIPsMu.Unlock()
+	if changed && cb != nil {
+		cb(ips)
+	}
+}
+
+// SetOnTurnIPsUpdated — callback при новых TURN IP (live exclude routes).
+func (c *Core) SetOnTurnIPsUpdated(fn func([]string)) {
+	c.turnIPsMu.Lock()
+	c.onTurnIPsUpdated = fn
+	c.turnIPsMu.Unlock()
+}
+
+// NotifyTunReady — TUN/маршруты готовы; остальные воркеры могут dial TURN.
+func (c *Core) NotifyTunReady() {
+	if c.tunReady == nil {
+		return
+	}
+	c.tunReadyOnce.Do(func() { close(c.tunReady) })
+}
+
+// WaitTunReady ждёт NotifyTunReady или timeout.
+func (c *Core) WaitTunReady(ctx context.Context, timeout time.Duration) bool {
+	if c.tunReady == nil {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-c.tunReady:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
 	}
 }
 
@@ -119,6 +170,7 @@ func New(cfg Config) *Core {
 		cfg:               cfg,
 		CaptchaResultChan: make(chan string, 1),
 		events:            make(chan Event, 256),
+		tunReady:          make(chan struct{}),
 	}
 	c.captchaMode.Store(normalizeCaptchaMode(cfg.CaptchaMode))
 	return c
@@ -156,12 +208,16 @@ func (c *Core) Start() (<-chan Event, error) {
 		return nil, fmt.Errorf("derive wrap key: %w", err)
 	}
 
-	// Нормализуем количество воркеров
-	n := NormalizeWorkers(c.cfg.Workers)
-
 	tunnelMode := c.cfg.TunnelMode
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
+	}
+
+	// Нормализуем количество воркеров. RAW sticky: >9 только плодит churn TURN.
+	n := NormalizeWorkers(c.cfg.Workers)
+	if tunnelMode == "raw" && n > workersPerGroup {
+		log.Printf("[CORE] RAW: воркеры %d → %d (меньше churn VK TURN)", n, workersPerGroup)
+		n = workersPerGroup
 	}
 	mtu := c.cfg.MTU
 	if mtu <= 0 {
@@ -286,13 +342,20 @@ func (c *Core) Start() (<-chan Event, error) {
 				cc = configCh
 			}
 
+			waitTun := func(ctx context.Context) bool {
+				ok := c.WaitTunReady(ctx, 20*time.Second)
+				if !ok {
+					log.Printf("[ГРУППА] TUN не готов за 20s — воркер не стартует")
+				}
+				return ok
+			}
 			wg.Add(1)
 			go func(groupID int, isFirstGroup bool, configChan chan<- string, workerIds []int, startHashIndex int, waitR <-chan struct{}, sigR chan<- struct{}) {
 				defer wg.Done()
 				WorkerGroup(ctx, groupID, startHashIndex, tp, peer, disp, localPort,
 					isFirstGroup, configChan, sharedRawGate, workerIds, &c.pauseFlag,
 					c.cfg.DeviceID, c.cfg.Password, stats, waitR, sigR,
-					c.CaptchaResultChan, c.getCaptchaMode, emitCaptchaRequest, c.AddTurnIPs)
+					c.CaptchaResultChan, c.getCaptchaMode, emitCaptchaRequest, c.AddTurnIPs, waitTun)
 			}(gID, isFirst, cc, ids, g, myWaitReady, mySignalReady)
 		}
 

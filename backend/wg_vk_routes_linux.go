@@ -14,6 +14,8 @@ var (
 
 func installVKExcludeRoutes(gw string) error { return addVKRoutes(gw, vkExcludeCIDRs) }
 
+func installVKTransportRoutes(gw string) error { return addVKRoutes(gw, vkTransportCIDRs) }
+
 func uninstallVKExcludeRoutes() error { return delVKRoutes(vkExcludeCIDRs) }
 
 // addVKRoutes ставит прямые маршруты для cidrs через шлюз gw.

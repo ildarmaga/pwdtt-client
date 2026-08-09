@@ -763,6 +763,9 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	}
 
 	c := core.New(cfg)
+	c.SetOnTurnIPsUpdated(func(ips []string) {
+		EnsureTurnDirectRoutes(ips)
+	})
 	events, err := c.Start()
 	if err != nil {
 		return nil, fmt.Errorf("core start: %w", err)
@@ -835,6 +838,8 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 				} else {
 					connected = true
 					o.tunnelUp = true
+					EnsureTurnDirectRoutes(sess.c.GetTurnIPs())
+					sess.c.NotifyTunReady()
 					if err := applyVKRouting(); err != nil {
 						runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[%s] VK-маршрутизация: %v", tag, err))
 					} else if VKThroughTunnel() {

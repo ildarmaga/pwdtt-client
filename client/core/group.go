@@ -80,6 +80,7 @@ func WorkerGroup(
 	getCaptchaMode func() string,
 	emitCaptchaRequest func(mode, redirectURI, sessionToken string),
 	onTurnURLs func(urls []string),
+	waitTunReady func(ctx context.Context) bool,
 ) {
 	// Каскадный запуск: ждем свою очередь
 	if waitReady != nil {
@@ -288,6 +289,9 @@ func WorkerGroup(
 		credsMu.Unlock()
 		lastCredRefresh.Store(time.Now().Unix())
 		log.Printf("[TURN] Слот %d: креды обновлены после %s, TURN urls=%d", slot, reason, len(urls))
+		if onTurnURLs != nil && len(urls) > 0 {
+			onTurnURLs(urls)
+		}
 		return true
 	}
 
@@ -328,13 +332,20 @@ func WorkerGroup(
 		}
 		credSlot := i % poolSize
 
-		go func(wid int, slot int, delay time.Duration) {
+		go func(wid int, slot int, delay time.Duration, idx int) {
 			defer wg.Done()
 
 			if delay > 0 {
 				select {
 				case <-time.After(delay):
 				case <-ctx.Done():
+					return
+				}
+			}
+
+			// Первый воркер первой группы поднимает RAWCONF/TUN; остальные ждут excludes.
+			if !(getConfig && idx == 0) && waitTunReady != nil {
+				if !waitTunReady(ctx) {
 					return
 				}
 			}
@@ -482,7 +493,7 @@ func WorkerGroup(
 					return
 				}
 			}
-		}(wid, credSlot, workerDelay)
+		}(wid, credSlot, workerDelay, i)
 	}
 
 	wg.Wait()

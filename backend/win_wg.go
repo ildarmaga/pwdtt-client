@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,6 +175,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 func applyRawConfig(conf string, turnIPs []string) error {
 	if SoftReconnectPreserve() && activeTun != nil && activeDevice == nil {
 		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		EnsureTurnDirectRoutes(turnIPs)
 		return nil
 	}
 	teardownWG()
@@ -187,6 +189,20 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		return err
 	}
 	addr := ip + "/16"
+
+	// Excludes ДО CreateTUN: иначе split-default ловит TURN (особенно 91.231/16).
+	gw := defaultGateway()
+	rememberWGGateway(gw)
+	if gw != "" {
+		desktoptun.RememberPhysicalEgress(gw, desktoptun.DefaultLocalIPv4())
+		installTurnHostRoutes(gw, turnIPs)
+		if err := installVKTransportRoutes(gw); err != nil {
+			log.Printf("[RAW] transport excludes: %v", err)
+		}
+		markTransportDirectInstalled()
+	} else {
+		log.Printf("[RAW] WARN: нет default gateway — TURN excludes не установлены")
+	}
 
 	tunDev, err := tun.CreateTUN(wgIface, mtu)
 	if err != nil {
@@ -202,25 +218,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		log.Printf("[RAW] netsh address: %v", err)
 	}
 
-	gw := defaultGateway()
-	rememberWGGateway(gw)
+	// Повтор после churn интерфейса.
 	if gw != "" {
-		desktoptun.RememberPhysicalEgress(gw, desktoptun.DefaultLocalIPv4())
-		var excludes []string
-		for _, tip := range turnIPs {
-			excludes = append(excludes, tip+"/32")
-		}
-		for _, cidr := range excludes {
-			rip, rmask, err := parseCIDR(cidr)
-			if err != nil {
-				continue
-			}
-			_ = run("route", "add", rip, "mask", rmask, gw)
-		}
-		activeExcludeRoutes = excludes
-		if err := installVKExcludeRoutes(gw); err == nil {
-			markVKExcludeInstalled()
-		}
+		installTurnHostRoutes(gw, turnIPs)
+		_ = installVKTransportRoutes(gw)
 	}
 
 	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
@@ -234,6 +235,48 @@ func applyRawConfig(conf string, turnIPs []string) error {
 
 	log.Printf("[RAW] Туннель %s поднят (ip=%s mtu=%d, без WireGuard)", wgIface, ip, mtu)
 	return nil
+}
+
+func installTurnHostRoutes(gw string, turnIPs []string) {
+	if gw == "" {
+		return
+	}
+	for _, tip := range turnIPs {
+		host := strings.TrimSpace(tip)
+		if host == "" || strings.Contains(host, "/") {
+			continue
+		}
+		if net.ParseIP(host) == nil {
+			continue // только IPv4/IPv6 литералы; hostname не в route add
+		}
+		cidr := host + "/32"
+		rip, rmask, err := parseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if run("route", "add", rip, "mask", rmask, gw) == nil {
+			activeExcludeRoutes = append(activeExcludeRoutes, cidr)
+		}
+	}
+}
+
+// EnsureTurnDirectRoutes — live update /32 + transport CIDR при новых TURN IP.
+func EnsureTurnDirectRoutes(turnIPs []string) {
+	if activeTun == nil && activeDevice == nil {
+		return
+	}
+	gw := defaultGateway()
+	if gw == "" {
+		vkRouteMu.Lock()
+		gw = wgGateway
+		vkRouteMu.Unlock()
+	}
+	if gw == "" {
+		return
+	}
+	rememberWGGateway(gw)
+	installTurnHostRoutes(gw, turnIPs)
+	_ = installVKTransportRoutes(gw)
 }
 
 func teardownWG() {

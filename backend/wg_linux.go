@@ -111,6 +111,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 func applyRawConfig(conf string, turnIPs []string) error {
 	if SoftReconnectPreserve() && activeRawTun != nil && wgTunnelActive() {
 		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		EnsureTurnDirectRoutes(turnIPs)
 		return nil
 	}
 	teardownWG()
@@ -146,14 +147,18 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	gw := defaultGateway()
 	rememberWGGateway(gw)
 	if gw != "" {
+		// Transport excludes до split-default (91.231 и др.).
 		for _, tip := range turnIPs {
+			if net.ParseIP(tip) == nil {
+				continue
+			}
 			cidr := tip + "/32"
 			if run("ip", "route", "add", cidr, "via", gw) == nil {
 				routes = append(routes, cidr)
 			}
 		}
-		if err := installVKExcludeRoutes(gw); err == nil {
-			markVKExcludeInstalled()
+		if err := installVKTransportRoutes(gw); err == nil {
+			markTransportDirectInstalled()
 		}
 		for _, dns := range localDNSServers() {
 			cidr := dns + "/32"
@@ -179,6 +184,35 @@ func applyRawConfig(conf string, turnIPs []string) error {
 
 	log.Printf("[RAW] Туннель %s поднят (ip=%s mtu=%d, без WireGuard)", wgIface, ip, mtu)
 	return nil
+}
+
+// EnsureTurnDirectRoutes — live update TURN /32 + transport CIDR.
+func EnsureTurnDirectRoutes(turnIPs []string) {
+	if !wgTunnelActive() && activeRawTun == nil {
+		return
+	}
+	gw := defaultGateway()
+	if gw == "" {
+		vkRouteMu.Lock()
+		gw = wgGateway
+		vkRouteMu.Unlock()
+	}
+	if gw == "" {
+		return
+	}
+	rememberWGGateway(gw)
+	activeRoutesMu.Lock()
+	defer activeRoutesMu.Unlock()
+	for _, tip := range turnIPs {
+		if net.ParseIP(tip) == nil {
+			continue
+		}
+		cidr := tip + "/32"
+		if run("ip", "route", "add", cidr, "via", gw) == nil {
+			activeRoutes = append(activeRoutes, cidr)
+		}
+	}
+	_ = installVKTransportRoutes(gw)
 }
 
 func teardownWG() {
