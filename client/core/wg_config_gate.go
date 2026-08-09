@@ -9,15 +9,16 @@ import (
 
 // wgConfigGate — один конфиг на группу (WG GETCONF или RAW RAWCONF).
 type wgConfigGate struct {
-	ch         chan<- string
-	tunnelMode string // wg|raw
-	mtu        int
-	sent       atomic.Int32
-	inFlight   atomic.Int32
-	primaryIP  atomic.Value // net.IP (IPv4) — адрес TUN с первого RAWCONF
+	ch           chan<- string
+	tunnelMode   string // wg|raw
+	mtu          int
+	sent         atomic.Int32
+	inFlight     atomic.Int32
+	primaryIP    atomic.Value // net.IP (IPv4) — адрес TUN с первого RAWCONF
+	requireChunk bool
 }
 
-func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string) *wgConfigGate {
+func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string, requireChunk bool) *wgConfigGate {
 	if tunnelMode != "raw" {
 		tunnelMode = "wg"
 	}
@@ -26,7 +27,7 @@ func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint s
 	if ch == nil && tunnelMode != "raw" {
 		return nil
 	}
-	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu}
+	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu, requireChunk: requireChunk}
 	if tunnelMode == "raw" {
 		if ip := net.ParseIP(strings.TrimSpace(primaryHint)); ip != nil {
 			if ip4 := ip.To4(); ip4 != nil {
@@ -73,9 +74,9 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 	}
 
 	if g.tunnelMode == "raw" {
-		conf, err := RequestRawConfig(conn, deviceID, password, g.mtu)
+		conf, err := RequestRawConfigCapabilities(conn, deviceID, password, g.mtu, g.requireChunk)
 		if err != nil {
-			if strings.Contains(err.Error(), "FATAL_AUTH") {
+			if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "FATAL_RAW_CAP") {
 				return false, nil, err
 			}
 			log.Printf("[ВОРКЕР #%d] Ошибка RAWCONF: %v", sessionID, err)

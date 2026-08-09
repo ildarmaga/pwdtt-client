@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,18 +33,31 @@ func putPktBuf(b []byte) {
 
 const (
 	returnChBuf = 1024
+	// rawReturnChBuf — глубже downlink queue для RAW (UDP TURN иначе дропает при backpressure).
+	rawReturnChBuf      = 4096
+	rawChunkReturnChBuf = 512
 	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
-	// rawWorkerSendBuf — очередь на воркер в RAW sticky.
-	rawWorkerSendBuf = 2048
-	flowAffTTL       = 3 * time.Minute
-	flowAffMax       = 8192
+	// rawWorkerSendBuf — очередь на воркер в RAW sticky (глубже = меньше drop ACK).
+	rawWorkerSendBuf      = 8192
+	rawChunkWorkerSendBuf = 128
+	rawPrioBuf            = 32
+	rawPrioThreshold      = 128
+	rawChunkMaxDwell      = 15 * time.Millisecond
+	flowAffTTL            = 3 * time.Minute
+	flowAffMax            = 8192
 )
 
 type WorkerSlot struct {
 	ID        int
 	SendCh    chan []byte // RAW sticky: личный канал; WG/MP: nil → общий Dispatcher.SendCh
+	PrioCh    chan []byte // RAW chunk: ACK/маленькие пакеты
 	PathRTTMs atomic.Int64
+}
+
+type rawFramePacket struct {
+	seq uint32
+	ip  []byte
 }
 
 type Dispatcher struct {
@@ -55,40 +66,58 @@ type Dispatcher struct {
 	mu         sync.Mutex
 	workers    []*WorkerSlot
 	// flowAff: legacy sticky (выкл. при rawMP).
-	flowAff map[uint64]int
-	flowExp map[uint64]int64
-	SendCh    chan []byte
-	ReturnCh  chan []byte
-	rawSticky bool // legacy; при rawMP=false
-	rawMP     bool // RAW multipath + RA framing/reorder
-	rawSeq    *rawSeq
-	rawReord  *rawReorder
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	stats     *Stats
+	flowAff    map[uint64]int
+	flowExp    map[uint64]int64
+	SendCh     chan []byte
+	ReturnCh   chan []byte
+	rawSticky  bool // legacy; при rawMP=false
+	rawChunked bool // adaptive chunks + ACK priority, без RA framing
+	rawMP      bool // RAW multipath + RA framing/reorder
+	rawSeq     *rawSeq
+	rawReord   *rawReorder
+	rawFrameCh chan rawFramePacket
+	nextPick   uint32 // round-robin для новых sticky flows
+	rrIndex    int
+	rrCount    int
+	lastPktAt  time.Time
+	chunkStart time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	stats      *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode bool) *Dispatcher {
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode, rawMultipath, rawChunked bool) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
-	// По умолчанию sticky (один TCP = один TURN). Multipath: RAW_MULTIPATH=1.
-	useMP := rawMode && strings.TrimSpace(os.Getenv("RAW_MULTIPATH")) == "1"
+	useMP := rawMode && rawMultipath
+	useChunked := rawMode && rawChunked && !useMP
+	retBuf := returnChBuf
+	if rawMode {
+		retBuf = rawReturnChBuf
+	}
+	if useChunked {
+		retBuf = rawChunkReturnChBuf
+	}
 	d := &Dispatcher{
-		localConn: localConn,
-		SendCh:    make(chan []byte, sendChBuf),
-		ReturnCh:  make(chan []byte, returnChBuf),
-		rawSticky: rawMode && !useMP,
-		rawMP:     useMP,
-		flowAff:   make(map[uint64]int),
-		flowExp:   make(map[uint64]int64),
-		ctx:       dctx,
-		cancel:    dcancel,
-		stats:     stats,
+		localConn:  localConn,
+		SendCh:     make(chan []byte, sendChBuf),
+		ReturnCh:   make(chan []byte, retBuf),
+		rawSticky:  rawMode && !useMP && !useChunked,
+		rawChunked: useChunked,
+		rawMP:      useMP,
+		flowAff:    make(map[uint64]int),
+		flowExp:    make(map[uint64]int64),
+		ctx:        dctx,
+		cancel:     dcancel,
+		stats:      stats,
 	}
 	if d.rawMP {
 		d.rawSeq = &rawSeq{}
 		d.rawReord = newRawReorder()
-		log.Printf("[ДИСП] RAW multipath (RA-frame reorder, RAW_MULTIPATH=1)")
+		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
+		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
+	} else if d.rawChunked {
+		log.Printf("[ДИСП] RAW adaptive chunks + ACK priority")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -96,6 +125,10 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 	d.wg.Add(2)
 	go d.readLoop()
 	go d.writeLoop()
+	if d.rawMP {
+		d.wg.Add(1)
+		go d.rawFrameLoop()
+	}
 	return d
 }
 
@@ -106,8 +139,15 @@ func (d *Dispatcher) Shutdown() {
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
-	if d.rawSticky && !d.rawMP && w.SendCh == nil {
-		w.SendCh = make(chan []byte, rawWorkerSendBuf)
+	if (d.rawSticky || d.rawChunked) && !d.rawMP && w.SendCh == nil {
+		size := rawWorkerSendBuf
+		if d.rawChunked {
+			size = rawChunkWorkerSendBuf
+		}
+		w.SendCh = make(chan []byte, size)
+	}
+	if d.rawChunked && w.PrioCh == nil {
+		w.PrioCh = make(chan []byte, rawPrioBuf)
 	}
 	d.workers = append(d.workers, w)
 	count := len(d.workers)
@@ -189,11 +229,7 @@ func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
 		delete(d.flowExp, key)
 	}
 
-	// Новый поток → воркер с мин. очередью и RTT (не слепой hash%N на плохой TURN).
-	w := d.pickBestWorkerLocked()
-	if w == nil {
-		w = d.workers[flowHash(pkt)%uint32(n)]
-	}
+	w := d.pickAvailableWorkerLocked(0)
 	if len(d.flowAff) >= flowAffMax {
 		for k, exp := range d.flowExp {
 			if now > exp {
@@ -201,10 +237,38 @@ func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
 				delete(d.flowExp, k)
 			}
 		}
+		if len(d.flowAff) >= flowAffMax {
+			for k := range d.flowAff {
+				delete(d.flowAff, k)
+				delete(d.flowExp, k)
+				break
+			}
+		}
 	}
 	d.flowAff[key] = w.ID
 	d.flowExp[key] = now + int64(flowAffTTL)
 	return w
+}
+
+func (d *Dispatcher) pickAvailableWorkerLocked(excludeID int) *WorkerSlot {
+	n := len(d.workers)
+	if n == 0 {
+		return nil
+	}
+	start := int(d.nextPick % uint32(n))
+	d.nextPick++
+	var best *WorkerSlot
+	bestQueue := int(^uint(0) >> 1)
+	for offset := 0; offset < n; offset++ {
+		w := d.workers[(start+offset)%n]
+		if w == nil || w.ID == excludeID || w.SendCh == nil {
+			continue
+		}
+		if queued := len(w.SendCh); queued < bestQueue {
+			best, bestQueue = w, queued
+		}
+	}
+	return best
 }
 
 func (d *Dispatcher) pickBestWorkerLocked() *WorkerSlot {
@@ -243,11 +307,104 @@ func (d *Dispatcher) dispatchSticky(pkt []byte) {
 		putPktBuf(pkt)
 		return
 	}
+	// Не блокируем readLoop/ACK-clock: при полном SendCh дропаем пакет.
+	// Иначе DTLS Write backpressure стопорит TUN→uplink и схлопывает TCP cwnd (~0.03 Mbit).
 	select {
 	case ch <- pkt:
 		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
 	case <-d.ctx.Done():
 		putPktBuf(pkt)
+	default:
+		// Established sticky flow нельзя мигрировать без sequence framing:
+		// старые пакеты ещё могут находиться в очереди исходного path.
+		putPktBuf(pkt)
+		if d.stats != nil {
+			atomic.AddInt64(&d.stats.DroppedUp, 1)
+		}
+	}
+}
+
+func rawChunkSizeFor(pktSize int) int {
+	switch {
+	case pktSize > 1100:
+		return 64
+	case pktSize >= 701:
+		return 24
+	case pktSize >= 301:
+		return 8
+	case pktSize >= 101:
+		return 3
+	default:
+		return 1
+	}
+}
+
+func (d *Dispatcher) dispatchChunked(pkt []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := len(d.workers)
+	if n == 0 {
+		putPktBuf(pkt)
+		return
+	}
+	now := time.Now()
+	if !d.lastPktAt.IsZero() && now.Sub(d.lastPktAt) > 10*time.Millisecond {
+		d.rrIndex = (d.rrIndex + 1) % n
+		d.rrCount = 0
+		d.chunkStart = now
+	}
+	d.lastPktAt = now
+
+	if len(pkt) <= rawPrioThreshold {
+		start := d.rrIndex % n
+		for i := 0; i < n; i++ {
+			w := d.workers[(start+i)%n]
+			if w == nil || w.PrioCh == nil {
+				continue
+			}
+			select {
+			case w.PrioCh <- pkt:
+				atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
+				return
+			default:
+			}
+		}
+	}
+
+	if d.chunkStart.IsZero() {
+		d.chunkStart = now
+	} else if now.Sub(d.chunkStart) >= rawChunkMaxDwell {
+		d.rrIndex = (d.rrIndex + 1) % n
+		d.rrCount = 0
+		d.chunkStart = now
+	}
+	chunk := rawChunkSizeFor(len(pkt))
+	start := d.rrIndex % n
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		w := d.workers[idx]
+		if w == nil || w.SendCh == nil {
+			continue
+		}
+		select {
+		case w.SendCh <- pkt:
+			d.rrIndex = idx
+			d.rrCount++
+			if d.rrCount >= chunk {
+				d.rrIndex = (idx + 1) % n
+				d.rrCount = 0
+				d.chunkStart = now
+			}
+			atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
+			return
+		default:
+		}
+	}
+	d.rrIndex = (start + 1) % n
+	d.rrCount = 0
+	putPktBuf(pkt)
+	if d.stats != nil {
+		atomic.AddInt64(&d.stats.DroppedUp, 1)
 	}
 }
 
@@ -277,6 +434,10 @@ func (d *Dispatcher) readLoop() {
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
 
+		if d.rawChunked {
+			d.dispatchChunked(pkt)
+			continue
+		}
 		if d.rawSticky {
 			d.dispatchSticky(pkt)
 			continue
@@ -316,6 +477,46 @@ func (d *Dispatcher) writeLoop() {
 			}
 			atomic.AddInt64(&d.stats.TotalBytesDown, int64(len(pkt)))
 			putPktBuf(pkt)
+		}
+	}
+}
+
+func (d *Dispatcher) enqueueRawFrame(seq uint32, ip []byte) bool {
+	pkt := append([]byte(nil), ip...)
+	select {
+	case d.rawFrameCh <- rawFramePacket{seq: seq, ip: pkt}:
+		return true
+	case <-d.ctx.Done():
+		return false
+	}
+}
+
+func (d *Dispatcher) rawFrameLoop() {
+	defer d.wg.Done()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deliver := func(pkts [][]byte) bool {
+		for _, pkt := range pkts {
+			select {
+			case d.ReturnCh <- pkt:
+			case <-d.ctx.Done():
+				return false
+			}
+		}
+		return true
+	}
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case frame := <-d.rawFrameCh:
+			if !deliver(d.rawReord.Push(frame.seq, frame.ip)) {
+				return
+			}
+		case <-ticker.C:
+			if !deliver(d.rawReord.FlushExpired()) {
+				return
+			}
 		}
 	}
 }

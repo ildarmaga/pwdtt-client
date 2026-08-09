@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,20 +14,20 @@ import (
 
 // Config — все параметры запуска (профиль + runtime).
 type Config struct {
-	PeerAddr    string   // -peer
-	Password    string   // -password
-	Hashes      []string // -vk (уже распарсенные)
-	Listen      string   // -listen, default "127.0.0.1:9000"
-	TurnHost    string   // -turn
-	TurnPort    string   // -port
-	DeviceID    string   // -device-id
-	Workers     int      // -n
-	CaptchaMode string   // -captcha-mode
-	MTU         int      // 0 = default 1380
-	ObfsMode       string // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode     string // wg|raw — raw = IP over DTLS без WireGuard
-	TurnTransport  string // tcp|udp — канал клиент↔TURN (default tcp)
-	RawPrimaryIP   string // soft-reconnect: IP сохранённого TUN для rewrite
+	PeerAddr      string   // -peer
+	Password      string   // -password
+	Hashes        []string // -vk (уже распарсенные)
+	Listen        string   // -listen, default "127.0.0.1:9000"
+	TurnHost      string   // -turn
+	TurnPort      string   // -port
+	DeviceID      string   // -device-id
+	Workers       int      // -n
+	CaptchaMode   string   // -captcha-mode
+	MTU           int      // 0 = default 1380
+	ObfsMode      string   // audio|video — RTP маскировка (PT 111 / 96)
+	TunnelMode    string   // wg|raw — raw = IP over DTLS без WireGuard
+	TurnTransport string   // tcp|udp — канал клиент↔TURN (default tcp)
+	RawPrimaryIP  string   // soft-reconnect: IP сохранённого TUN для rewrite
 }
 
 // EventType — тип события от ядра.
@@ -77,6 +78,28 @@ type Core struct {
 	tunReady          chan struct{}
 	tunReadyOnce      sync.Once
 	onTurnIPsUpdated  func([]string)
+}
+
+func rawMultipathEnabled(tunnelMode, turnTransport string) bool {
+	return false
+}
+
+func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
+	return tunnelMode == "raw" && (turnTransport == "udp" || turnTransport == "tcp")
+}
+
+const rawDirectPortOffset = 3
+
+func rawDirectPeerAddr(peer string) (string, error) {
+	host, portText, err := net.SplitHostPort(peer)
+	if err != nil {
+		return "", fmt.Errorf("RAW peer %q: %w", peer, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535-rawDirectPortOffset {
+		return "", fmt.Errorf("RAW peer port %q is invalid", portText)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port+rawDirectPortOffset)), nil
 }
 
 // AddTurnIPs регистрирует TURN IP-адреса (без порта) для исключения из туннеля.
@@ -196,7 +219,20 @@ func (c *Core) Start() (<-chan Event, error) {
 		return nil, fmt.Errorf("Password is required")
 	}
 
-	peer, err := net.ResolveUDPAddr("udp", c.cfg.PeerAddr)
+	tunnelMode := c.cfg.TunnelMode
+	if tunnelMode != "raw" {
+		tunnelMode = "wg"
+	}
+	peerAddr := c.cfg.PeerAddr
+	if tunnelMode == "raw" {
+		var err error
+		peerAddr, err = rawDirectPeerAddr(peerAddr)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+	}
+	peer, err := net.ResolveUDPAddr("udp", peerAddr)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("resolve peer: %w", err)
@@ -208,11 +244,6 @@ func (c *Core) Start() (<-chan Event, error) {
 		return nil, fmt.Errorf("derive wrap key: %w", err)
 	}
 
-	tunnelMode := c.cfg.TunnelMode
-	if tunnelMode != "raw" {
-		tunnelMode = "wg"
-	}
-
 	n := NormalizeWorkers(c.cfg.Workers)
 	mtu := c.cfg.MTU
 	if mtu <= 0 {
@@ -222,6 +253,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	turnTransport := c.cfg.TurnTransport
 	if turnTransport != "udp" {
 		turnTransport = "tcp"
+	}
+	// RAW·UDP: запас под DTLS+WRAP(RTP+AEAD)+TURN ChannelData на datagram path.
+	// 1280 часто не проходит → bulk download мрёт после мелких запросов (ipify ок, CF нет).
+	if tunnelMode == "raw" && turnTransport == "udp" && mtu > 1160 {
+		mtu = 1160
 	}
 
 	tp := &TurnParams{
@@ -274,14 +310,22 @@ func (c *Core) Start() (<-chan Event, error) {
 	)
 
 	// RAW: multipath RR + RA-frame reorder (не sticky). Sticky оставлял 1 TURN ≈ 1–2 Мбит.
-	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw")
+	rawMode := tunnelMode == "raw"
+	disp := NewDispatcher(
+		ctx,
+		localConn,
+		stats,
+		rawMode,
+		rawMultipathEnabled(tunnelMode, turnTransport),
+		rawChunkedEnabled(tunnelMode, turnTransport),
+	)
 
 	configCh := make(chan string, 1)
 	// RAW: один gate на все группы — иначе группа #2 без configCh → nil gate →
 	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
 	var sharedRawGate *wgConfigGate
 	if tunnelMode == "raw" {
-		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP)
+		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true)
 	}
 
 	go func() {

@@ -14,8 +14,9 @@ const (
 	rawFrameMagic1 = 'A'
 	rawFrameHeader = 6 // magic(2)+seq(4)
 	rawReorderMax  = 2048
-	// Дырка >40ms → skip (3s убивало TCP cwnd на multipath TURN).
-	rawReorderStallTTL = 40 * time.Millisecond
+	// TURN paths на реальном ПК имеют 170–370 ms RTT. 40 ms преждевременно
+	// скипал пакеты с более медленного worker и создавал искусственную потерю.
+	rawReorderStallTTL = 500 * time.Millisecond
 )
 
 func rawFrameEncode(seq uint32, ip []byte, dst []byte) []byte {
@@ -85,7 +86,18 @@ func (r *rawReorder) Push(seq uint32, ip []byte) [][]byte {
 		r.waitSince = time.Time{}
 	}
 	r.buf[seq] = append([]byte(nil), ip...)
+	return r.drainLocked(time.Now(), false)
+}
 
+// FlushExpired releases a stalled tail even when no newer packet arrives.
+// Push-only timeout handling left DNS and short TCP exchanges stuck forever.
+func (r *rawReorder) FlushExpired() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drainLocked(time.Now(), true)
+}
+
+func (r *rawReorder) drainLocked(now time.Time, timerTick bool) [][]byte {
 	var out [][]byte
 	for {
 		if p, ok := r.buf[r.next]; ok {
@@ -100,12 +112,11 @@ func (r *rawReorder) Push(seq uint32, ip []byte) [][]byte {
 			break
 		}
 		// ждём дырку; аварийный skip только после stall TTL
-		now := time.Now()
 		if r.waitSince.IsZero() {
 			r.waitSince = now
 			break
 		}
-		if now.Sub(r.waitSince) < rawReorderStallTTL {
+		if !timerTick || now.Sub(r.waitSince) < rawReorderStallTTL {
 			break
 		}
 		// skip hole → ближайший buffered seq

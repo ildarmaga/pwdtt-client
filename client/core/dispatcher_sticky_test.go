@@ -28,7 +28,7 @@ func newTestDispatcher(t *testing.T, rawSticky bool) (*Dispatcher, net.PacketCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := NewDispatcher(ctx, pc, NewStats(), rawSticky)
+	d := NewDispatcher(ctx, pc, NewStats(), rawSticky, false, false)
 	t.Cleanup(func() {
 		cancel()
 		_ = pc.Close()
@@ -48,7 +48,8 @@ func newTestDispatcher(t *testing.T, rawSticky bool) (*Dispatcher, net.PacketCon
 
 func TestFlowHashStable(t *testing.T) {
 	pkt := tcpPkt(3, 1234, 443)
-	if flowHash(pkt) != flowHash(pkt) {
+	copyPkt := append([]byte(nil), pkt...)
+	if flowHash(pkt) != flowHash(copyPkt) {
 		t.Fatal("unstable")
 	}
 }
@@ -115,6 +116,35 @@ func TestRawStickySpreadsDifferentFlows(t *testing.T) {
 	}
 }
 
+func TestRawStickySpreadsFlowsWhenQueuesDrain(t *testing.T) {
+	d := &Dispatcher{
+		rawSticky: true,
+		stats:     NewStats(),
+		ctx:       context.Background(),
+		flowAff:   make(map[uint64]int),
+		flowExp:   make(map[uint64]int64),
+	}
+	for id := 1; id <= 4; id++ {
+		d.workers = append(d.workers, &WorkerSlot{ID: id, SendCh: make(chan []byte, 1)})
+	}
+	hit := make(map[int]bool)
+	for sport := uint16(2000); sport < 2016; sport++ {
+		pkt := tcpPkt(1, sport, 443)
+		d.dispatchSticky(pkt)
+		for _, w := range d.workers {
+			select {
+			case queued := <-w.SendCh:
+				putPktBuf(queued)
+				hit[w.ID] = true
+			default:
+			}
+		}
+	}
+	if len(hit) != len(d.workers) {
+		t.Fatalf("drained queues must not pin every new flow to one worker: hit=%v", hit)
+	}
+}
+
 func TestRawStickyRegisterCreatesSendCh(t *testing.T) {
 	d, _ := newTestDispatcher(t, true)
 	if !d.rawSticky {
@@ -154,5 +184,31 @@ func TestRawStickyRebindAfterUnregister(t *testing.T) {
 	}
 	if len(other.SendCh) != 1 {
 		t.Fatalf("after unregister want rebind to remaining worker, got %d", len(other.SendCh))
+	}
+}
+
+func TestRawStickyDoesNotMigrateWhenAffineQueueIsFull(t *testing.T) {
+	d := &Dispatcher{
+		rawSticky: true,
+		stats:     NewStats(),
+		ctx:       context.Background(),
+		flowAff:   make(map[uint64]int),
+		flowExp:   make(map[uint64]int64),
+	}
+	w1 := &WorkerSlot{ID: 1, SendCh: make(chan []byte, 1)}
+	w2 := &WorkerSlot{ID: 2, SendCh: make(chan []byte, 1)}
+	d.workers = []*WorkerSlot{w1, w2}
+	pkt := tcpPkt(1, 10001, 443)
+	key := flowKey(pkt)
+	d.flowAff[key] = w1.ID
+	d.flowExp[key] = time.Now().Add(time.Minute).UnixNano()
+	w1.SendCh <- tcpPkt(1, 9999, 443)
+
+	d.dispatchSticky(pkt)
+	if len(w2.SendCh) != 0 || d.flowAff[key] != w1.ID {
+		t.Fatalf("established flow migrated: w2=%d affinity=%d", len(w2.SendCh), d.flowAff[key])
+	}
+	if d.stats.DroppedUp != 1 {
+		t.Fatalf("want one explicit drop, got %d", d.stats.DroppedUp)
 	}
 }

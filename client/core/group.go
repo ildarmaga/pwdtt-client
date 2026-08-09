@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-
 const workersPerGroup = 9
 
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
@@ -108,7 +107,13 @@ func WorkerGroup(
 	var configSent int32
 	cfgGate := sharedGate
 	if cfgGate == nil {
-		cfgGate = newWGConfigGate(configCh, tp.TunnelMode, tp.MTU, tp.RawPrimaryIP)
+		cfgGate = newWGConfigGate(
+			configCh,
+			tp.TunnelMode,
+			tp.MTU,
+			tp.RawPrimaryIP,
+			rawChunkedEnabled(tp.TunnelMode, tp.TurnTransport),
+		)
 	}
 	if !getConfig {
 		configSent = 1
@@ -558,5 +563,3 @@ type Credentials struct {
 	TurnURLs      []string
 	CacheStreamID int
 }
-
-

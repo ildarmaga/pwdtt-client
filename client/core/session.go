@@ -34,6 +34,53 @@ const (
 	consentTimeout = 90 * time.Second
 )
 
+// obfsDirectConn carries authenticated RTP/WRAP datagrams through TURN
+// without a redundant DTLS layer. RAW always has a password-derived WRAP
+// key, so confidentiality and packet authentication remain enabled.
+type obfsDirectConn struct {
+	relay      net.PacketConn
+	peer       net.Addr
+	wrapKey    []byte
+	cfg        *ObfsConfig
+	writeState *ObfsState
+}
+
+func (c *obfsDirectConn) Read(b []byte) (int, error) {
+	wire := make([]byte, len(b)+80)
+	for {
+		n, _, err := c.relay.ReadFrom(wire)
+		if err != nil {
+			return 0, err
+		}
+		if !obfsIsRTPPacket(wire[:n]) {
+			continue
+		}
+		plainN, err := obfsUnwrapPacket(c.wrapKey, wire[:n], b)
+		if err != nil {
+			continue
+		}
+		return plainN, nil
+	}
+}
+
+func (c *obfsDirectConn) Write(b []byte) (int, error) {
+	wire, err := obfsWrapPacket(c.wrapKey, b, c.cfg, c.writeState)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := c.relay.WriteTo(wire, c.peer); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (c *obfsDirectConn) Close() error                       { return nil }
+func (c *obfsDirectConn) LocalAddr() net.Addr                { return c.relay.LocalAddr() }
+func (c *obfsDirectConn) RemoteAddr() net.Addr               { return c.peer }
+func (c *obfsDirectConn) SetDeadline(t time.Time) error      { return c.relay.SetDeadline(t) }
+func (c *obfsDirectConn) SetReadDeadline(t time.Time) error  { return c.relay.SetReadDeadline(t) }
+func (c *obfsDirectConn) SetWriteDeadline(t time.Time) error { return c.relay.SetWriteDeadline(t) }
+
 // Handshake semaphore: limit concurrent DTLS handshakes (queue under load)
 var handshakeSem = make(chan struct{}, 6)
 
@@ -249,9 +296,6 @@ func RunSession(
 
 	log.Printf("[СЕССИЯ #%d] Relay: %s", sessionID, relay.LocalAddr())
 
-	// Pipe для DTLS ↔ TURN relay
-	pipeA, pipeB := connutil.AsyncPacketPipe()
-
 	sessCtx, sessCancel := context.WithCancel(ctx)
 	defer sessCancel()
 
@@ -272,139 +316,161 @@ func RunSession(
 		}
 	}()
 
-	// Relay ↔ Pipe proxy (with RTP obfuscation)
-	var relayWg sync.WaitGroup
-	relayWg.Add(2)
-
 	useWrap := len(tp.WrapKey) == wrapKeyLen
-
-	// Initialize obfs config per session
-	var obfsCfg *ObfsConfig
-	var obfsWriteState *ObfsState
-	if useWrap {
-		obfsCfg = NewObfsConfig(tp.ObfsMode)
-		// RAW: padding жрёт MSS на и так узком TURN — без pad.
-		if tp.TunnelMode == "raw" {
-			obfsCfg.PaddingMax = 0
+	useDirectRaw := tp.TunnelMode == "raw" && useWrap
+	var activeConn net.Conn
+	var pipeA, pipeB *connutil.PacketPipe
+	var relayWg sync.WaitGroup
+	if useDirectRaw {
+		obfsCfg := NewObfsConfig(tp.ObfsMode)
+		obfsCfg.PaddingMax = 0
+		activeConn = &obfsDirectConn{
+			relay:      relay,
+			peer:       peer,
+			wrapKey:    tp.WrapKey,
+			cfg:        obfsCfg,
+			writeState: NewObfsState(),
 		}
-		obfsWriteState = NewObfsState()
-	}
+		log.Printf("[ВОРКЕР #%d] [DIRECT RAW] RTP/WRAP AEAD без DTLS ✓", sessionID)
+	} else {
+		// Legacy WG path: DTLS runs through an RTP/WRAP packet pipe.
+		pipeA, pipeB = connutil.AsyncPacketPipe()
+		relayWg.Add(2)
 
-	stopRelay := context.AfterFunc(sessCtx, func() {
-		_ = relay.SetDeadline(time.Now())
-		_ = pipeA.SetDeadline(time.Now())
-	})
-	defer stopRelay()
-
-	// relay → pipeA (UNWRAP: strip RTP header + decrypt)
-	go func() {
-		defer relayWg.Done()
-		defer sessCancel()
-		// Max incoming: RTP header (12) + AEAD tag (16) + padding.
-		// RTP(12)+tag(16)+pad≤61 — запас под video padding
-		readBufLen := readBufSize + 100
-		buf := make([]byte, readBufLen)
-		plain := make([]byte, readBufSize)
-		for {
-			n, _, readErr := relay.ReadFrom(buf)
-			if readErr != nil {
-				return
-			}
-			payload := buf[:n]
-			if useWrap {
-				if !obfsIsRTPPacket(payload) {
-					log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
-					continue
-				}
-				m, wrapErr := obfsUnwrapPacket(tp.WrapKey, payload, plain)
-				if wrapErr != nil {
-					log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
-					continue
-				}
-				payload = plain[:m]
-			}
-			if _, writeErr := pipeA.WriteTo(payload, peer); writeErr != nil {
-				return
-			}
-		}
-	}()
-
-	// pipeA → relay (WRAP: add RTP header + encrypt)
-	go func() {
-		defer relayWg.Done()
-		defer sessCancel()
-		b := make([]byte, readBufSize)
-		for {
-			n, _, readErr := pipeA.ReadFrom(b)
-			if readErr != nil {
-				return
-			}
-			out := b[:n]
-			if useWrap {
-				if obfsCfg != nil && obfsWriteState != nil {
-					wrapped, wrapErr := obfsWrapPacket(tp.WrapKey, out, obfsCfg, obfsWriteState)
-					if wrapErr != nil {
-						log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
-						return
-					}
-					out = wrapped
-				}
-			}
-			if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
-				return
-			}
-		}
-	}()
-
-	// DTLS с поддержкой Connection ID (без SNI)
-	cert, err := selfsign.GenerateSelfSigned()
-	if err != nil {
-		return false, fmt.Errorf("генерация сертификата: %w", err)
-	}
-
-	// Acquire handshake semaphore
-	select {
-	case handshakeSem <- struct{}{}:
-	case <-sessCtx.Done():
-		return false, sessCtx.Err()
-	}
-
-	dtlsCfg := &dtls.Config{
-		Certificates:          []tls.Certificate{cert},
-		InsecureSkipVerify:    true,
-		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
-		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
-		FlightInterval:        100 * time.Millisecond,
-		// No ServerName (SNI) — less detectable by DPI
-	}
-
-	dtlsConn, err := dtls.Client(pipeB, peer, dtlsCfg)
-	if err != nil {
-		<-handshakeSem
-		return false, fmt.Errorf("DTLS клиент: %w", err)
-	}
-	defer dtlsConn.Close()
-
-	hctx, hcancel := context.WithTimeout(sessCtx, dtlsHandshakeWait)
-	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
-	dtlsStart := time.Now()
-	err = dtlsConn.HandshakeContext(hctx)
-	hcancel()
-	<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
-
-	if err != nil {
+		var obfsCfg *ObfsConfig
+		var obfsWriteState *ObfsState
 		if useWrap {
-			errStr := strings.ToLower(err.Error())
-			if strings.Contains(errStr, "deadline") || strings.Contains(errStr, "timeout") {
-				return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout (мёртвый TURN relay, повтор с новым allocation)")
-			}
+			obfsCfg = NewObfsConfig(tp.ObfsMode)
+			obfsWriteState = NewObfsState()
 		}
-		return false, fmt.Errorf("DTLS хендшейк: %w", err)
+
+		stopRelay := context.AfterFunc(sessCtx, func() {
+			_ = relay.SetDeadline(time.Now())
+			_ = pipeA.SetDeadline(time.Now())
+		})
+		defer stopRelay()
+
+		// relay → pipeA (UNWRAP: strip RTP header + decrypt)
+		go func() {
+			defer relayWg.Done()
+			defer sessCancel()
+			// Max incoming: RTP header (12) + AEAD tag (16) + padding.
+			// RTP(12)+tag(16)+pad≤61 — запас под video padding
+			readBufLen := readBufSize + 100
+			plainCap := readBufSize
+			if tp.TunnelMode == "raw" {
+				// RAW IP MTU≤1280 + DTLS record overhead; не резать datagram.
+				readBufLen = 2048
+				plainCap = 2048
+			}
+			buf := make([]byte, readBufLen)
+			plain := make([]byte, plainCap)
+			for {
+				n, _, readErr := relay.ReadFrom(buf)
+				if readErr != nil {
+					return
+				}
+				payload := buf[:n]
+				if useWrap {
+					if !obfsIsRTPPacket(payload) {
+						log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
+						continue
+					}
+					m, wrapErr := obfsUnwrapPacket(tp.WrapKey, payload, plain)
+					if wrapErr != nil {
+						log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
+						continue
+					}
+					payload = plain[:m]
+				}
+				if _, writeErr := pipeA.WriteTo(payload, peer); writeErr != nil {
+					return
+				}
+			}
+		}()
+
+		// pipeA → relay (WRAP: add RTP header + encrypt)
+		go func() {
+			defer relayWg.Done()
+			defer sessCancel()
+			pipeBuf := readBufSize
+			if tp.TunnelMode == "raw" {
+				pipeBuf = 2048
+			}
+			b := make([]byte, pipeBuf)
+			for {
+				n, _, readErr := pipeA.ReadFrom(b)
+				if readErr != nil {
+					return
+				}
+				out := b[:n]
+				if useWrap {
+					if obfsCfg != nil && obfsWriteState != nil {
+						wrapped, wrapErr := obfsWrapPacket(tp.WrapKey, out, obfsCfg, obfsWriteState)
+						if wrapErr != nil {
+							log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
+							return
+						}
+						out = wrapped
+					}
+				}
+				if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
+					return
+				}
+			}
+		}()
+
+		// DTLS с поддержкой Connection ID (без SNI)
+		cert, err := selfsign.GenerateSelfSigned()
+		if err != nil {
+			return false, fmt.Errorf("генерация сертификата: %w", err)
+		}
+
+		// Acquire handshake semaphore
+		select {
+		case handshakeSem <- struct{}{}:
+		case <-sessCtx.Done():
+			return false, sessCtx.Err()
+		}
+
+		dtlsCfg := &dtls.Config{
+			Certificates:          []tls.Certificate{cert},
+			InsecureSkipVerify:    true,
+			ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
+			CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+			ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
+			FlightInterval:        100 * time.Millisecond,
+			// No ServerName (SNI) — less detectable by DPI
+		}
+
+		dtlsConn, err := dtls.Client(pipeB, peer, dtlsCfg)
+		if err != nil {
+			<-handshakeSem
+			return false, fmt.Errorf("DTLS клиент: %w", err)
+		}
+		defer dtlsConn.Close()
+
+		hctx, hcancel := context.WithTimeout(sessCtx, dtlsHandshakeWait)
+		log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
+		dtlsStart := time.Now()
+		err = dtlsConn.HandshakeContext(hctx)
+		hcancel()
+		<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
+
+		if err != nil {
+			if useWrap {
+				errStr := strings.ToLower(err.Error())
+				if strings.Contains(errStr, "deadline") || strings.Contains(errStr, "timeout") {
+					return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout (мёртвый TURN relay, повтор с новым allocation)")
+				}
+			}
+			return false, fmt.Errorf("DTLS хендшейк: %w", err)
+		}
+		atomic.StoreInt64(&stats.DTLSHSNs, time.Since(dtlsStart).Nanoseconds())
+		recordRelayPathRTT(turnAddr, float64(time.Since(allocStart).Milliseconds()))
+		log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
+		activeConn = dtlsConn
 	}
-	atomic.StoreInt64(&stats.DTLSHSNs, time.Since(dtlsStart).Nanoseconds())
-	recordRelayPathRTT(turnAddr, float64(time.Since(allocStart).Milliseconds()))
-	log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
 
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
@@ -413,7 +479,7 @@ func RunSession(
 	var rawWorkerIP net.IP
 	var rawPrimaryIP net.IP
 	if configGate != nil && configGate.needsConfig() {
-		delivered, workerIP, confErr := configGate.tryDeliver(sessionID, dtlsConn, localPort, deviceID, password)
+		delivered, workerIP, confErr := configGate.tryDeliver(sessionID, activeConn, localPort, deviceID, password)
 		if confErr != nil {
 			return false, confErr
 		}
@@ -455,7 +521,7 @@ func RunSession(
 	proxyWg.Add(3) // +1 for keepalive goroutine
 
 	stopDTLS := context.AfterFunc(sessCtx, func() {
-		_ = dtlsConn.SetDeadline(time.Now())
+		_ = activeConn.SetDeadline(time.Now())
 	})
 	defer stopDTLS()
 
@@ -466,11 +532,25 @@ func RunSession(
 	now := time.Now().UnixNano()
 	lastInbound.Store(now)
 	lastOutbound.Store(now)
+	var dtlsWriteMu sync.Mutex
+	writeDTLS := func(payload []byte) (int, error) {
+		if tp.TunnelMode != "raw" {
+			return activeConn.Write(payload)
+		}
+		dtlsWriteMu.Lock()
+		defer dtlsWriteMu.Unlock()
+		return activeConn.Write(payload)
+	}
+	pingInterval := keepaliveInterval
+	if tp.TunnelMode == "raw" {
+		// Сервер исключает RAW allocation без uplink/keepalive через 25s.
+		pingInterval = 3 * time.Second
+	}
 
 	// DTLS Keepalive + consent-freshness: шлём ping и проверяем, что путь жив.
 	go func() {
 		defer proxyWg.Done()
-		t := time.NewTicker(keepaliveInterval)
+		t := time.NewTicker(pingInterval)
 		defer t.Stop()
 		ping := []byte{keepaliveByte}
 		for {
@@ -489,7 +569,18 @@ func RunSession(
 				}
 				// Без WriteDeadline: абсолютный дедлайн протекал на Writer и
 				// убивал воркер ровно через ~15s (ticker 10s + deadline 5s).
-				if _, err := dtlsConn.Write(ping); err != nil {
+				if slot.PrioCh != nil {
+					queuedPing := getPktBuf(len(ping))
+					copy(queuedPing, ping)
+					select {
+					case slot.PrioCh <- queuedPing:
+					default:
+						putPktBuf(queuedPing)
+					}
+					continue
+				}
+				_, err := writeDTLS(ping)
+				if err != nil {
 					sessCancel()
 					return
 				}
@@ -503,34 +594,49 @@ func RunSession(
 		defer proxyWg.Done()
 		defer sessCancel()
 		for {
-			select {
-			case <-sessCtx.Done():
-				return
-			case pkt, ok := <-sendCh:
-				if !ok {
+			var pkt []byte
+			var ok bool
+			if slot.PrioCh != nil {
+				select {
+				case pkt, ok = <-slot.PrioCh:
+				default:
+					select {
+					case <-sessCtx.Done():
+						return
+					case pkt, ok = <-slot.PrioCh:
+					case pkt, ok = <-sendCh:
+					}
+				}
+			} else {
+				select {
+				case <-sessCtx.Done():
 					return
+				case pkt, ok = <-sendCh:
 				}
-				if rawSrcIP != nil {
-					_ = rewriteIPv4SrcInPlace(pkt, rawSrcIP)
-				}
-				out := pkt
-				if d.rawMP && d.rawSeq != nil && len(pkt) >= 20 && pkt[0]>>4 == 4 {
-					seq := d.rawSeq.Next()
-					framed := rawFrameEncode(seq, pkt, nil)
-					putPktBuf(pkt)
-					out = framed
-					pkt = nil
-				}
-				_, writeErr := dtlsConn.Write(out)
-				if pkt != nil {
-					putPktBuf(pkt)
-				}
-				if writeErr != nil {
-					log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
-					return
-				}
-				lastOutbound.Store(time.Now().UnixNano())
 			}
+			if !ok {
+				return
+			}
+			if rawSrcIP != nil {
+				_ = rewriteIPv4SrcInPlace(pkt, rawSrcIP)
+			}
+			out := pkt
+			if d.rawMP && d.rawSeq != nil && len(pkt) >= 20 && pkt[0]>>4 == 4 {
+				seq := d.rawSeq.Next()
+				framed := rawFrameEncode(seq, pkt, nil)
+				putPktBuf(pkt)
+				out = framed
+				pkt = nil
+			}
+			_, writeErr := writeDTLS(out)
+			if pkt != nil {
+				putPktBuf(pkt)
+			}
+			if writeErr != nil {
+				log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
+				return
+			}
+			lastOutbound.Store(time.Now().UnixNano())
 		}
 	}()
 
@@ -540,8 +646,8 @@ func RunSession(
 		defer sessCancel()
 		for {
 			pkt := getPktBuf(2048)
-			_ = dtlsConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
-			n, readErr := dtlsConn.Read(pkt)
+			_ = activeConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
+			n, readErr := activeConn.Read(pkt)
 			if readErr != nil {
 				putPktBuf(pkt)
 				if sessCtx.Err() != nil {
@@ -574,27 +680,30 @@ func RunSession(
 			pkt = pkt[:n]
 			if d.rawMP && d.rawReord != nil && isRawFrame(pkt) {
 				seq, ip, ok := rawFrameDecode(pkt)
-				putPktBuf(pkt)
 				if !ok {
+					putPktBuf(pkt)
 					continue
 				}
 				if rawPrimaryIP != nil {
 					_ = rewriteIPv4DstInPlace(ip, rawPrimaryIP)
 				}
-				for _, ordered := range d.rawReord.Push(seq, ip) {
-					op := getPktBuf(len(ordered))
-					copy(op, ordered)
-					select {
-					case d.ReturnCh <- op:
-					case <-sessCtx.Done():
-						putPktBuf(op)
-						return
-					}
+				if !d.enqueueRawFrame(seq, ip) {
+					putPktBuf(pkt)
+					return
 				}
+				putPktBuf(pkt)
 				continue
 			}
 			if rawPrimaryIP != nil {
 				_ = rewriteIPv4DstInPlace(pkt, rawPrimaryIP)
+			}
+			if d.rawChunked {
+				select {
+				case d.ReturnCh <- pkt:
+				default:
+					putPktBuf(pkt)
+				}
+				continue
 			}
 			select {
 			case d.ReturnCh <- pkt:
@@ -609,8 +718,12 @@ func RunSession(
 	sessCancel()
 	relayWg.Wait()
 	sessionWg.Wait()
-	_ = pipeA.Close()
-	_ = pipeB.Close()
+	if pipeA != nil {
+		_ = pipeA.Close()
+	}
+	if pipeB != nil {
+		_ = pipeB.Close()
+	}
 	return configDelivered, nil
 }
 

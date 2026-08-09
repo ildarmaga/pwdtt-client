@@ -10,6 +10,7 @@ type Stats struct {
 	ActiveConnections int32
 	TotalBytesUp      int64
 	TotalBytesDown    int64
+	DroppedUp         int64 // RAW sticky: uplink drops under SendCh backpressure
 	TurnRTTNs         int64
 	DTLSHSNs          int64
 }
@@ -30,8 +31,13 @@ func (s *Stats) RunLoop(shutdown <-chan struct{}, logEmit func(level, msg string
 			active := atomic.LoadInt32(&s.ActiveConnections)
 			up := atomic.LoadInt64(&s.TotalBytesUp)
 			down := atomic.LoadInt64(&s.TotalBytesDown)
+			dropUp := atomic.SwapInt64(&s.DroppedUp, 0)
 			totalMB := float64(up+down) / (1024.0 * 1024.0)
-			logEmit("INFO", fmt.Sprintf("[СТАТ] Активных: %d | Трафик: %.2f МБ", active, totalMB))
+			if dropUp > 0 {
+				logEmit("INFO", fmt.Sprintf("[СТАТ] Активных: %d | Трафик: %.2f МБ | drop_up=%d", active, totalMB, dropUp))
+			} else {
+				logEmit("INFO", fmt.Sprintf("[СТАТ] Активных: %d | Трафик: %.2f МБ", active, totalMB))
+			}
 			turnMs := float64(atomic.LoadInt64(&s.TurnRTTNs)) / 1e6
 			dtlsMs := float64(atomic.LoadInt64(&s.DTLSHSNs)) / 1e6
 			if statsEmit != nil {
