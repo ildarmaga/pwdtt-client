@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.262] — 2026-08-09
+
+### Feature — RAW multipath (как WG по TURN)
+Сервер ≥1.4.124 выдаёт один IP на device; клиент шлёт chunk RR по воркерам
+(все с primary src). Один TCP-поток больше не заперт на одном VK TURN →
+агрегатная скорость. Нужен wbstream **1.4.124+**.
+
 ## [0.3.261] — 2026-08-09
 
 ### Feature — TURN TCP (как qWDTT 1.4)

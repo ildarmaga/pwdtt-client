@@ -431,13 +431,18 @@ func RunSession(
 	becameReady = true
 	readyAt = time.Now()
 
-	// RAW sticky: личный SendCh (flow→воркер). WG: общий d.SendCh.
+	// RAW multipath: личный SendCh (chunk RR). WG: общий d.SendCh.
 	slot := &WorkerSlot{ID: sessionID}
 	d.Register(slot)
 	defer d.Unregister(slot)
 	sendCh := d.SendCh
 	if slot.SendCh != nil {
 		sendCh = slot.SendCh
+	}
+	// Shared IP на сервере: все воркеры пишут с primary (не уникальный worker IP).
+	rawSrcIP := rawPrimaryIP
+	if rawSrcIP == nil {
+		rawSrcIP = rawWorkerIP
 	}
 
 	// Proxy DTLS ↔ Dispatcher
@@ -486,8 +491,7 @@ func RunSession(
 		}
 	}()
 
-	// Writer: очередь → DTLS. WG — общий SendCh; RAW — sticky slot.SendCh
-	// (один 5-tuple → один worker IP, иначе TCP/NAT ломаются).
+	// Writer: очередь → DTLS. WG — общий SendCh; RAW — chunk multipath + primary IP.
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
@@ -499,8 +503,8 @@ func RunSession(
 				if !ok {
 					return
 				}
-				if rawWorkerIP != nil {
-					_ = rewriteIPv4SrcInPlace(pkt, rawWorkerIP)
+				if rawSrcIP != nil {
+					_ = rewriteIPv4SrcInPlace(pkt, rawSrcIP)
 				}
 				_ = dtlsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				_, writeErr := dtlsConn.Write(pkt)

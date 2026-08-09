@@ -50,7 +50,7 @@ func (g *wgConfigGate) PrimaryIP() net.IP {
 }
 
 // needsConfig — для WG один GETCONF на группу; для RAW каждый DTLS-коннект
-// заново шлёт RAWCONF (сервер выдаёт уникальный IP на сессию).
+// шлёт RAWCONF (сервер ≥1.4.124 отдаёт один shared IP на device).
 func (g *wgConfigGate) needsConfig() bool {
 	if g == nil {
 		return false
@@ -62,8 +62,8 @@ func (g *wgConfigGate) needsConfig() bool {
 }
 
 // tryDeliver возвращает (ok, workerIP, err).
-// RAW: каждый воркер получает свой IP; первый конфиг поднимает TUN (primaryIP).
-// WG: как раньше — один GETCONF на группу.
+// RAW: каждый воркер делает RAWCONF; IP обычно один на device (multipath).
+// Первый конфиг поднимает TUN (primaryIP). WG: один GETCONF на группу.
 func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, deviceID, password string) (bool, net.IP, error) {
 	if g == nil {
 		return false, nil, nil

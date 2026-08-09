@@ -32,19 +32,19 @@ func putPktBuf(b []byte) {
 }
 
 const (
-	returnChBuf = 384
+	returnChBuf = 1024
 	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
-	// rawWorkerSendBuf — очередь на воркер в RAW sticky-режиме.
-	// Не дропать под спидтестом: 128 мало, TCP схлопывается в 0.
+	// rawWorkerSendBuf — очередь на воркер в RAW multipath.
 	rawWorkerSendBuf = 1024
-	flowAffTTL       = 3 * time.Minute
-	flowAffMax       = 8192
+	// chunkSize — подряд пакетов на один TURN перед переключением (как qWDTT).
+	// Один IP на device → TCP терпит умеренный reorder между chunk-границами.
+	chunkSize = 8
 )
 
 type WorkerSlot struct {
 	ID     int
-	SendCh chan []byte // RAW sticky: личный канал; WG: nil → общий Dispatcher.SendCh
+	SendCh chan []byte // RAW multipath: личный канал; WG: nil → общий Dispatcher.SendCh
 }
 
 type Dispatcher struct {
@@ -52,29 +52,25 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
-	// flowAff: 5-tuple → worker ID. Нельзя hash%len(workers) — при join/leave
-	// тот же TCP уезжает на другой IP и соединение мёртво.
-	flowAff map[uint64]int
-	flowExp map[uint64]int64
-	// SendCh — ОБЩАЯ очередь (WG). RAW sticky шлёт в WorkerSlot.SendCh.
+	rrIndex    int
+	rrCount    int
+	// SendCh — ОБЩАЯ очередь (WG). RAW multipath шлёт в WorkerSlot.SendCh chunk'ами.
 	SendCh    chan []byte
 	ReturnCh  chan []byte
-	rawSticky bool
+	rawMulti  bool // RAW shared-IP multipath (chunk RR)
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	stats     *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawSticky bool) *Dispatcher {
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMulti bool) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
 	d := &Dispatcher{
 		localConn: localConn,
 		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
-		rawSticky: rawSticky,
-		flowAff:   make(map[uint64]int),
-		flowExp:   make(map[uint64]int64),
+		rawMulti:  rawMulti,
 		ctx:       dctx,
 		cancel:    dcancel,
 		stats:     stats,
@@ -93,7 +89,7 @@ func (d *Dispatcher) Shutdown() {
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
-	if d.rawSticky && w.SendCh == nil {
+	if d.rawMulti && w.SendCh == nil {
 		w.SendCh = make(chan []byte, rawWorkerSendBuf)
 	}
 	d.workers = append(d.workers, w)
@@ -110,19 +106,16 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 			break
 		}
 	}
-	// Сбрасываем affinity мёртвого воркера — новые пакеты выберут живого.
-	for k, id := range d.flowAff {
-		if id == slot.ID {
-			delete(d.flowAff, k)
-			delete(d.flowExp, k)
-		}
-	}
 	remaining := len(d.workers)
+	if d.rrIndex >= remaining && remaining > 0 {
+		d.rrIndex %= remaining
+	}
+	d.rrCount = 0
 	d.mu.Unlock()
 	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
-// flowHash — 5-tuple IPv4 (или src/dst если портов нет).
+// flowHash оставлен для тестов / диагностики.
 func flowHash(pkt []byte) uint32 {
 	if len(pkt) < 20 || pkt[0]>>4 != 4 {
 		var h uint32
@@ -141,66 +134,46 @@ func flowHash(pkt []byte) uint32 {
 	return h
 }
 
-func flowKey(pkt []byte) uint64 {
-	return uint64(flowHash(pkt))
-}
-
-func (d *Dispatcher) workerByIDLocked(id int) *WorkerSlot {
-	for _, w := range d.workers {
-		if w.ID == id {
-			return w
-		}
-	}
-	return nil
-}
-
-func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
-	n := len(d.workers)
-	if n == 0 {
-		return nil
-	}
-	now := time.Now().UnixNano()
-	key := flowKey(pkt)
-
-	if id, ok := d.flowAff[key]; ok {
-		if exp, ok2 := d.flowExp[key]; ok2 && now <= exp {
-			if w := d.workerByIDLocked(id); w != nil {
-				d.flowExp[key] = now + int64(flowAffTTL)
-				return w
-			}
-		}
-		delete(d.flowAff, key)
-		delete(d.flowExp, key)
-	}
-
-	w := d.workers[flowHash(pkt)%uint32(n)]
-	if len(d.flowAff) >= flowAffMax {
-		// Грубый prune просроченных.
-		for k, exp := range d.flowExp {
-			if now > exp {
-				delete(d.flowAff, k)
-				delete(d.flowExp, k)
-			}
-		}
-	}
-	d.flowAff[key] = w.ID
-	d.flowExp[key] = now + int64(flowAffTTL)
-	return w
-}
-
-func (d *Dispatcher) dispatchSticky(pkt []byte) {
+// dispatchChunk — RAW multipath: chunkSize подряд на один воркер, потом следующий.
+// При переполнении — steal на свободный (как qWDTT). Блокируем, если все полны.
+func (d *Dispatcher) dispatchChunk(pkt []byte) {
 	d.mu.Lock()
-	w := d.pickStickyLocked(pkt)
-	var ch chan []byte
-	if w != nil {
-		ch = w.SendCh
-	}
-	d.mu.Unlock()
-	if ch == nil {
+	nw := len(d.workers)
+	if nw == 0 {
+		d.mu.Unlock()
 		putPktBuf(pkt)
 		return
 	}
-	// Блокирующая отправка: дроп ломает TCP (спидтест → 0). Backpressure в TUN.
+	idx := d.rrIndex % nw
+	w := d.workers[idx]
+	select {
+	case w.SendCh <- pkt:
+		d.rrCount++
+		if d.rrCount >= chunkSize {
+			d.rrIndex = (idx + 1) % nw
+			d.rrCount = 0
+		}
+		d.mu.Unlock()
+		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
+		return
+	default:
+	}
+	// Steal
+	for i := 1; i < nw; i++ {
+		alt := (idx + i) % nw
+		select {
+		case d.workers[alt].SendCh <- pkt:
+			d.rrIndex = alt
+			d.rrCount = 1
+			d.mu.Unlock()
+			atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
+			return
+		default:
+		}
+	}
+	// Все полны — блокирующая отправка в текущий (backpressure, без дропа).
+	ch := w.SendCh
+	d.mu.Unlock()
 	select {
 	case ch <- pkt:
 		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
@@ -209,10 +182,10 @@ func (d *Dispatcher) dispatchSticky(pkt []byte) {
 	}
 }
 
-// readLoop читает пакеты с локального UDP (TUN bridge) и кладёт в очередь(и).
+// readLoop читает пакеты с локального UDP (TUN bridge).
 //
 // WG: общая SendCh (work-stealing) — WireGuard терпит reorder.
-// RAW: sticky affinity по 5-tuple → worker ID (стабильно при churn воркеров).
+// RAW: chunk multipath при shared IP на сервере (≥1.4.124).
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
@@ -236,8 +209,8 @@ func (d *Dispatcher) readLoop() {
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
 
-		if d.rawSticky {
-			d.dispatchSticky(pkt)
+		if d.rawMulti {
+			d.dispatchChunk(pkt)
 			continue
 		}
 
