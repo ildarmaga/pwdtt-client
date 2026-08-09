@@ -35,16 +35,15 @@ const (
 	returnChBuf = 1024
 	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
-	// rawWorkerSendBuf — очередь на воркер в RAW multipath.
-	rawWorkerSendBuf = 1024
-	// chunkSize — подряд пакетов на один TURN перед переключением (как qWDTT).
-	// Один IP на device → TCP терпит умеренный reorder между chunk-границами.
-	chunkSize = 8
+	// rawWorkerSendBuf — очередь на воркер в RAW sticky.
+	rawWorkerSendBuf = 2048
+	flowAffTTL       = 3 * time.Minute
+	flowAffMax       = 8192
 )
 
 type WorkerSlot struct {
 	ID     int
-	SendCh chan []byte // RAW multipath: личный канал; WG: nil → общий Dispatcher.SendCh
+	SendCh chan []byte // RAW sticky: личный канал; WG: nil → общий Dispatcher.SendCh
 }
 
 type Dispatcher struct {
@@ -52,25 +51,28 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
-	rrIndex    int
-	rrCount    int
-	// SendCh — ОБЩАЯ очередь (WG). RAW multipath шлёт в WorkerSlot.SendCh chunk'ами.
+	// flowAff: 5-tuple → worker ID. Shared IP на сервере → sticky безопасен для NAT
+	// и обязателен: chunk multipath без WG-reorder убивает TCP (download ~0.5 Мбит).
+	flowAff map[uint64]int
+	flowExp map[uint64]int64
 	SendCh    chan []byte
 	ReturnCh  chan []byte
-	rawMulti  bool // RAW shared-IP multipath (chunk RR)
+	rawSticky bool
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	stats     *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMulti bool) *Dispatcher {
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawSticky bool) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
 	d := &Dispatcher{
 		localConn: localConn,
 		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
-		rawMulti:  rawMulti,
+		rawSticky: rawSticky,
+		flowAff:   make(map[uint64]int),
+		flowExp:   make(map[uint64]int64),
 		ctx:       dctx,
 		cancel:    dcancel,
 		stats:     stats,
@@ -89,7 +91,7 @@ func (d *Dispatcher) Shutdown() {
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
-	if d.rawMulti && w.SendCh == nil {
+	if d.rawSticky && w.SendCh == nil {
 		w.SendCh = make(chan []byte, rawWorkerSendBuf)
 	}
 	d.workers = append(d.workers, w)
@@ -106,16 +108,17 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 			break
 		}
 	}
-	remaining := len(d.workers)
-	if d.rrIndex >= remaining && remaining > 0 {
-		d.rrIndex %= remaining
+	for k, id := range d.flowAff {
+		if id == slot.ID {
+			delete(d.flowAff, k)
+			delete(d.flowExp, k)
+		}
 	}
-	d.rrCount = 0
+	remaining := len(d.workers)
 	d.mu.Unlock()
 	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
-// flowHash оставлен для тестов / диагностики.
 func flowHash(pkt []byte) uint32 {
 	if len(pkt) < 20 || pkt[0]>>4 != 4 {
 		var h uint32
@@ -128,52 +131,75 @@ func flowHash(pkt []byte) uint32 {
 	h := binary.BigEndian.Uint32(pkt[12:16]) ^ binary.BigEndian.Uint32(pkt[16:20])
 	h ^= uint32(pkt[9]) * 0x9e3779b9
 	if len(pkt) >= ihl+4 && (pkt[9] == 6 || pkt[9] == 17) {
-		h ^= uint32(binary.BigEndian.Uint16(pkt[ihl : ihl+2]))
-		h ^= uint32(binary.BigEndian.Uint16(pkt[ihl+2:ihl+4])) << 16
+		a := binary.BigEndian.Uint16(pkt[ihl : ihl+2])
+		b := binary.BigEndian.Uint16(pkt[ihl+2 : ihl+4])
+		if a > b {
+			a, b = b, a
+		}
+		// min|max — симметрично up/down; multiply размазывает биты (иначе %N=степень 2 схлопывается).
+		h ^= (uint32(a)<<16 | uint32(b)) * 0x9e3779b9
 	}
 	return h
 }
 
-// dispatchChunk — RAW multipath: chunkSize подряд на один воркер, потом следующий.
-// При переполнении — steal на свободный (как qWDTT). Блокируем, если все полны.
-func (d *Dispatcher) dispatchChunk(pkt []byte) {
+func flowKey(pkt []byte) uint64 {
+	return uint64(flowHash(pkt))
+}
+
+func (d *Dispatcher) workerByIDLocked(id int) *WorkerSlot {
+	for _, w := range d.workers {
+		if w.ID == id {
+			return w
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
+	n := len(d.workers)
+	if n == 0 {
+		return nil
+	}
+	now := time.Now().UnixNano()
+	key := flowKey(pkt)
+
+	if id, ok := d.flowAff[key]; ok {
+		if exp, ok2 := d.flowExp[key]; ok2 && now <= exp {
+			if w := d.workerByIDLocked(id); w != nil {
+				d.flowExp[key] = now + int64(flowAffTTL)
+				return w
+			}
+		}
+		delete(d.flowAff, key)
+		delete(d.flowExp, key)
+	}
+
+	w := d.workers[flowHash(pkt)%uint32(n)]
+	if len(d.flowAff) >= flowAffMax {
+		for k, exp := range d.flowExp {
+			if now > exp {
+				delete(d.flowAff, k)
+				delete(d.flowExp, k)
+			}
+		}
+	}
+	d.flowAff[key] = w.ID
+	d.flowExp[key] = now + int64(flowAffTTL)
+	return w
+}
+
+func (d *Dispatcher) dispatchSticky(pkt []byte) {
 	d.mu.Lock()
-	nw := len(d.workers)
-	if nw == 0 {
-		d.mu.Unlock()
+	w := d.pickStickyLocked(pkt)
+	var ch chan []byte
+	if w != nil {
+		ch = w.SendCh
+	}
+	d.mu.Unlock()
+	if ch == nil {
 		putPktBuf(pkt)
 		return
 	}
-	idx := d.rrIndex % nw
-	w := d.workers[idx]
-	select {
-	case w.SendCh <- pkt:
-		d.rrCount++
-		if d.rrCount >= chunkSize {
-			d.rrIndex = (idx + 1) % nw
-			d.rrCount = 0
-		}
-		d.mu.Unlock()
-		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
-		return
-	default:
-	}
-	// Steal
-	for i := 1; i < nw; i++ {
-		alt := (idx + i) % nw
-		select {
-		case d.workers[alt].SendCh <- pkt:
-			d.rrIndex = alt
-			d.rrCount = 1
-			d.mu.Unlock()
-			atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
-			return
-		default:
-		}
-	}
-	// Все полны — блокирующая отправка в текущий (backpressure, без дропа).
-	ch := w.SendCh
-	d.mu.Unlock()
 	select {
 	case ch <- pkt:
 		atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
@@ -182,10 +208,9 @@ func (d *Dispatcher) dispatchChunk(pkt []byte) {
 	}
 }
 
-// readLoop читает пакеты с локального UDP (TUN bridge).
-//
-// WG: общая SendCh (work-stealing) — WireGuard терпит reorder.
-// RAW: chunk multipath при shared IP на сервере (≥1.4.124).
+// readLoop:
+// WG — shared SendCh (work-steal, drop OK).
+// RAW — sticky 5-tuple→worker при shared IP (без WG reorder window chunk вреден).
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
@@ -209,8 +234,8 @@ func (d *Dispatcher) readLoop() {
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])
 
-		if d.rawMulti {
-			d.dispatchChunk(pkt)
+		if d.rawSticky {
+			d.dispatchSticky(pkt)
 			continue
 		}
 

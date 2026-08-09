@@ -283,6 +283,10 @@ func RunSession(
 	var obfsWriteState *ObfsState
 	if useWrap {
 		obfsCfg = NewObfsConfig(tp.ObfsMode)
+		// RAW: padding жрёт MSS на и так узком TURN — без pad.
+		if tp.TunnelMode == "raw" {
+			obfsCfg.PaddingMax = 0
+		}
 		obfsWriteState = NewObfsState()
 	}
 
@@ -431,7 +435,7 @@ func RunSession(
 	becameReady = true
 	readyAt = time.Now()
 
-	// RAW multipath: личный SendCh (chunk RR). WG: общий d.SendCh.
+	// RAW sticky: личный SendCh (5-tuple). WG: общий d.SendCh.
 	slot := &WorkerSlot{ID: sessionID}
 	d.Register(slot)
 	defer d.Unregister(slot)
@@ -491,7 +495,7 @@ func RunSession(
 		}
 	}()
 
-	// Writer: очередь → DTLS. WG — общий SendCh; RAW — chunk multipath + primary IP.
+	// Writer: очередь → DTLS. Без per-packet WriteDeadline (hot path).
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
@@ -506,7 +510,6 @@ func RunSession(
 				if rawSrcIP != nil {
 					_ = rewriteIPv4SrcInPlace(pkt, rawSrcIP)
 				}
-				_ = dtlsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				_, writeErr := dtlsConn.Write(pkt)
 				putPktBuf(pkt)
 				if writeErr != nil {
