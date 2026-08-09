@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,8 +44,9 @@ const (
 )
 
 type WorkerSlot struct {
-	ID     int
-	SendCh chan []byte // RAW sticky: личный канал; WG: nil → общий Dispatcher.SendCh
+	ID        int
+	SendCh    chan []byte // RAW sticky: личный канал; WG/MP: nil → общий Dispatcher.SendCh
+	PathRTTMs atomic.Int64
 }
 
 type Dispatcher struct {
@@ -51,31 +54,43 @@ type Dispatcher struct {
 	clientAddr atomic.Pointer[net.Addr]
 	mu         sync.Mutex
 	workers    []*WorkerSlot
-	// flowAff: 5-tuple → worker ID. Shared IP на сервере → sticky безопасен для NAT
-	// и обязателен: chunk multipath без WG-reorder убивает TCP (download ~0.5 Мбит).
+	// flowAff: legacy sticky (выкл. при rawMP).
 	flowAff map[uint64]int
 	flowExp map[uint64]int64
 	SendCh    chan []byte
 	ReturnCh  chan []byte
-	rawSticky bool
+	rawSticky bool // legacy; при rawMP=false
+	rawMP     bool // RAW multipath + RA framing/reorder
+	rawSeq    *rawSeq
+	rawReord  *rawReorder
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	stats     *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawSticky bool) *Dispatcher {
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode bool) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
+	// По умолчанию sticky (один TCP = один TURN). Multipath: RAW_MULTIPATH=1.
+	useMP := rawMode && strings.TrimSpace(os.Getenv("RAW_MULTIPATH")) == "1"
 	d := &Dispatcher{
 		localConn: localConn,
 		SendCh:    make(chan []byte, sendChBuf),
 		ReturnCh:  make(chan []byte, returnChBuf),
-		rawSticky: rawSticky,
+		rawSticky: rawMode && !useMP,
+		rawMP:     useMP,
 		flowAff:   make(map[uint64]int),
 		flowExp:   make(map[uint64]int64),
 		ctx:       dctx,
 		cancel:    dcancel,
 		stats:     stats,
+	}
+	if d.rawMP {
+		d.rawSeq = &rawSeq{}
+		d.rawReord = newRawReorder()
+		log.Printf("[ДИСП] RAW multipath (RA-frame reorder, RAW_MULTIPATH=1)")
+	} else if d.rawSticky {
+		log.Printf("[ДИСП] RAW sticky")
 	}
 
 	d.wg.Add(2)
@@ -91,7 +106,7 @@ func (d *Dispatcher) Shutdown() {
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
-	if d.rawSticky && w.SendCh == nil {
+	if d.rawSticky && !d.rawMP && w.SendCh == nil {
 		w.SendCh = make(chan []byte, rawWorkerSendBuf)
 	}
 	d.workers = append(d.workers, w)
@@ -174,7 +189,11 @@ func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
 		delete(d.flowExp, key)
 	}
 
-	w := d.workers[flowHash(pkt)%uint32(n)]
+	// Новый поток → воркер с мин. очередью и RTT (не слепой hash%N на плохой TURN).
+	w := d.pickBestWorkerLocked()
+	if w == nil {
+		w = d.workers[flowHash(pkt)%uint32(n)]
+	}
 	if len(d.flowAff) >= flowAffMax {
 		for k, exp := range d.flowExp {
 			if now > exp {
@@ -186,6 +205,30 @@ func (d *Dispatcher) pickStickyLocked(pkt []byte) *WorkerSlot {
 	d.flowAff[key] = w.ID
 	d.flowExp[key] = now + int64(flowAffTTL)
 	return w
+}
+
+func (d *Dispatcher) pickBestWorkerLocked() *WorkerSlot {
+	var best *WorkerSlot
+	bestScore := int64(1 << 62)
+	for _, w := range d.workers {
+		if w == nil {
+			continue
+		}
+		q := int64(0)
+		if w.SendCh != nil {
+			q = int64(len(w.SendCh))
+		}
+		rtt := w.PathRTTMs.Load()
+		if rtt <= 0 {
+			rtt = 500
+		}
+		score := q*1000 + rtt
+		if score < bestScore {
+			bestScore = score
+			best = w
+		}
+	}
+	return best
 }
 
 func (d *Dispatcher) dispatchSticky(pkt []byte) {

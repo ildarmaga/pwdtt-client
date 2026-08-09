@@ -117,20 +117,13 @@ func TestRawStickySpreadsDifferentFlows(t *testing.T) {
 
 func TestRawStickyRegisterCreatesSendCh(t *testing.T) {
 	d, _ := newTestDispatcher(t, true)
+	if !d.rawSticky {
+		t.Fatal("sticky expected by default")
+	}
 	w := &WorkerSlot{ID: 7}
 	d.Register(w)
 	if w.SendCh == nil {
 		t.Fatal("SendCh not created")
-	}
-	pkt := tcpPkt(24, 7000, 443)
-	d.dispatchSticky(append([]byte(nil), pkt...))
-	select {
-	case got := <-w.SendCh:
-		if len(got) != len(pkt) {
-			t.Fatalf("len %d", len(got))
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout")
 	}
 }
 

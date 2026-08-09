@@ -435,8 +435,9 @@ func RunSession(
 	becameReady = true
 	readyAt = time.Now()
 
-	// RAW sticky: личный SendCh (5-tuple). WG: общий d.SendCh.
+	// RAW multipath: общий SendCh (RR/work-steal) + RA-frame. Sticky — личный SendCh.
 	slot := &WorkerSlot{ID: sessionID}
+	slot.PathRTTMs.Store(time.Since(allocStart).Milliseconds())
 	d.Register(slot)
 	defer d.Unregister(slot)
 	sendCh := d.SendCh
@@ -512,8 +513,18 @@ func RunSession(
 				if rawSrcIP != nil {
 					_ = rewriteIPv4SrcInPlace(pkt, rawSrcIP)
 				}
-				_, writeErr := dtlsConn.Write(pkt)
-				putPktBuf(pkt)
+				out := pkt
+				if d.rawMP && d.rawSeq != nil && len(pkt) >= 20 && pkt[0]>>4 == 4 {
+					seq := d.rawSeq.Next()
+					framed := rawFrameEncode(seq, pkt, nil)
+					putPktBuf(pkt)
+					out = framed
+					pkt = nil
+				}
+				_, writeErr := dtlsConn.Write(out)
+				if pkt != nil {
+					putPktBuf(pkt)
+				}
 				if writeErr != nil {
 					log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
 					return
@@ -561,6 +572,27 @@ func RunSession(
 			}
 
 			pkt = pkt[:n]
+			if d.rawMP && d.rawReord != nil && isRawFrame(pkt) {
+				seq, ip, ok := rawFrameDecode(pkt)
+				putPktBuf(pkt)
+				if !ok {
+					continue
+				}
+				if rawPrimaryIP != nil {
+					_ = rewriteIPv4DstInPlace(ip, rawPrimaryIP)
+				}
+				for _, ordered := range d.rawReord.Push(seq, ip) {
+					op := getPktBuf(len(ordered))
+					copy(op, ordered)
+					select {
+					case d.ReturnCh <- op:
+					case <-sessCtx.Done():
+						putPktBuf(op)
+						return
+					}
+				}
+				continue
+			}
 			if rawPrimaryIP != nil {
 				_ = rewriteIPv4DstInPlace(pkt, rawPrimaryIP)
 			}

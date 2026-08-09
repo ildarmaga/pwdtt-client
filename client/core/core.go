@@ -273,6 +273,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
+	// RAW: multipath RR + RA-frame reorder (не sticky). Sticky оставлял 1 TURN ≈ 1–2 Мбит.
 	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw")
 
 	configCh := make(chan string, 1)
