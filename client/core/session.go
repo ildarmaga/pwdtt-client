@@ -486,8 +486,10 @@ func RunSession(
 					sessCancel()
 					return
 				}
-				_ = dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				// Без WriteDeadline: абсолютный дедлайн протекал на Writer и
+				// убивал воркер ровно через ~15s (ticker 10s + deadline 5s).
 				if _, err := dtlsConn.Write(ping); err != nil {
+					sessCancel()
 					return
 				}
 				lastOutbound.Store(time.Now().UnixNano())

@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.264] — 2026-08-09
+
+### Fix — keepalive WriteDeadline убивал воркеры ~15s
+Ping ставил `SetWriteDeadline(+5s)` без сброса → абсолютный дедлайн тёк на
+data Writer → `dtls timeout` ровно через ~15s (10s ticker + 5s). Убран дедлайн
+на keepalive (как на сервере для echo).
+
 ## [0.3.263] — 2026-08-09
 
 ### Fix — RAW sticky (откат chunk multipath)
