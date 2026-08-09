@@ -96,6 +96,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   obfsMode: 'audio',
   tunnelMode: 'wg',
   turnTransport: 'tcp',
+  turnTcpRev: 1,
   // RelayBridge (kulikov0): dual-track off by default — SFU often drops
   // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.
   wbDualTrack: false,

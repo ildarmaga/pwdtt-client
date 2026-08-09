@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.269] — 2026-08-09
+
+### Fix — не форсить UDP; WG снова на TCP
+- Убрано автопереключение RAW→UDP (на части сетей UDP TURN = 0 трафика / WG мёртв).
+- Выбор **WG** снова ставит TURN **TCP**.
+- RAW multipath только по `RAW_MP=1`, не от UDP-транспорта.
+- Сейчас: **WG · TCP** или **RAW · TCP**.
+
 ## [0.3.268] — 2026-08-09
 
 ### Fix — RAW TCP sticky / UDP multipath

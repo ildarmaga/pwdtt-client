@@ -69,13 +69,14 @@ type Dispatcher struct {
 	stats     *Stats
 }
 
-// NewDispatcher: rawMode включает RAW-режим; turnTransport=udp → multipath (как WG).
-// TCP TURN: sticky (MP по нескольким TCP = HOL/reorder → сотни Кбит).
+// NewDispatcher: RAW по умолчанию sticky (TCP TURN). Multipath только RAW_MP=1.
+// Не включаем MP от turnTransport=udp — на части сетей UDP TURN даёт 0 трафика.
 func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode bool, turnTransport string) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
+	_ = turnTransport
 	forceSticky := strings.TrimSpace(os.Getenv("RAW_STICKY")) == "1"
 	forceMP := strings.TrimSpace(os.Getenv("RAW_MP")) == "1"
-	useMP := rawMode && !forceSticky && (forceMP || strings.EqualFold(turnTransport, "udp"))
+	useMP := rawMode && forceMP && !forceSticky
 	useSticky := rawMode && !useMP
 	d := &Dispatcher{
 		localConn: localConn,
@@ -92,9 +93,9 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 	if d.rawMP {
 		d.rawSeq = &rawSeq{}
 		d.rawReord = newRawReorder()
-		log.Printf("[ДИСП] RAW multipath (RA-frame, UDP TURN)")
+		log.Printf("[ДИСП] RAW multipath (RA-frame, RAW_MP=1)")
 	} else if d.rawSticky {
-		log.Printf("[ДИСП] RAW sticky (TCP TURN)")
+		log.Printf("[ДИСП] RAW sticky")
 	}
 
 	d.wg.Add(2)
