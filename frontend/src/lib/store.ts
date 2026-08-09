@@ -62,6 +62,12 @@ export const settingsStore = {
     if (merged.turnTransport !== 'tcp' && merged.turnTransport !== 'udp') {
       merged.turnTransport = DEFAULT_SETTINGS.turnTransport;
     }
+    // 0.3.268 форсил UDP при RAW → WG/RAW на UDP у части сетей = 0 байт.
+    if (saved.turnTcpRev !== DEFAULT_SETTINGS.turnTcpRev) {
+      merged.turnTransport = 'tcp';
+      merged.turnTcpRev = DEFAULT_SETTINGS.turnTcpRev;
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
+    }
     if (typeof merged.wbFps !== 'number' || merged.wbFps < 1 || merged.wbFps > 120) {
       merged.wbFps = DEFAULT_SETTINGS.wbFps;
     }

@@ -58,8 +58,10 @@ export interface AppSettings {
   obfsMode: ObfsMode;
   /** wg = WireGuard поверх TURN; raw = IP поверх DTLS без WireGuard (нужен сервер с RAW) */
   tunnelMode: 'wg' | 'raw';
-  /** Канал клиент↔VK TURN: tcp|udp. Для RAW лучше udp (multipath). */
+  /** Канал клиент↔VK TURN: tcp|udp (default tcp). */
   turnTransport: 'tcp' | 'udp';
+  /** One-shot: 0.3.269 сбрасывает UDP, залипший после 0.3.268. */
+  turnTcpRev?: number;
   /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;
   /** Ревизия VP8-настроек: bump сбрасывает legacy-значения на безопасные */
