@@ -233,6 +233,8 @@ export default function Connect() {
         const padded: [string,string,string,string] = [h4[0]??'', h4[1]??'', h4[2]??'', h4[3]??''];
         const existing = serverStore.getAll().find(s => s.host === host);
         let s: Server;
+        const rawPortNum = consumed.rawPort ? Number(consumed.rawPort) : 0;
+        const rawPort = rawPortNum > 0 ? rawPortNum : undefined;
         if (existing) {
           s = {
             ...existing,
@@ -243,6 +245,7 @@ export default function Connect() {
             deviceId: consumed.deviceId ?? existing.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : existing.hashes,
             wbRoom: consumed.wbRoom ?? existing.wbRoom,
+            rawPort: rawPort ?? existing.rawPort,
             linkManaged: true,
           };
           serverStore.update(s);
@@ -256,6 +259,7 @@ export default function Connect() {
             deviceId: consumed.deviceId,
             hashes: consumed.hashes.length > 0 ? padded : undefined,
             wbRoom: consumed.wbRoom,
+            rawPort,
             linkManaged: true,
           });
         }

@@ -28,6 +28,7 @@ type Config struct {
 	TunnelMode    string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
 	TurnTransport string   // tcp|udp — канал клиент↔TURN (default tcp)
 	RawPrimaryIP  string   // soft-reconnect: IP сохранённого TUN для rewrite
+	RawDirectPort int      // 0 = peer DTLS+3; иначе явный UDP порт RAW
 }
 
 // EventType — тип события от ядра.
@@ -90,16 +91,26 @@ func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
 
 const rawDirectPortOffset = 3
 
-func rawDirectPeerAddr(peer string) (string, error) {
+func rawDirectPeerAddr(peer string, rawPort int) (string, error) {
 	host, portText, err := net.SplitHostPort(peer)
 	if err != nil {
 		return "", fmt.Errorf("RAW peer %q: %w", peer, err)
 	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535-rawDirectPortOffset {
+	dtlsPort, err := strconv.Atoi(portText)
+	if err != nil || dtlsPort < 1 || dtlsPort > 65535 {
 		return "", fmt.Errorf("RAW peer port %q is invalid", portText)
 	}
-	return net.JoinHostPort(host, strconv.Itoa(port+rawDirectPortOffset)), nil
+	port := rawPort
+	if port <= 0 {
+		if dtlsPort > 65535-rawDirectPortOffset {
+			return "", fmt.Errorf("RAW peer port %q is invalid for offset", portText)
+		}
+		port = dtlsPort + rawDirectPortOffset
+	}
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("RAW port %d is invalid", port)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 // AddTurnIPs регистрирует TURN IP-адреса (без порта) для исключения из туннеля.
@@ -226,7 +237,7 @@ func (c *Core) Start() (<-chan Event, error) {
 	peerAddr := c.cfg.PeerAddr
 	if tunnelMode == "raw" {
 		var err error
-		peerAddr, err = rawDirectPeerAddr(peerAddr)
+		peerAddr, err = rawDirectPeerAddr(peerAddr, c.cfg.RawDirectPort)
 		if err != nil {
 			cancel()
 			return nil, err

@@ -17,6 +17,8 @@ export interface Server {
   wbRoom?: string;
   /** Название VPN из ссылки (vpn) или Profile-Title */
   vpnName?: string;
+  /** Direct RAW UDP (WRAP); пусто = host DTLS+3 */
+  rawPort?: number;
   /** Сервер добавлен по ссылке подписки панели — поля подключения не редактируются */
   linkManaged?: boolean;
 }

@@ -176,13 +176,14 @@ func profilePath(name string) string {
 
 // ProfileData — хранится в ~/.config/pwdtt/profiles/<name>.json
 type ProfileData struct {
-	PeerAddr string   `json:"peer"`
-	Password string   `json:"password"`
-	Hashes   []string `json:"hashes"`
-	Listen   string   `json:"listen,omitempty"`
-	TurnHost string   `json:"turn,omitempty"`
-	TurnPort string   `json:"port,omitempty"`
-	DeviceID string   `json:"device_id,omitempty"`
+	PeerAddr      string   `json:"peer"`
+	Password      string   `json:"password"`
+	Hashes        []string `json:"hashes"`
+	Listen        string   `json:"listen,omitempty"`
+	TurnHost      string   `json:"turn,omitempty"`
+	TurnPort      string   `json:"port,omitempty"`
+	DeviceID      string   `json:"device_id,omitempty"`
+	RawDirectPort int      `json:"raw_port,omitempty"` // 0 = DTLS+3
 }
 
 // ConnectParams — runtime параметры от UI.
@@ -754,6 +755,7 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		TunnelMode:    tunnelMode,
 		TurnTransport: turnTransport,
 		RawPrimaryIP:  "",
+		RawDirectPort: prof.RawDirectPort,
 	}
 	if tunnelMode == "raw" && SoftReconnectPreserve() {
 		cfg.RawPrimaryIP = ActiveRawPrimaryIP()

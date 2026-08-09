@@ -65,6 +65,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
     const hashes = parsed.hashes ?? [];
     const h4: [string, string, string, string] = [hashes[0] ?? '', hashes[1] ?? '', hashes[2] ?? '', hashes[3] ?? ''];
 
+    const rawPortNum = parsed.rawPort ? Number(parsed.rawPort) : 0;
     onAdd({
       name,
       vpnName: parsed.vpnName,
@@ -74,6 +75,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
       hashes: isVk ? h4 : undefined,
       wbRoom: parsed.wbRoom,
       subUrl: parsed.subUrl,
+      rawPort: rawPortNum > 0 ? rawPortNum : undefined,
       linkManaged: true,
     });
     onClose();

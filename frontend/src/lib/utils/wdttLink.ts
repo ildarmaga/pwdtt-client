@@ -19,6 +19,7 @@ export interface TrafficStats {
 export interface WdttLink {
   ip: string;
   dtlsPort: string;
+  rawPort?: string;
   password: string;
   hashes: string[];
   name: string;
@@ -85,6 +86,7 @@ function subResultToLink(r: backend.SubImportResult): WdttLink {
   return {
     ip: r.ip,
     dtlsPort: r.dtlsPort,
+    rawPort: r.rawPort || undefined,
     password: r.password,
     name,
     vpnName,
@@ -154,6 +156,7 @@ export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
           ...fromPanel,
           ip: inline.ip,
           dtlsPort: inline.dtlsPort,
+          rawPort: inline.rawPort || fromPanel.rawPort,
           password: inline.password,
           hashes: inline.hashes.length > 0 ? inline.hashes : fromPanel.hashes,
           name: inline.name !== 'Server' ? inline.name : fromPanel.name,
@@ -309,6 +312,8 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const pass = String(json.pass ?? json.id ?? '').trim();
     const dtls = json.dtls ?? json.Dtls;
     const dtlsPort = dtls != null ? String(dtls) : '';
+    const raw = json.raw ?? json.Raw;
+    const rawPort = raw != null && Number(raw) > 0 ? String(raw) : undefined;
     const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? name).trim() || name;
     const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
     const hashRaw = json.hash ?? json.vk_hash ?? '';
@@ -320,7 +325,7 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
     const wbRoom = String(json.wb_room ?? json.wbRoom ?? json.room ?? '').trim() || undefined;
     if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl, wbRoom };
+    return { ip, dtlsPort, rawPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl, wbRoom };
   } catch {
     return null;
   }

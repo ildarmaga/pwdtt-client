@@ -18,5 +18,6 @@ export async function saveServerProfile(s: Server): Promise<void> {
     port: '',
     device_id: s.deviceId ?? '',
     listen: '',
+    raw_port: s.rawPort && s.rawPort > 0 ? s.rawPort : 0,
   });
 }

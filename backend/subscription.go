@@ -25,6 +25,7 @@ type SubTrafficStats struct {
 type SubImportResult struct {
 	IP       string           `json:"ip"`
 	DtlsPort string           `json:"dtlsPort"`
+	RawPort  string           `json:"rawPort,omitempty"`
 	Password string           `json:"password"`
 	Name     string           `json:"name"`
 	VpnName  string           `json:"vpnName,omitempty"`
@@ -77,6 +78,7 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 	return &SubImportResult{
 		IP:       parsed.IP,
 		DtlsPort: parsed.DtlsPort,
+		RawPort:  parsed.RawPort,
 		Password: parsed.Password,
 		Name:     name,
 		VpnName:  vpnName,
@@ -217,6 +219,7 @@ func parseSubUserInfo(header string) *SubTrafficStats {
 type wdttLinkParsed struct {
 	IP       string
 	DtlsPort string
+	RawPort  string
 	Password string
 	Name     string
 	VpnName  string
@@ -327,6 +330,13 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 	case json.Number:
 		dtls, _ = v.Int64()
 	}
+	rawPort := int64(0)
+	switch v := raw["raw"].(type) {
+	case float64:
+		rawPort = int64(v)
+	case json.Number:
+		rawPort, _ = v.Int64()
+	}
 	if ip == "" || pass == "" || dtls <= 0 {
 		return wdttLinkParsed{}, fmt.Errorf("incomplete json wdtt link")
 	}
@@ -340,9 +350,14 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 	}
 	deviceID := firstStr(raw, "did", "device_id")
 	wbRoom := firstStr(raw, "wb_room", "wbRoom", "room")
+	rawPortStr := ""
+	if rawPort > 0 {
+		rawPortStr = strconv.FormatInt(rawPort, 10)
+	}
 	return wdttLinkParsed{
 		IP:       ip,
 		DtlsPort: strconv.FormatInt(dtls, 10),
+		RawPort:  rawPortStr,
 		Password: pass,
 		Name:     name,
 		VpnName:  vpnName,
