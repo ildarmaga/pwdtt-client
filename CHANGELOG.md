@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.275] — 2026-08-10
+
+### RAW direct (нужен server ≥ 1.4.74)
+- **Direct WRAP** на peer `DTLS+3` без DTLS (как qWDTT listen-raw).
+- CHUNK1 + ACK priority; RAWCHAL handshake.
+- Старый RAW-over-DTLS убран — без WRAP ключа RAW не поднимается.
+- WG TCP/UDP не трогали.
+
 ## [0.3.271] — 2026-08-09
 
 ### Fix — WG не трогаем (откат 0.3.268–270)
