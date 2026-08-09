@@ -23,7 +23,7 @@ func TestRawReorderInOrder(t *testing.T) {
 	}
 	out = r.Push(2, p2)
 	if len(out) != 0 {
-		t.Fatalf("gap should hold, got %d", len(out))
+		t.Fatalf("gap must wait (no skip), got %d", len(out))
 	}
 	out = r.Push(1, p1)
 	if len(out) != 2 || out[0][1] != 1 || out[1][1] != 2 {

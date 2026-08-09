@@ -473,7 +473,11 @@ export default function Settings({ onClose }: Props) {
                 type="button"
                 className={`st-seg-btn${settings.tunnelMode === 'raw' ? ' st-seg-btn--active' : ''}`}
                 disabled={locked}
-                onClick={() => update('tunnelMode', 'raw')}
+                onClick={() => {
+                  update('tunnelMode', 'raw');
+                  // RAW+TCP multipath убивает скорость; UDP включает spray как WG.
+                  update('turnTransport', 'udp');
+                }}
               >
                 RAW
               </button>

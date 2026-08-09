@@ -28,7 +28,9 @@ func newTestDispatcher(t *testing.T, rawSticky bool) (*Dispatcher, net.PacketCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := NewDispatcher(ctx, pc, NewStats(), rawSticky)
+	// rawSticky=true → RAW+TCP sticky; false → WG (no RAW mode)
+	tt := "tcp"
+	d := NewDispatcher(ctx, pc, NewStats(), rawSticky, tt)
 	t.Cleanup(func() {
 		cancel()
 		_ = pc.Close()
@@ -115,15 +117,15 @@ func TestRawStickySpreadsDifferentFlows(t *testing.T) {
 	}
 }
 
-func TestRawStickyRegisterCreatesSendCh(t *testing.T) {
+func TestRawStickyDefaultPerWorkerSendCh(t *testing.T) {
 	d, _ := newTestDispatcher(t, true)
-	if !d.rawSticky {
-		t.Fatal("sticky expected by default")
+	if !d.rawSticky || d.rawMP {
+		t.Fatal("sticky expected by default (MP only with RAW_MP=1)")
 	}
 	w := &WorkerSlot{ID: 7}
 	d.Register(w)
 	if w.SendCh == nil {
-		t.Fatal("SendCh not created")
+		t.Fatal("sticky uses per-worker SendCh")
 	}
 }
 

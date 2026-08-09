@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,6 +36,9 @@ func main() {
 	workers := flag.Int("workers", 9, "workers")
 	seconds := flag.Int("sec", 15, "download seconds")
 	mb := flag.Int("mb", 20, "download size MB")
+	urlFlag := flag.String("url", "", "download URL (default: local gateway blob or cloudflare)")
+	local := flag.Bool("local", true, "download from 10.70.66.1 (tunnel-only, no internet)")
+	hold := flag.Int("hold", 0, "keep tunnel up N seconds after ready (0=run download)")
 	flag.Parse()
 
 	pass := env("WDTT_PASS", "")
@@ -47,12 +51,32 @@ func main() {
 	}
 	core.SetConfigRoot(cfgRoot)
 
-	dlURL := fmt.Sprintf("https://speed.cloudflare.com/__down?bytes=%d", (*mb)*1024*1024)
-	targets, err := resolveV4("speed.cloudflare.com")
-	if err != nil {
-		log.Fatal(err)
+	var dlURL string
+	var targets []string
+	if *urlFlag != "" {
+		dlURL = *urlFlag
+		host := hostOf(dlURL)
+		if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+			targets = []string{ip.String()}
+		} else {
+			var err error
+			targets, err = resolveV4(host)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	} else if *local {
+		dlURL = fmt.Sprintf("http://10.70.66.1:18080/blob?bytes=%d", (*mb)*1024*1024)
+		targets = []string{"10.70.66.1"}
+	} else {
+		dlURL = fmt.Sprintf("https://speed.cloudflare.com/__down?bytes=%d", (*mb)*1024*1024)
+		var err error
+		targets, err = resolveV4("speed.cloudflare.com")
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-	log.Printf("targets %v", targets)
+	log.Printf("targets %v url=%s", targets, dlURL)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -120,17 +144,44 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Сначала netns: иначе Read-горутина bridge умирает на ENODEV при move.
+	if err := moveTUNToNetNS(ip, mtu, targets, c.GetTurnIPs()); err != nil {
+		_ = dev.Close()
+		log.Fatal(err)
+	}
 	if err := startBridge(dev); err != nil {
 		log.Fatal(err)
 	}
 	defer stopBridge()
-
-	if err := moveTUNToNetNS(ip, mtu, targets, c.GetTurnIPs()); err != nil {
-		log.Fatal(err)
-	}
 	c.NotifyTunReady()
 	log.Printf("TUN in netns %s ip=%s; waiting workers…", benchNS, ip)
-	time.Sleep(22 * time.Second)
+	// Ждём пока в netns реально есть iface + хотя бы 3 воркера по логам не отследим — sleep + verify.
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := run("ip", "netns", "exec", benchNS, "ip", "link", "show", benchIface); err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if err := run("ip", "netns", "exec", benchNS, "ip", "link", "show", benchIface); err != nil {
+		log.Fatalf("netns/iface missing after setup: %v", err)
+	}
+	time.Sleep(15 * time.Second)
+	fmt.Printf("BENCH_READY ip=%s transport=%s workers=%d\n", ip, *transport, *workers)
+	os.Stdout.Sync()
+
+	if *hold > 0 {
+		log.Printf("HOLD %ds (tunnel up for external downlink bench)", *hold)
+		// Не вызываем Stop до конца hold — иначе netns/TUN схлопнется.
+		t := time.NewTimer(time.Duration(*hold) * time.Second)
+		defer t.Stop()
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+		}
+		fmt.Println("BENCH_HOLD_DONE")
+		return
+	}
 
 	log.Printf("=== DOWNLOAD transport=%s workers=%d ===", *transport, *workers)
 	mbps, n, err := downloadInNS(ctx, dlURL, time.Duration(*seconds)*time.Second)
@@ -141,6 +192,18 @@ func main() {
 	}
 	fmt.Printf("BENCH_RESULT transport=%s workers=%d download_mbit=%.2f bytes=%d\n",
 		*transport, *workers, mbps, n)
+}
+
+func hostOf(raw string) string {
+	raw = strings.TrimPrefix(raw, "https://")
+	raw = strings.TrimPrefix(raw, "http://")
+	if i := strings.IndexByte(raw, '/'); i >= 0 {
+		raw = raw[:i]
+	}
+	if h, _, err := net.SplitHostPort(raw); err == nil {
+		return h
+	}
+	return raw
 }
 
 func env(k, def string) string {
@@ -248,16 +311,9 @@ func moveTUNToNetNS(ip string, mtu int, targets, turnIPs []string) error {
 }
 
 func downloadInNS(ctx context.Context, rawURL string, maxWait time.Duration) (float64, int64, error) {
-	// curl inside netns, force IPv4, resolve CF host to first A we already have via --resolve optional
-	host := "speed.cloudflare.com"
-	ips, _ := resolveV4(host)
 	args := []string{"netns", "exec", benchNS, "curl", "-4", "-sS", "-o", "/dev/null",
-		"-w", "%{speed_download}", "--max-time", strconv.Itoa(int(maxWait.Seconds())),
-		"--connect-timeout", "10"}
-	if len(ips) > 0 {
-		args = append(args, "--resolve", fmt.Sprintf("%s:443:%s", host, ips[0]))
-	}
-	args = append(args, rawURL)
+		"-w", "\n%{speed_download}\n", "--max-time", strconv.Itoa(int(maxWait.Seconds())),
+		"--connect-timeout", "10", rawURL}
 	cmd := exec.CommandContext(ctx, "ip", args...)
 	out, err := cmd.CombinedOutput()
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -283,6 +339,8 @@ func downloadInNS(ctx context.Context, rawURL string, maxWait time.Duration) (fl
 var (
 	bridgeStop chan struct{}
 	bridgeDev  tun.Device
+	bridgeUpN  atomic.Uint64
+	bridgeDnN  atomic.Uint64
 )
 
 func startBridge(dev tun.Device) error {
@@ -294,25 +352,41 @@ func startBridge(dev tun.Device) error {
 	stop := make(chan struct{})
 	bridgeStop = stop
 	bridgeDev = dev
+	bridgeUpN.Store(0)
+	bridgeDnN.Store(0)
 	go func() {
 		bufs := [][]byte{make([]byte, 2048)}
 		sizes := make([]int, 1)
+		// offset=0: wireguard-go кладёт IPv4 в buf[offset:]; с vnetHdr hdr снимается внутри.
+		const tunOff = 0
 		for {
 			select {
 			case <-stop:
 				return
 			default:
 			}
-			n, err := dev.Read(bufs, sizes, 0)
+			n, err := dev.Read(bufs, sizes, tunOff)
 			if err != nil {
-				return
-			}
-			for i := 0; i < n; i++ {
-				pkt := bufs[i][:sizes[i]]
-				if len(pkt) < 20 || pkt[0]>>4 != 4 {
+				select {
+				case <-stop:
+					return
+				default:
+					time.Sleep(20 * time.Millisecond)
 					continue
 				}
-				_, _ = uc.Write(pkt)
+			}
+			for i := 0; i < n; i++ {
+				sz := sizes[i]
+				if sz < 20 {
+					continue
+				}
+				pkt := bufs[i][tunOff : tunOff+sz]
+				if pkt[0]>>4 != 4 {
+					continue
+				}
+				if _, werr := uc.Write(pkt); werr == nil {
+					bridgeUpN.Add(1)
+				}
 			}
 		}
 	}()
@@ -335,10 +409,26 @@ func startBridge(dev tun.Device) error {
 			pkt := buf[:nr]
 			packet := make([]byte, 16+len(pkt))
 			copy(packet[16:], pkt)
-			_, _ = dev.Write([][]byte{packet}, 16)
+			if _, werr := dev.Write([][]byte{packet}, 16); werr == nil {
+				bridgeDnN.Add(1)
+			}
 		}
 	}()
-	// Keep fd alive: moving iface to netns keeps tun char device working with same fd
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				log.Printf("[BRIDGE] up=%d dn=%d", bridgeUpN.Swap(0), bridgeDnN.Swap(0))
+			}
+		}
+	}()
+	// Probe: зарегистрировать clientAddr в Core до любого TUN uplink.
+	// Иначе server→client (ping/nc) дропается в writeLoop.
+	_, _ = uc.Write([]byte{0x00})
 	_ = io.Discard
 	return nil
 }

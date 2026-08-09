@@ -58,7 +58,7 @@ export interface AppSettings {
   obfsMode: ObfsMode;
   /** wg = WireGuard поверх TURN; raw = IP поверх DTLS без WireGuard (нужен сервер с RAW) */
   tunnelMode: 'wg' | 'raw';
-  /** Канал клиент↔VK TURN: tcp (по умолчанию, как qWDTT 1.4) или udp */
+  /** Канал клиент↔VK TURN: tcp|udp. Для RAW лучше udp (multipath). */
   turnTransport: 'tcp' | 'udp';
   /** WB: dual-track (экран + камера) */
   wbDualTrack: boolean;

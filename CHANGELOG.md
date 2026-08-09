@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.268] — 2026-08-09
+
+### Fix — RAW TCP sticky / UDP multipath
+- **TCP TURN** → sticky per-flow (MP по нескольким TCP убивал download).
+- **UDP TURN** → multipath + RA-frame (как WG); выбор RAW в Settings сам ставит UDP.
+- Reorder stall 3s → 40ms; `wdtt-bench` probe/`clientAddr` + netns-safe bridge.
+- Нужен сервер **≥1.4.132** (`INPUT` accept на `wdtt-raw`).
+
 ## [0.3.267] — 2026-08-09
 
 ### Perf — RAW sticky выбирает лучший TURN по RTT

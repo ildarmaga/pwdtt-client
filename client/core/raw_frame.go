@@ -8,13 +8,14 @@ import (
 )
 
 // RAW multipath framing: magic "RA" + seq + IPv4.
-// Без reorder sticky=1 TURN; с framing можно RR как WG.
+// Reorder ЖДЁТ дырки (не скип) — иначе TCP cwnd схлопывается сильнее sticky.
 const (
-	rawFrameMagic0   = 'R'
-	rawFrameMagic1   = 'A'
-	rawFrameHeader   = 6 // magic(2)+seq(4)
-	rawReorderMax    = 512
-	rawReorderGapTTL = 80 * time.Millisecond
+	rawFrameMagic0 = 'R'
+	rawFrameMagic1 = 'A'
+	rawFrameHeader = 6 // magic(2)+seq(4)
+	rawReorderMax  = 2048
+	// Дырка >40ms → skip (3s убивало TCP cwnd на multipath TURN).
+	rawReorderStallTTL = 40 * time.Millisecond
 )
 
 func rawFrameEncode(seq uint32, ip []byte, dst []byte) []byte {
@@ -50,20 +51,19 @@ func isRawFrame(pkt []byte) bool {
 	return len(pkt) >= rawFrameHeader && pkt[0] == rawFrameMagic0 && pkt[1] == rawFrameMagic1
 }
 
-// rawReorder собирает RR-потоки в порядок seq перед записью в TUN.
+// rawReorder — in-order delivery. Дырки держатся до прихода пакета (как WG window).
 type rawReorder struct {
-	mu      sync.Mutex
-	next    uint32
-	inited  bool
-	buf     map[uint32][]byte
-	deadline map[uint32]time.Time
+	mu        sync.Mutex
+	next      uint32
+	inited    bool
+	buf       map[uint32][]byte
+	waitSince time.Time // когда next стал отсутствовать при непустом buf
 }
 
 func newRawReorder() *rawReorder {
-	return &rawReorder{buf: make(map[uint32][]byte), deadline: make(map[uint32]time.Time)}
+	return &rawReorder{buf: make(map[uint32][]byte)}
 }
 
-// Push возвращает 0..N пакетов в порядке для записи в TUN.
 func (r *rawReorder) Push(seq uint32, ip []byte) [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -71,67 +71,59 @@ func (r *rawReorder) Push(seq uint32, ip []byte) [][]byte {
 		r.next = seq
 		r.inited = true
 	}
-	// слишком старый
+	// слишком старый / дубль
 	if seq < r.next && r.next-seq < 0x80000000 {
 		return nil
 	}
-	if len(r.buf) >= rawReorderMax {
-		// аварийный сдвиг окна
-		r.flushExpiredLocked(time.Now())
-		if len(r.buf) >= rawReorderMax {
-			r.next = seq
-			r.buf = make(map[uint32][]byte)
-			r.deadline = make(map[uint32]time.Time)
-		}
+	if _, exists := r.buf[seq]; exists {
+		return nil
 	}
-	cp := append([]byte(nil), ip...)
-	r.buf[seq] = cp
-	r.deadline[seq] = time.Now().Add(rawReorderGapTTL)
+	if len(r.buf) >= rawReorderMax {
+		// переполнение — аварийно прыгаем к seq (лучше дропнуть хвост, чем deadlock)
+		r.next = seq
+		r.buf = make(map[uint32][]byte)
+		r.waitSince = time.Time{}
+	}
+	r.buf[seq] = append([]byte(nil), ip...)
 
 	var out [][]byte
-	now := time.Now()
 	for {
 		if p, ok := r.buf[r.next]; ok {
 			out = append(out, p)
 			delete(r.buf, r.next)
-			delete(r.deadline, r.next)
 			r.next++
+			r.waitSince = time.Time{}
 			continue
 		}
-		// gap timeout → skip
-		if r.flushExpiredLocked(now) {
-			continue
+		if len(r.buf) == 0 {
+			r.waitSince = time.Time{}
+			break
 		}
-		break
+		// ждём дырку; аварийный skip только после stall TTL
+		now := time.Now()
+		if r.waitSince.IsZero() {
+			r.waitSince = now
+			break
+		}
+		if now.Sub(r.waitSince) < rawReorderStallTTL {
+			break
+		}
+		// skip hole → ближайший buffered seq
+		var minSeq uint32
+		first := true
+		for s := range r.buf {
+			if first || s < minSeq {
+				minSeq = s
+				first = false
+			}
+		}
+		r.next = minSeq
+		r.waitSince = time.Time{}
 	}
 	return out
 }
 
-func (r *rawReorder) flushExpiredLocked(now time.Time) bool {
-	if _, ok := r.buf[r.next]; ok {
-		return false
-	}
-	// если есть пакеты с большим seq и next просрочен — скип
-	if len(r.buf) == 0 {
-		return false
-	}
-	// next считается просроченным если любой buffered пакет ждёт дольше TTL
-	// и next отсутствует
-	for s, dl := range r.deadline {
-		if s >= r.next && now.After(dl) {
-			// skip holes up to earliest ready
-			for r.next < s {
-				delete(r.buf, r.next)
-				delete(r.deadline, r.next)
-				r.next++
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// rawSeq — глобальный счётчик исходящих RAW-фреймов (на Core/device).
+// rawSeq — глобальный счётчик исходящих RAW-фреймов.
 type rawSeq struct{ v atomic.Uint32 }
 
 func (s *rawSeq) Next() uint32 { return s.v.Add(1) - 1 }

@@ -35,8 +35,8 @@ func putPktBuf(b []byte) {
 
 const (
 	returnChBuf = 1024
-	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
-	sendChBuf = 1024
+	// sendChBuf — глубина общей очереди отправки (WG / RAW multipath).
+	sendChBuf = 4096
 	// rawWorkerSendBuf — очередь на воркер в RAW sticky.
 	rawWorkerSendBuf = 2048
 	flowAffTTL       = 3 * time.Minute
@@ -69,15 +69,19 @@ type Dispatcher struct {
 	stats     *Stats
 }
 
-func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode bool) *Dispatcher {
+// NewDispatcher: rawMode включает RAW-режим; turnTransport=udp → multipath (как WG).
+// TCP TURN: sticky (MP по нескольким TCP = HOL/reorder → сотни Кбит).
+func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, rawMode bool, turnTransport string) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
-	// По умолчанию sticky (один TCP = один TURN). Multipath: RAW_MULTIPATH=1.
-	useMP := rawMode && strings.TrimSpace(os.Getenv("RAW_MULTIPATH")) == "1"
+	forceSticky := strings.TrimSpace(os.Getenv("RAW_STICKY")) == "1"
+	forceMP := strings.TrimSpace(os.Getenv("RAW_MP")) == "1"
+	useMP := rawMode && !forceSticky && (forceMP || strings.EqualFold(turnTransport, "udp"))
+	useSticky := rawMode && !useMP
 	d := &Dispatcher{
 		localConn: localConn,
 		SendCh:    make(chan []byte, sendChBuf),
-		ReturnCh:  make(chan []byte, returnChBuf),
-		rawSticky: rawMode && !useMP,
+		ReturnCh:  make(chan []byte, returnChBuf*4),
+		rawSticky: useSticky,
 		rawMP:     useMP,
 		flowAff:   make(map[uint64]int),
 		flowExp:   make(map[uint64]int64),
@@ -88,9 +92,9 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 	if d.rawMP {
 		d.rawSeq = &rawSeq{}
 		d.rawReord = newRawReorder()
-		log.Printf("[ДИСП] RAW multipath (RA-frame reorder, RAW_MULTIPATH=1)")
+		log.Printf("[ДИСП] RAW multipath (RA-frame, UDP TURN)")
 	} else if d.rawSticky {
-		log.Printf("[ДИСП] RAW sticky")
+		log.Printf("[ДИСП] RAW sticky (TCP TURN)")
 	}
 
 	d.wg.Add(2)
@@ -272,7 +276,13 @@ func (d *Dispatcher) readLoop() {
 			continue
 		}
 
+		// Адрес TUN-bridge нужен для downlink WriteTo. Регистрируем даже
+		// по probe (не IPv4), иначе server→client трафик молча дропается
+		// пока клиент сам ничего не отправил в TUN.
 		d.clientAddr.Store(&addr)
+		if n < 20 || buf[0]>>4 != 4 {
+			continue
+		}
 
 		pkt := getPktBuf(n)
 		copy(pkt, buf[:n])

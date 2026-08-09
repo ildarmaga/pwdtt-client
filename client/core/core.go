@@ -273,8 +273,8 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	// RAW: multipath RR + RA-frame reorder (не sticky). Sticky оставлял 1 TURN ≈ 1–2 Мбит.
-	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw")
+	// RAW+UDP TURN → multipath; RAW+TCP → sticky (иначе TCP-over-TCP multipath умирает).
+	disp := NewDispatcher(ctx, localConn, stats, tunnelMode == "raw", turnTransport)
 
 	configCh := make(chan string, 1)
 	// RAW: один gate на все группы — иначе группа #2 без configCh → nil gate →
