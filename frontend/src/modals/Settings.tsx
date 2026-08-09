@@ -465,11 +465,7 @@ export default function Settings({ onClose }: Props) {
                 type="button"
                 className={`st-seg-btn${settings.tunnelMode !== 'raw' ? ' st-seg-btn--active' : ''}`}
                 disabled={locked}
-                onClick={() => {
-                  update('tunnelMode', 'wg');
-                  // WG стабилен на TCP TURN; UDP у части сетей = 0 трафика.
-                  update('turnTransport', 'tcp');
-                }}
+                onClick={() => update('tunnelMode', 'wg')}
               >
                 WG
               </button>
