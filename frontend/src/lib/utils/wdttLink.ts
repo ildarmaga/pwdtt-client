@@ -312,8 +312,8 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const pass = String(json.pass ?? json.id ?? '').trim();
     const dtls = json.dtls ?? json.Dtls;
     const dtlsPort = dtls != null ? String(dtls) : '';
-    const raw = json.raw ?? json.Raw;
-    const rawPort = raw != null && Number(raw) > 0 ? String(raw) : undefined;
+    const rawField = json.raw ?? json.Raw;
+    const rawPort = rawField != null && Number(rawField) > 0 ? String(rawField) : undefined;
     const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? name).trim() || name;
     const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
     const hashRaw = json.hash ?? json.vk_hash ?? '';
