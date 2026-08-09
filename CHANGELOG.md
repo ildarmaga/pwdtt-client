@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.266] — 2026-08-09
+
+### UI — убраны подсказки в Настройках
+Убраны пояснения про WG/RAW/TCP/RTP/хеши в Settings. Индикатор режима
+на Connect (`VK Calls · RAW · TCP`) оставлен. Снят лимит RAW 9 воркеров.
+Скорость: сервер **1.4.127+** (downlink = тот же TURN, что uplink).
+
 ## [0.3.265] — 2026-08-09
 
 ### Fix — TURN hairpin 91.231 + mass relay EOF

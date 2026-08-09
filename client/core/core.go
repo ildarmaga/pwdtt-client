@@ -213,12 +213,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		tunnelMode = "wg"
 	}
 
-	// Нормализуем количество воркеров. RAW sticky: >9 только плодит churn TURN.
 	n := NormalizeWorkers(c.cfg.Workers)
-	if tunnelMode == "raw" && n > workersPerGroup {
-		log.Printf("[CORE] RAW: воркеры %d → %d (меньше churn VK TURN)", n, workersPerGroup)
-		n = workersPerGroup
-	}
 	mtu := c.cfg.MTU
 	if mtu <= 0 {
 		mtu = 1280

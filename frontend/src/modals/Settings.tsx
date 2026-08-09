@@ -452,11 +452,6 @@ export default function Settings({ onClose }: Props) {
           <div className="st-row">
             <div>
               <span>Глобальные хеши</span>
-              <div className="st-row-hint" style={{ marginTop: 4 }}>
-                {settings.useGlobalHashes
-                  ? 'Хеши из Настроек. Профиль подписки игнорируется.'
-                  : 'Хеши берутся из профиля / подписки (рекомендуется).'}
-              </div>
             </div>
             <button className={`st-toggle st-toggle--${settings.useGlobalHashes ? 'on' : 'off'}`} onClick={() => update('useGlobalHashes', !settings.useGlobalHashes)} />
           </div>
@@ -464,9 +459,6 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
               <span>Режим туннеля</span>
-              <div className="st-row-hint" style={{ marginTop: 4 }}>
-                WG — классика. RAW — IP без WireGuard (нужен сервер ≥1.4.118)
-              </div>
             </div>
             <div className="st-seg">
               <button
@@ -491,9 +483,6 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
               <span>TURN транспорт</span>
-              <div className="st-row-hint" style={{ marginTop: 4 }}>
-                TCP — как qWDTT 1.4 (операторы меньше режут). UDP — старый путь
-              </div>
             </div>
             <div className="st-seg">
               <button
@@ -518,9 +507,6 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
               <span>Маскировка</span>
-              <div className="st-row-hint" style={{ marginTop: 4 }}>
-                RTP под аудио (OPUS) или видео (VP8) — как на Android
-              </div>
             </div>
             <div className="st-seg">
               <button
