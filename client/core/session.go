@@ -317,6 +317,9 @@ func RunSession(
 	}()
 
 	useWrap := len(tp.WrapKey) == wrapKeyLen
+	if tp.TunnelMode == "raw" && !useWrap {
+		return false, fmt.Errorf("RAW требует WRAP (direct DTLS+3), старый RAW-over-DTLS удалён")
+	}
 	useDirectRaw := tp.TunnelMode == "raw" && useWrap
 	var activeConn net.Conn
 	var pipeA, pipeB *connutil.PacketPipe
@@ -333,7 +336,7 @@ func RunSession(
 		}
 		log.Printf("[ВОРКЕР #%d] [DIRECT RAW] RTP/WRAP AEAD без DTLS ✓", sessionID)
 	} else {
-		// Legacy WG path: DTLS runs through an RTP/WRAP packet pipe.
+		// WG path: DTLS through RTP/WRAP packet pipe.
 		pipeA, pipeB = connutil.AsyncPacketPipe()
 		relayWg.Add(2)
 
@@ -358,11 +361,6 @@ func RunSession(
 			// RTP(12)+tag(16)+pad≤61 — запас под video padding
 			readBufLen := readBufSize + 100
 			plainCap := readBufSize
-			if tp.TunnelMode == "raw" {
-				// RAW IP MTU≤1280 + DTLS record overhead; не резать datagram.
-				readBufLen = 2048
-				plainCap = 2048
-			}
 			buf := make([]byte, readBufLen)
 			plain := make([]byte, plainCap)
 			for {
@@ -393,11 +391,7 @@ func RunSession(
 		go func() {
 			defer relayWg.Done()
 			defer sessCancel()
-			pipeBuf := readBufSize
-			if tp.TunnelMode == "raw" {
-				pipeBuf = 2048
-			}
-			b := make([]byte, pipeBuf)
+			b := make([]byte, readBufSize)
 			for {
 				n, _, readErr := pipeA.ReadFrom(b)
 				if readErr != nil {
@@ -475,7 +469,7 @@ func RunSession(
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
-	// Запрос конфига (WG: GETCONF один раз; RAW: RAWCONF на каждый DTLS-conn → свой IP)
+	// Запрос конфига (WG: GETCONF один раз; RAW: RAWCONF на каждый direct-conn → shared IP)
 	var rawWorkerIP net.IP
 	var rawPrimaryIP net.IP
 	if configGate != nil && configGate.needsConfig() {

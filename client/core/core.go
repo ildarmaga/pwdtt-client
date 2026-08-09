@@ -25,7 +25,7 @@ type Config struct {
 	CaptchaMode   string   // -captcha-mode
 	MTU           int      // 0 = default 1380
 	ObfsMode      string   // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode    string   // wg|raw — raw = IP over DTLS без WireGuard
+	TunnelMode    string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
 	TurnTransport string   // tcp|udp — канал клиент↔TURN (default tcp)
 	RawPrimaryIP  string   // soft-reconnect: IP сохранённого TUN для rewrite
 }
