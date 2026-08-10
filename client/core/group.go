@@ -219,7 +219,9 @@ func WorkerGroup(
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
 	var refreshMu sync.Mutex
-	var lastCredRefresh atomic.Int64
+	// Per-slot cooldown — раньше один atomic на всю группу блокировал
+	// параллельный refresh соседних слотов после mass RST.
+	lastCredRefresh := make([]atomic.Int64, poolSize)
 	var quotaBackoffUntil atomic.Int64
 	var signalOnce sync.Once
 	fireSignalReady := func() {
@@ -265,22 +267,29 @@ func WorkerGroup(
 	}
 
 	refreshCredSlot := func(slot int, reason string) bool {
+		if slot < 0 || slot >= len(lastCredRefresh) {
+			return false
+		}
 		refreshMu.Lock()
-		defer refreshMu.Unlock()
-
 		now := time.Now().Unix()
-		last := lastCredRefresh.Load()
+		last := lastCredRefresh[slot].Load()
 		minGap := int64(15)
-		if strings.Contains(strings.ToLower(reason), "quota") {
+		reasonLower := strings.ToLower(reason)
+		if strings.Contains(reasonLower, "quota") || strings.Contains(reasonLower, "recycle") {
 			minGap = 30
 		}
 		if last > 0 && now-last < minGap {
+			refreshMu.Unlock()
 			log.Printf("[TURN] Слот %d: креды уже обновлялись %d сек назад, ждём (%s)", slot, now-last, reason)
 			return false
 		}
-
+		// Резервируем cooldown до GetCreds, чтобы соседние воркеры слота
+		// не стартовали параллельный refresh; mutex отпускаем на время auth.
+		lastCredRefresh[slot].Store(now)
 		streamID := groupID*100 + slot
 		getStreamCache(streamID).invalidate(streamID)
+		refreshMu.Unlock()
+
 		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer refreshCancel()
 		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
@@ -292,7 +301,6 @@ func WorkerGroup(
 		credsMu.Lock()
 		credSlots[slot] = &Credentials{User: u, Pass: p, TurnURLs: urls, CacheStreamID: streamID}
 		credsMu.Unlock()
-		lastCredRefresh.Store(time.Now().Unix())
 		log.Printf("[TURN] Слот %d: креды обновлены после %s, TURN urls=%d", slot, reason, len(urls))
 		if onTurnURLs != nil && len(urls) > 0 {
 			onTurnURLs(urls)
@@ -390,6 +398,11 @@ func WorkerGroup(
 
 				if sessErr == nil {
 					attempt = 0
+					// SoftReconnect/Stop: ctx уже cancelled — не долбим VK auth.
+					// Mass RST / routine recycle: обновляем креды слота (cooldown 30с).
+					if ctx.Err() == nil {
+						refreshCredSlot(slot, "VK relay recycle")
+					}
 					// База 2с при долгой сессии. Если relay сдох быстро (флак),
 					// разносим реаллокацию шире, чтобы не устраивать шторм запросов
 					// и дать health-выбору увести воркер на стабильный сервер.

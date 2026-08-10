@@ -14,8 +14,10 @@ func TestDecideRecoverMode(t *testing.T) {
 		want               recoverMode
 	}{
 		{"force full (сеть)", true, 0, true, true, recoverFull},
-		{"soft always", false, 0, true, true, recoverSoft},
-		{"soft даже после многих soft", false, 5, true, true, recoverSoft},
+		{"first soft", false, 0, true, true, recoverSoft},
+		{"second soft still soft", false, 1, true, true, recoverSoft},
+		{"after 2 soft → full", false, 2, true, true, recoverFull},
+		{"after many soft → full", false, 5, true, true, recoverFull},
 		{"no wg → full", false, 0, true, false, recoverFull},
 		{"tunnel down → full", false, 0, false, true, recoverFull},
 	}
@@ -48,24 +50,37 @@ func TestSoftRecoverTrafficOK(t *testing.T) {
 	}
 }
 
-func TestSoftRecoverSucceededIdleWithWorkers(t *testing.T) {
+func TestSoftRecoverSucceededNeedsTraffic(t *testing.T) {
+	clearSoftProbeOK()
+	defer clearSoftProbeOK()
 	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
-	// Раньше idle после soft → «Soft без трафика» → шторм. Теперь workers>0 = OK.
-	if !softRecoverSucceeded(now, time.Time{}, 0, 9) {
-		t.Fatal("workers>0 must succeed even without traffic")
+
+	// workers alone ≠ OK (18/18 @ 0 B/s bug)
+	if softRecoverSucceeded(now, time.Time{}, 0, 9) {
+		t.Fatal("workers>0 without traffic must NOT succeed")
 	}
 	if softRecoverSucceeded(now, time.Time{}, 0, 0) {
 		t.Fatal("no workers and no traffic must fail")
 	}
-	if !softRecoverSucceeded(now, now.Add(-time.Second), softRecoverTrafficNeed, 0) {
-		t.Fatal("traffic alone must still succeed")
+	if softRecoverSucceeded(now, now.Add(-time.Second), softRecoverTrafficNeed, 0) {
+		t.Fatal("traffic without workers must fail")
+	}
+	if !softRecoverSucceeded(now, now.Add(-time.Second), softRecoverTrafficNeed, 9) {
+		t.Fatal("workers + traffic must succeed")
+	}
+
+	MarkSoftProbeOK()
+	if !softRecoverSucceeded(now, time.Time{}, 0, 0) {
+		t.Fatal("MarkSoftProbeOK must succeed even without bytes yet")
 	}
 }
 
 func TestSoftRecoverBusy(t *testing.T) {
 	now := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
-	if !softRecoverBusy(true, time.Time{}, now) {
-		t.Fatal("vkDirect must block nested soft")
+	// vkDirect alone must NOT block forever — only the time window does.
+	// After workers>0 finishSoft clears until; nested soft on verify-fail must proceed.
+	if softRecoverBusy(true, time.Time{}, now) {
+		t.Fatal("vkDirect alone must not block nested soft")
 	}
 	if softRecoverBusy(false, time.Time{}, now) {
 		t.Fatal("idle must allow soft")
@@ -73,8 +88,48 @@ func TestSoftRecoverBusy(t *testing.T) {
 	if !softRecoverBusy(false, now.Add(30*time.Second), now) {
 		t.Fatal("grace window must block")
 	}
+	if !softRecoverBusy(true, now.Add(30*time.Second), now) {
+		t.Fatal("grace window must block even with vkDirect")
+	}
 	if softRecoverBusy(false, now.Add(-time.Second), now) {
 		t.Fatal("expired grace must allow")
+	}
+	if softRecoverBusy(true, now.Add(-time.Second), now) {
+		t.Fatal("expired grace + vkDirect must allow (verify-fail nested soft)")
+	}
+}
+
+func TestShouldRestoreVKThroughTunnel(t *testing.T) {
+	if shouldRestoreVKThroughTunnel(0, true, false) {
+		t.Fatal("workers=0 must not restore VK through tunnel")
+	}
+	if shouldRestoreVKThroughTunnel(0, false, true) {
+		t.Fatal("probe alone without workers must not restore via helper")
+	}
+	if shouldRestoreVKThroughTunnel(9, false, false) {
+		t.Fatal("workers alone without traffic/probe must not restore")
+	}
+	if !shouldRestoreVKThroughTunnel(9, true, false) {
+		t.Fatal("workers + trafficOK must restore")
+	}
+	if !shouldRestoreVKThroughTunnel(1, false, true) {
+		t.Fatal("workers + probeOK must restore")
+	}
+	if !shouldRestoreVKThroughTunnel(18, true, true) {
+		t.Fatal("workers + both must restore")
+	}
+}
+
+func TestSoftAuthBeforeVerify(t *testing.T) {
+	if !softAuthBeforeVerify(true, time.Time{}) {
+		t.Fatal("vkDirect + no verify = auth in flight")
+	}
+	if softAuthBeforeVerify(false, time.Time{}) {
+		t.Fatal("no vkDirect = not soft auth hold")
+	}
+	verifyUntil := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	if softAuthBeforeVerify(true, verifyUntil) {
+		t.Fatal("verify started = not pre-verify auth hold")
 	}
 }
 
@@ -137,7 +192,6 @@ func TestShouldStallSoft(t *testing.T) {
 	if shouldStallSoft(true, thr, time.Minute, true, false, true, 18) {
 		t.Fatal("verify window → no stall soft")
 	}
-	// Idle 20–40s after burst must NOT soft (старый баг шторма).
 	if shouldStallSoft(true, 40*time.Second, time.Minute, true, false, false, 18) {
 		t.Fatal("40s idle with workers must not soft (need 3m)")
 	}
@@ -176,21 +230,26 @@ func TestSoftStormAllows(t *testing.T) {
 	if !ok || c != 1 {
 		t.Fatalf("first soft: ok=%v count=%d", ok, c)
 	}
-	ok, c, start = softStormAllows(1, start, now.Add(time.Minute))
-	if !ok || c != 2 {
-		t.Fatalf("second: ok=%v count=%d", ok, c)
+	var lastStart time.Time = start
+	for i := 2; i <= softStormMax; i++ {
+		ok, c, lastStart = softStormAllows(i-1, lastStart, now.Add(time.Duration(i)*time.Minute))
+		if !ok || c != i {
+			t.Fatalf("soft #%d: ok=%v count=%d", i, ok, c)
+		}
 	}
-	ok, c, start = softStormAllows(2, start, now.Add(2*time.Minute))
-	if !ok || c != 3 {
-		t.Fatalf("third: ok=%v count=%d", ok, c)
-	}
-	ok, c, _ = softStormAllows(3, start, now.Add(3*time.Minute))
+	ok, c, _ = softStormAllows(softStormMax, lastStart, now.Add(6*time.Minute))
 	if ok {
-		t.Fatalf("fourth in window must block, count=%d", c)
+		t.Fatalf("over cap must block, count=%d", c)
 	}
-	ok, c, _ = softStormAllows(3, start, now.Add(softStormWindow))
+	ok, c, _ = softStormAllows(softStormMax, lastStart, now.Add(softStormWindow))
 	if !ok || c != 1 {
 		t.Fatalf("new window must reset: ok=%v count=%d", ok, c)
+	}
+}
+
+func TestSoftStallImmuneIs90s(t *testing.T) {
+	if softStallImmuneAfter != 90*time.Second {
+		t.Fatalf("immune want 90s, got %s", softStallImmuneAfter)
 	}
 }
 

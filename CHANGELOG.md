@@ -1,6 +1,23 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.289] — 2026-08-10
+
+### Fix — RAW TCP soft reconnect после mass VK RST
+- `streamsPerCache=1`: каждый streamID — свой кэш (больше нет collapse 100–103 → cache=10).
+- Soft: VK через туннель **только после data-path** (трафик ≥64KiB или probe); workers>0 лишь стартуют verify, VK остаётся напрямую.
+- `softRecoverBusy` = time window; пока workers=0 и soft auth — grace продлевается (`softAuthBeforeVerify`); dip workers во время verify не soft.
+- Writer RST (`forcibly closed` / `connection reset` / `wsasend`) = routine recycle (INFO); refresh creds per-slot после штатного конца (не при SoftReconnect cancel); GetCreds вне refreshMu.
+
+## [0.3.288] — 2026-08-10
+
+### Fix — soft verify = живой data-path + soft→full
+- Verify после soft: **workers>0 И ≥64KiB** (или `MarkSoftProbeOK`); больше не «18/18 @ 0 B/s = OK».
+- После **2** неуспешных soft → **full** reconnect.
+- Stall-immune после успешного soft: **90с** (было 5 мин слепой зоны).
+- Storm cap: **5** soft / 10 мин (panel-flap).
+- `wdtt-soft-scenario` — live matrix RAW/WG на NL (connect/soft/hard/panel_restart).
+
 ## [0.3.287] — 2026-08-10
 
 ### Test — симулятор soft-сценариев + stall 3 мин

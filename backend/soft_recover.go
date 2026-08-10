@@ -1,28 +1,61 @@
 package backend
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
-// Политика soft (анти-шторм реконнектов):
+// Политика soft (анти-шторм + быстрый recover):
 //
 //  1. Soft ТОЛЬКО при: CORE умер | workers=0 дольше grace | zombie
 //     (воркеры >0, нет meaningful-трафика дольше stall).
 //  2. Простой с живыми воркерами — НЕ soft (idle ≠ zombie).
-//  3. Verify после soft: успех если workers>0; 64KiB не обязателен.
-//  4. Длинный immune + cooldown между soft; лимит soft в окне.
+//  3. Verify после soft: успех только при workers>0 И трафике ≥64KiB
+//     (или MarkSoftProbeOK). Workers alone ≠ OK (иначе 18/18 @ 0 B/s).
+//  4. VK через туннель — только после data-path (shouldRestoreVKThroughTunnel);
+//     workers>0 лишь стартуют verify, softRecoverUntil снимается.
+//  5. После softEscalateAfter неуспешных soft → full reconnect.
+//  6. Короткий immune после успешного soft; storm cap для panel-flap.
 const (
 	softRecoverVerifyWait  = 45 * time.Second
-	softRecoverTrafficNeed = int64(64 * 1024) // опционально: «трафик пошёл»
-	softStormMax           = 3
+	softRecoverTrafficNeed = int64(64 * 1024) // обязательный data-path после soft
+	softStormMax           = 5                // panel-flap: больше soft до manual
 	softStormWindow        = 10 * time.Minute
+	softEscalateAfter      = 2 // 2 soft fail → следующий recover = full
 )
+
+// softProbeOK — явный HTTP/download probe после soft (harness / будущий in-app probe).
+var softProbeOK atomic.Bool
+
+// MarkSoftProbeOK — data-path подтверждён внешним probe (≥1 MiB download и т.п.).
+func MarkSoftProbeOK() { softProbeOK.Store(true) }
+
+func clearSoftProbeOK() { softProbeOK.Store(false) }
+
+func softProbeMarked() bool { return softProbeOK.Load() }
 
 // softRecoverBusy — нельзя рвать текущий soft повторным SoftReconnect
 // (иначе context canceled посреди TURN/VK auth).
+// Busy = только time window. softRecoverVKDirect сам по себе НЕ блокирует
+// навсегда: после workers>0 finishSoft очищает until, чтобы nested soft
+// на verify-fail мог стартовать (VK остаётся direct до data-path OK).
 func softRecoverBusy(vkDirect bool, until, now time.Time) bool {
-	if vkDirect {
-		return true
-	}
+	_ = vkDirect
 	return !until.IsZero() && now.Before(until)
+}
+
+// softAuthBeforeVerify — soft держит VK direct, воркеры ещё не поднялись
+// (verify не стартовал). noteWorkerStats должен продлевать grace, а не
+// запускать workers-lost soft.
+func softAuthBeforeVerify(vkDirect bool, verifyUntil time.Time) bool {
+	return vkDirect && verifyUntil.IsZero()
+}
+
+// shouldRestoreVKThroughTunnel — вернуть VK веб/API в туннель только когда
+// есть живые воркеры И подтверждён data-path (трафик или probe).
+// Workers alone ≠ OK (иначе auth dials VPN DNS 172.31.255.254 до RAWCONF).
+func shouldRestoreVKThroughTunnel(workers int32, trafficOK bool, probeOK bool) bool {
+	return workers > 0 && (trafficOK || probeOK)
 }
 
 // shouldSkipFinishSoftRecover — старая сессия ещё гасится, Start ещё не был.
@@ -52,9 +85,12 @@ const (
 	recoverFull
 )
 
+// decideRecoverMode — soft пока TUN жив; после softEscalateAfter soft → full.
 func decideRecoverMode(forceFull bool, softCount int, tunnelUp, wgActive bool) recoverMode {
-	_ = softCount
 	if forceFull {
+		return recoverFull
+	}
+	if softCount >= softEscalateAfter {
 		return recoverFull
 	}
 	if tunnelUp && wgActive {
@@ -74,11 +110,14 @@ func softRecoverTrafficOK(now, lastTrafficAt time.Time, bytesSinceSoft int64) bo
 	return bytesSinceSoft >= softRecoverTrafficNeed
 }
 
-// softRecoverSucceeded — soft удался: живые воркеры ИЛИ реальный трафик.
-// Idle с воркерами ≠ провал (раньше требовали 64KiB → шторм soft).
+// softRecoverSucceeded — soft удался только с живым data-path.
+// workers>0 без трафика = ещё не успех (ждём verify window / probe).
 func softRecoverSucceeded(now, lastTrafficAt time.Time, bytesSinceSoft int64, workers int32) bool {
-	if workers > 0 {
+	if softProbeMarked() {
 		return true
+	}
+	if workers <= 0 {
+		return false
 	}
 	return softRecoverTrafficOK(now, lastTrafficAt, bytesSinceSoft)
 }
@@ -124,11 +163,12 @@ const (
 	softTickNone softTickAction = iota
 	softTickVerifyOK
 	softTickVerifyFailSoft
+	softTickVerifyFailFull // softEscalateAfter достигнуто → full
 	softTickStallSoft
 	softTickStormBlock
 )
 
-// SoftTickInput — снимок состояния для decideSoftTick (без Orchestrator/Wails).
+// SoftTickInput — снимок состояния для DecideSoftTick (без Orchestrator/Wails).
 type SoftTickInput struct {
 	Now            time.Time
 	Watch          bool
@@ -142,9 +182,10 @@ type SoftTickInput struct {
 	LastTrafficAt  time.Time
 	BytesSinceSoft int64
 	SoftBusy       bool
-	CooldownActive  bool
+	CooldownActive bool
 	StormCount     int
 	StormStarted   time.Time
+	SoftFailCount  int // сколько soft уже сделали в текущей серии fail
 }
 
 // SoftTickResult — что делать и новое состояние storm-счётчика.
@@ -175,6 +216,11 @@ func DecideSoftTick(in SoftTickInput) SoftTickResult {
 	if in.VerifyExpired {
 		if softRecoverSucceeded(in.Now, in.LastTrafficAt, in.BytesSinceSoft, in.Workers) {
 			out.Action = softTickVerifyOK
+			return out
+		}
+		// Уже softEscalateAfter soft в серии → full, не ещё soft.
+		if in.SoftFailCount >= softEscalateAfter {
+			out.Action = softTickVerifyFailFull
 			return out
 		}
 		return trySoft(softTickVerifyFailSoft)

@@ -60,7 +60,9 @@ const (
 	errorWindow        = 10 * time.Second
 )
 
-var streamsPerCache = 10
+// One cache entry per streamID — sharing (streamsPerCache=10) collapsed the
+// pool after mass VK RST (streamIDs 100-103 all hit cache=10).
+var streamsPerCache = 1
 
 func getCacheID(streamID int) int {
 	return streamID / streamsPerCache

@@ -8,25 +8,27 @@ import (
 
 // Симулятор политики soft: шаги по времени без живого VPN/сервера.
 type softSim struct {
-	t              *testing.T
-	now            time.Time
-	connectedAt    time.Time
-	lastTrafficAt  time.Time
-	lastBytes      int64
-	bytesAtSoft    int64
-	workers        int32
-	wasActive      bool
-	immuneUntil    time.Time
-	verifyUntil    time.Time
-	stormCount     int
-	stormStarted   time.Time
-	softBusyUntil  time.Time
-	cooldownUntil  time.Time
-	softEvents     []string
+	t             *testing.T
+	now           time.Time
+	connectedAt   time.Time
+	lastTrafficAt time.Time
+	lastBytes     int64
+	bytesAtSoft   int64
+	workers       int32
+	wasActive     bool
+	immuneUntil   time.Time
+	verifyUntil   time.Time
+	stormCount    int
+	stormStarted  time.Time
+	softBusyUntil time.Time
+	cooldownUntil time.Time
+	softFailCount int
+	softEvents    []string
 }
 
 func newSoftSim(t *testing.T, start time.Time) *softSim {
 	t.Helper()
+	clearSoftProbeOK()
 	return &softSim{
 		t:             t,
 		now:           start,
@@ -52,7 +54,6 @@ func (s *softSim) addBytes(n int64) {
 }
 
 func (s *softSim) keepaliveTick() {
-	// ~1 KiB keepalive за тик — не должен двигать lastTrafficAt.
 	s.addBytes(1024)
 }
 
@@ -62,20 +63,38 @@ func (s *softSim) realTraffic(n int64) {
 
 func (s *softSim) beginSoft() {
 	s.softEvents = append(s.softEvents, fmt.Sprintf("soft@%s", s.now.Format("15:04:05")))
+	s.softFailCount++
 	s.softBusyUntil = s.now.Add(softRecoverAuthGrace)
-	s.immuneUntil = s.now.Add(softStallImmuneAfter)
+	s.immuneUntil = time.Time{} // как SoftReconnect: immune только после verify OK / finish
 	s.verifyUntil = s.now.Add(softRecoverVerifyWait)
 	s.bytesAtSoft = s.lastBytes
 	s.cooldownUntil = s.now.Add(autoReconnectCooldown)
 	s.lastBytes = 0
+	s.bytesAtSoft = 0
 	s.lastTrafficAt = s.now
 	s.workers = 0
+	clearSoftProbeOK()
+}
+
+func (s *softSim) beginFull() {
+	s.softEvents = append(s.softEvents, fmt.Sprintf("full@%s", s.now.Format("15:04:05")))
+	s.softFailCount = 0
+	s.softBusyUntil = s.now.Add(softRecoverAuthGrace)
+	s.verifyUntil = s.now.Add(softRecoverVerifyWait)
+	s.cooldownUntil = s.now.Add(autoReconnectCooldown)
+	s.lastBytes = 0
+	s.bytesAtSoft = 0
+	s.lastTrafficAt = s.now
+	s.workers = 0
+	s.immuneUntil = time.Time{}
+	clearSoftProbeOK()
 }
 
 func (s *softSim) workersUp(n int32) {
 	s.workers = n
 	if n > 0 {
-		s.verifyUntil = time.Time{} // как noteWorkerStats: verify OK сразу
+		// Как finishSoftRecoverVK: снимаем softBusy (until), но VK/verify
+		// не считаем OK — нужен трафик / probe (не workers alone).
 		s.softBusyUntil = time.Time{}
 	}
 }
@@ -98,9 +117,10 @@ func (s *softSim) tick() SoftTickResult {
 		LastTrafficAt:  s.lastTrafficAt,
 		BytesSinceSoft: s.lastBytes - s.bytesAtSoft,
 		SoftBusy:       !s.softBusyUntil.IsZero() && s.now.Before(s.softBusyUntil),
-		CooldownActive:  !s.cooldownUntil.IsZero() && s.now.Before(s.cooldownUntil),
+		CooldownActive: !s.cooldownUntil.IsZero() && s.now.Before(s.cooldownUntil),
 		StormCount:     s.stormCount,
 		StormStarted:   s.stormStarted,
+		SoftFailCount:  s.softFailCount,
 	}
 	res := DecideSoftTick(in)
 	switch res.Action {
@@ -108,21 +128,42 @@ func (s *softSim) tick() SoftTickResult {
 		s.stormCount = res.StormCount
 		s.stormStarted = res.StormStarted
 		s.beginSoft()
+	case softTickVerifyFailFull:
+		s.beginFull()
 	case softTickStormBlock:
 		s.softEvents = append(s.softEvents, fmt.Sprintf("storm_block@%s", s.now.Format("15:04:05")))
 	case softTickVerifyOK:
 		s.verifyUntil = time.Time{}
+		s.softFailCount = 0
+		s.immuneUntil = s.now.Add(softStallImmuneAfter)
 	}
 	return res
 }
 
-func (s *softSim) softCount() int { return len(s.softEvents) }
+func (s *softSim) softCount() int {
+	n := 0
+	for _, e := range s.softEvents {
+		if len(e) >= 4 && e[:4] == "soft" {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *softSim) fullCount() int {
+	n := 0
+	for _, e := range s.softEvents {
+		if len(e) >= 4 && e[:4] == "full" {
+			n++
+		}
+	}
+	return n
+}
 
 func TestScenario_IdleBrowsingNoSoftStorm(t *testing.T) {
-	// Реальный баг: burst → idle 20–120с → soft → soft. 2 мин idle — ещё не zombie.
 	s := newSoftSim(t, time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
-	s.realTraffic(5 << 20) // 5 MiB burst
-	for i := 0; i < 60; i++ { // 2 минуты по 2с — ниже stall threshold 3м
+	s.realTraffic(5 << 20)
+	for i := 0; i < 60; i++ {
 		s.advance(2 * time.Second)
 		s.keepaliveTick()
 		res := s.tick()
@@ -139,7 +180,6 @@ func TestScenario_IdleBrowsingNoSoftStorm(t *testing.T) {
 func TestScenario_Zombie18WorkersTriggersSoft(t *testing.T) {
 	s := newSoftSim(t, time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC))
 	s.realTraffic(10 << 20)
-	// 3м+ только keepalive → zombie soft.
 	for i := 0; i < 100; i++ {
 		s.advance(2 * time.Second)
 		s.keepaliveTick()
@@ -156,38 +196,78 @@ func TestScenario_Zombie18WorkersTriggersSoft(t *testing.T) {
 		s.softEvents, s.now.Sub(s.lastTrafficAt))
 }
 
-func TestScenario_AfterSoftIdleVerifyOK(t *testing.T) {
-	// Раньше: soft → workers up → idle 30с → verify fail → soft снова.
+func TestScenario_AfterSoftNeedsTrafficThenIdleOK(t *testing.T) {
 	s := newSoftSim(t, time.Date(2026, 8, 10, 14, 0, 0, 0, time.UTC))
 	s.realTraffic(1 << 20)
-	// Форсируем soft вручную как после zombie.
 	s.beginSoft()
 	s.stormCount = 1
 	s.stormStarted = s.now
 	s.advance(5 * time.Second)
 	s.workersUp(18)
-	// 2 минуты idle+keepalive — не должно быть второго soft.
-	for i := 0; i < 60; i++ {
-		s.advance(2 * time.Second)
-		s.keepaliveTick()
-		res := s.tick()
-		if res.Action == softTickStallSoft || res.Action == softTickVerifyFailSoft {
-			t.Fatalf("post-soft idle must not re-soft: %v action=%d", s.softEvents, res.Action)
-		}
-		if res.Action == softTickVerifyOK {
-			// ok, cleared
+	// Без трафика verify не OK.
+	s.advance(softRecoverVerifyWait + time.Second)
+	s.cooldownUntil = time.Time{}
+	res := s.tick()
+	if res.Action == softTickVerifyOK {
+		t.Fatal("workers without traffic must not VerifyOK")
+	}
+	// Новый soft уже начат tick'ом (fail→soft). Поднимаем с трафиком.
+	if res.Action == softTickVerifyFailSoft {
+		s.advance(5 * time.Second)
+		s.workersUp(18)
+		s.realTraffic(softRecoverTrafficNeed)
+		s.advance(softRecoverVerifyWait + time.Second)
+		s.cooldownUntil = time.Time{}
+		res = s.tick()
+		if res.Action != softTickVerifyOK {
+			t.Fatalf("want VerifyOK after traffic, got %d events=%v", res.Action, s.softEvents)
 		}
 	}
-	if s.softCount() != 1 {
-		t.Fatalf("want exactly 1 soft, got %d %v", s.softCount(), s.softEvents)
+	// Idle под immune 90s — без нового soft.
+	for i := 0; i < 40; i++ {
+		s.advance(2 * time.Second)
+		s.keepaliveTick()
+		res = s.tick()
+		if res.Action == softTickStallSoft || res.Action == softTickVerifyFailSoft {
+			t.Fatalf("post-verify idle must not re-soft: %v action=%d", s.softEvents, res.Action)
+		}
+	}
+}
+
+func TestScenario_TwoSoftFailThenFull(t *testing.T) {
+	s := newSoftSim(t, time.Date(2026, 8, 10, 14, 30, 0, 0, time.UTC))
+	// Soft #1 fail (workers, no traffic)
+	s.beginSoft()
+	s.stormCount = 1
+	s.stormStarted = s.now
+	s.advance(5 * time.Second)
+	s.workersUp(18)
+	s.advance(softRecoverVerifyWait + time.Second)
+	s.cooldownUntil = time.Time{}
+	res := s.tick()
+	if res.Action != softTickVerifyFailSoft {
+		t.Fatalf("soft#1 fail want VerifyFailSoft, got %d", res.Action)
+	}
+	// Soft #2 fail
+	s.advance(5 * time.Second)
+	s.workersUp(18)
+	s.advance(softRecoverVerifyWait + time.Second)
+	s.cooldownUntil = time.Time{}
+	res = s.tick()
+	if res.Action != softTickVerifyFailFull {
+		t.Fatalf("soft#2 fail want VerifyFailFull (escalate), got %d failCount=%d events=%v",
+			res.Action, s.softFailCount, s.softEvents)
+	}
+	if s.fullCount() != 1 {
+		t.Fatalf("want 1 full, got %d %v", s.fullCount(), s.softEvents)
 	}
 }
 
 func TestScenario_SoftStormCap(t *testing.T) {
 	s := newSoftSim(t, time.Date(2026, 8, 10, 15, 0, 0, 0, time.UTC))
-	s.immuneUntil = time.Time{} // без immune
+	s.immuneUntil = time.Time{}
 	s.cooldownUntil = time.Time{}
-	for round := 0; round < 5; round++ {
+	for round := 0; round < softStormMax+2; round++ {
 		s.lastTrafficAt = s.now.Add(-trafficStallThreshold - time.Second)
 		s.workers = 18
 		s.wasActive = true
@@ -201,6 +281,7 @@ func TestScenario_SoftStormCap(t *testing.T) {
 				t.Fatalf("round %d want stall soft, got %d", round, res.Action)
 			}
 			s.workersUp(18)
+			s.realTraffic(softRecoverTrafficNeed)
 			s.advance(autoReconnectCooldown + time.Second)
 			continue
 		}
@@ -255,7 +336,6 @@ func TestScenario_KeepaliveDoesNotResetStallClock(t *testing.T) {
 }
 
 func TestScenario_PreserveRaceReadyBeforeRawConfig(t *testing.T) {
-	// TunAlreadyReady: READY раньше raw_config — preserve нельзя снимать на READY.
 	if shouldClearSoftPreserveOnWorkerReady() {
 		t.Fatal("READY must keep preserve")
 	}

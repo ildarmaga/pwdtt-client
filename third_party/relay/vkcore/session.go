@@ -427,6 +427,10 @@ func RunSession(
 				_, writeErr := dtlsConn.Write(pkt)
 				putPktBuf(pkt)
 				if writeErr != nil {
+					if isRoutineRelayClose(writeErr) {
+						log.Printf("[ВОРКЕР #%d] relay=%s переподключение (VK обновил relay)", sessionID, relayHost)
+						return
+					}
 					log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
 					return
 				}
@@ -493,6 +497,7 @@ func RunSession(
 
 // isRoutineRelayClose — штатное закрытие relay удалённой стороной (VK рециклит
 // TURN-allocation). Не сбой: воркер переподключается на свежий relay.
+// Windows RST часто приходит как "forcibly closed" / "wsasend".
 func isRoutineRelayClose(err error) bool {
 	if err == nil {
 		return false
@@ -501,5 +506,9 @@ func isRoutineRelayClose(err error) bool {
 		return true
 	}
 	low := strings.ToLower(err.Error())
-	return strings.Contains(low, "eof") || strings.Contains(low, "use of closed")
+	return strings.Contains(low, "eof") ||
+		strings.Contains(low, "use of closed") ||
+		strings.Contains(low, "forcibly closed") ||
+		strings.Contains(low, "connection reset") ||
+		strings.Contains(low, "wsasend")
 }

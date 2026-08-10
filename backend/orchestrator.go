@@ -255,9 +255,9 @@ type Orchestrator struct {
 	// каждые ~10–12 с и сессия не поднимается без ребута ПК).
 	softRecoverUntil time.Time
 	// softRecoverVKDirect — во время soft-recover VK веб/API временно напрямую;
-	// после первого живого воркера вернём «через туннель».
+	// возвращаем в туннель только после data-path OK (не по workers alone).
 	softRecoverVKDirect bool
-	// softRecoverCount — сколько soft подряд (диагностика; эскалации в full нет).
+	// softRecoverCount — сколько soft подряд; ≥ softEscalateAfter → full.
 	softRecoverCount int
 	// softRecoverVerifyUntil — дедлайн проверки трафика после soft.
 	softRecoverVerifyUntil time.Time
@@ -287,8 +287,8 @@ const (
 	trafficStallThreshold    = 3 * time.Minute
 	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive
 	trafficStallStartupGrace = 90 * time.Second
-	// После soft не дёргать stall долго (иначе idle → soft → idle → soft).
-	softStallImmuneAfter     = 5 * time.Minute
+	// После успешного soft не дёргать stall (короткое окно; раньше 5м слепая зона).
+	softStallImmuneAfter     = 90 * time.Second
 	trafficActiveMinBytes    = int64(512)
 	trafficActiveWindow      = 3 * time.Minute
 	sessionWatchAfterConnect = 10 * time.Minute
@@ -325,6 +325,7 @@ func (o *Orchestrator) Reconnect() error {
 	o.softStormStarted = time.Time{}
 	o.softStormCount = 0
 	o.mu.Unlock()
+	clearSoftProbeOK()
 	SetSoftReconnectPreserve(false)
 	if params.Profile == "" {
 		return fmt.Errorf("нет сохранённых параметров подключения")
@@ -342,7 +343,9 @@ func (o *Orchestrator) SoftReconnect() error {
 	params := o.lastParams
 	canPreserve := o.tunnelUp && wgTunnelActive()
 	// Уже идёт soft и сессия жива — не убивать TURN/VK mid-flight.
-	if softRecoverBusy(o.softRecoverVKDirect, o.softRecoverUntil, time.Now()) &&
+	// softAuthBeforeVerify: grace мог истечь между тиками noteWorkerStats.
+	if (softRecoverBusy(o.softRecoverVKDirect, o.softRecoverUntil, time.Now()) ||
+		softAuthBeforeVerify(o.softRecoverVKDirect, o.softRecoverVerifyUntil)) &&
 		o.sess != nil && o.sess.c != nil {
 		o.mu.Unlock()
 		return fmt.Errorf("soft-восстановление уже идёт")
@@ -363,8 +366,9 @@ func (o *Orchestrator) SoftReconnect() error {
 	if params.Profile == "" {
 		return fmt.Errorf("нет сохранённых параметров подключения")
 	}
+	clearSoftProbeOK()
 	if canPreserve {
-		// Держим флаг до первого живого воркера (finishSoftRecoverVK) —
+		// Держим флаг до soft-apply raw/wg_config —
 		// нельзя сбрасывать defer'ом сразу после Start: иначе wg_config
 		// приходит уже без preserve и сносит wg-turn посреди VK auth.
 		SetSoftReconnectPreserve(true)
@@ -428,7 +432,9 @@ func (o *Orchestrator) inSoftRecoverWindow() bool {
 	return !o.softRecoverUntil.IsZero() && time.Now().Before(o.softRecoverUntil)
 }
 
-// finishSoftRecoverVK — после первого живого воркера вернуть VK веб/API в туннель.
+// finishSoftRecoverVK — после первого живого воркера: стартуем verify-окно,
+// снимаем softRecoverUntil (чтобы nested soft на verify-fail не блокировался),
+// но VK остаётся напрямую (softRecoverVKDirect) до data-path OK.
 // SoftReconnectPreserve НЕ снимаем здесь: при TunAlreadyReady воркер READY
 // приходит раньше raw_config; если снять preserve — applyRawConfig сделает
 // Creating adapter и убьёт soft. Preserve снимает soft apply (markSoftPreserveConsumed).
@@ -441,7 +447,7 @@ func (o *Orchestrator) finishSoftRecoverVK() {
 	}
 	needVK := o.softRecoverVKDirect
 	startVerify := needVK && o.softRecoverCount > 0 && o.softRecoverVerifyUntil.IsZero()
-	o.softRecoverVKDirect = false
+	// KEEP softRecoverVKDirect — SetVKThroughTunnel(true) только после data-path.
 	o.softRecoverUntil = time.Time{}
 	now := time.Now()
 	if startVerify {
@@ -457,15 +463,33 @@ func (o *Orchestrator) finishSoftRecoverVK() {
 	if !needVK {
 		return
 	}
-	if err := SetVKThroughTunnel(true); err != nil {
-		runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[SOFT] не удалось вернуть VK в туннель: %v", err))
-		return
-	}
-	runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK снова через туннель (воркеры живы)")
+	runtime.EventsEmit(o.appCtx, "log", "INFO",
+		"[SOFT] Воркеры живы — VK пока напрямую, ждём data-path (трафик/probe)")
 	if startVerify {
 		runtime.EventsEmit(o.appCtx, "log", "INFO",
 			fmt.Sprintf("[SOFT] Проверка трафика %s (иначе ещё soft)", softRecoverVerifyWait.Round(time.Second)))
 	}
+}
+
+// restoreVKAfterSoftDataPath — data-path OK → VK снова через туннель.
+func (o *Orchestrator) restoreVKAfterSoftDataPath(workers int32, trafficOK, probeOK bool) {
+	if !shouldRestoreVKThroughTunnel(workers, trafficOK, probeOK) {
+		return
+	}
+	o.mu.Lock()
+	need := o.softRecoverVKDirect
+	o.mu.Unlock()
+	if !need {
+		return
+	}
+	if err := SetVKThroughTunnel(true); err != nil {
+		runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[SOFT] не удалось вернуть VK в туннель: %v", err))
+		return
+	}
+	o.mu.Lock()
+	o.softRecoverVKDirect = false
+	o.mu.Unlock()
+	runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK снова через туннель (data-path OK)")
 }
 
 func (o *Orchestrator) resetWorkersLostState() {
@@ -494,12 +518,7 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		o.mu.Lock()
 		o.workersZeroAt = time.Time{}
 		o.workersLostAt = false
-		// Живые воркеры = soft verify пройден (не ждём 64KiB / idle).
-		if !o.softRecoverVerifyUntil.IsZero() {
-			o.softRecoverCount = 0
-			o.softRecoverVerifyUntil = time.Time{}
-			o.softRecoverBytesAt = 0
-		}
+		// Verify НЕ закрываем по workers alone — нужен трафик / MarkSoftProbeOK.
 		o.mu.Unlock()
 		o.finishSoftRecoverVK()
 		return
@@ -507,21 +526,31 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 	o.mu.Lock()
 	vkDirect := o.softRecoverVKDirect
 	until := o.softRecoverUntil
-	busy := softRecoverBusy(vkDirect, until, time.Now())
-	// Пока soft auth/TURN — продлеваем grace, не стартуем второй SoftReconnect.
+	verifyUntil := o.softRecoverVerifyUntil
+	now := time.Now()
+	// Soft auth ещё до verify (воркеры=0): всегда продлеваем grace —
+	// иначе после softRecoverAuthGrace nested soft рвёт VK mid-flight.
+	if softAuthBeforeVerify(vkDirect, verifyUntil) {
+		o.softRecoverUntil = now.Add(softRecoverAuthGrace)
+		o.mu.Unlock()
+		return
+	}
+	// Dip workers=0 во время verify — не soft (как stall's verifyPending).
+	if !verifyUntil.IsZero() && now.Before(verifyUntil) {
+		o.mu.Unlock()
+		return
+	}
+	busy := softRecoverBusy(vkDirect, until, now)
 	if busy {
-		if vkDirect {
-			o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
-		}
 		o.mu.Unlock()
 		return
 	}
 	if o.workersZeroAt.IsZero() {
-		o.workersZeroAt = time.Now()
+		o.workersZeroAt = now
 		o.mu.Unlock()
 		return
 	}
-	zeroFor := time.Since(o.workersZeroAt)
+	zeroFor := now.Sub(o.workersZeroAt)
 	o.mu.Unlock()
 	if zeroFor >= workersLostGrace {
 		o.triggerAutoReconnect("Нет активных воркеров — soft-восстановление…")
@@ -564,12 +593,19 @@ func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
 			o.trafficWasActive = true
 			o.trafficActiveUntil = now.Add(trafficActiveWindow)
 		}
-		// Soft verify прошёл — сбрасываем счётчик эскалации.
+		// Soft verify прошёл (workers + traffic) — сбрасываем эскалацию и VK → туннель.
 		if !o.softRecoverVerifyUntil.IsZero() &&
 			softRecoverSucceeded(now, o.lastTrafficAt, total-o.softRecoverBytesAt, o.lastWorkers) {
+			bytesSince := total - o.softRecoverBytesAt
+			workers := o.lastWorkers
+			trafficOK := softRecoverTrafficOK(now, o.lastTrafficAt, bytesSince)
+			probeOK := softProbeMarked()
 			o.softRecoverCount = 0
 			o.softRecoverVerifyUntil = time.Time{}
 			o.softRecoverBytesAt = 0
+			o.softStallImmuneUntil = now.Add(softStallImmuneAfter)
+			o.restoreVKAfterSoftDataPath(workers, trafficOK, probeOK)
+			clearSoftProbeOK()
 		}
 		return
 	}
@@ -691,19 +727,33 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	}
 	o.mu.Unlock()
 
-	// Soft поднял воркеров — этого достаточно (idle ≠ провал). Иначе шторм soft.
+	// Soft verify: нужны workers + meaningful traffic (или MarkSoftProbeOK).
 	if !verifyUntil.IsZero() && now.After(verifyUntil) {
 		if softRecoverSucceeded(now, lastAt, bytesSinceSoft, workers) {
+			trafficOK := softRecoverTrafficOK(now, lastAt, bytesSinceSoft)
+			probeOK := softProbeMarked()
 			o.mu.Lock()
 			o.softRecoverCount = 0
 			o.softRecoverVerifyUntil = time.Time{}
 			o.softRecoverBytesAt = 0
+			o.softStallImmuneUntil = now.Add(softStallImmuneAfter)
 			o.mu.Unlock()
+			o.restoreVKAfterSoftDataPath(workers, trafficOK, probeOK)
+			clearSoftProbeOK()
 		} else {
 			o.mu.Lock()
+			failCount := o.softRecoverCount
 			o.softRecoverVerifyUntil = time.Time{}
+			// Снимаем hold, иначе softAuthBeforeVerify снова продлит until
+			// при workers=0 и заблокирует nested SoftReconnect.
+			o.softRecoverVKDirect = false
+			o.softRecoverUntil = time.Time{}
 			o.mu.Unlock()
-			o.triggerAutoReconnect("Soft без воркеров — повторный soft…")
+			if failCount >= softEscalateAfter {
+				o.triggerReconnect("Soft без data-path — полный reconnect…", true)
+			} else {
+				o.triggerAutoReconnect("Soft без data-path — повторный soft…")
+			}
 			return
 		}
 	}
