@@ -63,3 +63,24 @@ func TestSoftRecoverBusy(t *testing.T) {
 		t.Fatal("expired grace must allow")
 	}
 }
+
+func TestShouldAutoSoftOnCoreEnd(t *testing.T) {
+	if !shouldAutoSoftOnCoreEnd(false, false, false, true, true) {
+		t.Fatal("natural CORE death with TUN must auto-soft")
+	}
+	if shouldAutoSoftOnCoreEnd(true, false, false, true, true) {
+		t.Fatal("preserve soft-swap must not double-soft")
+	}
+	if shouldAutoSoftOnCoreEnd(false, true, false, true, true) {
+		t.Fatal("softSwapInProgress must not auto-soft")
+	}
+	if shouldAutoSoftOnCoreEnd(false, false, true, true, true) {
+		t.Fatal("explicit Stop (suppress) must not auto-soft")
+	}
+	if shouldAutoSoftOnCoreEnd(false, false, false, false, true) {
+		t.Fatal("tunnel already down must not auto-soft")
+	}
+	if shouldAutoSoftOnCoreEnd(false, false, false, true, false) {
+		t.Fatal("no TUN iface must not auto-soft")
+	}
+}

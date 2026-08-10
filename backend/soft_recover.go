@@ -17,6 +17,11 @@ func softRecoverBusy(vkDirect bool, until, now time.Time) bool {
 	return !until.IsZero() && now.Before(until)
 }
 
+// shouldAutoSoftOnCoreEnd — CORE умер сам, TUN ещё жив → soft вместо «Отключено».
+func shouldAutoSoftOnCoreEnd(preserve, swap, suppress, tunnelUp, wgActive bool) bool {
+	return !preserve && !swap && !suppress && tunnelUp && wgActive
+}
+
 type recoverMode int
 
 const (

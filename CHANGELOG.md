@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.282] — 2026-08-10
+
+### Fix — RAW/WG: CORE упал → soft, не «Отключено»
+- Если CORE завершился сам, а TUN ещё жив — сразу SoftReconnect (раньше рвало в idle).
+- Явный Disconnect по-прежнему сносит туннель.
+- `workersLostGrace` 4s→2s (воркеры часто сами встают за ~3s).
+
 ## [0.3.281] — 2026-08-10
 
 ### Fix — быстрый SoftReconnect без «TUN не готов» и nested soft

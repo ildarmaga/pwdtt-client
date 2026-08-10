@@ -269,7 +269,10 @@ type Orchestrator struct {
 
 const networkChangeDebounce = 1500 * time.Millisecond
 
-const workersLostGrace = 4 * time.Second
+// workersLostGrace — сколько workers=0 терпим до soft. RAW/WG воркеры
+// сами переподключаются за ~2–3 с; soft нужен когда CORE уже мёртв или
+// воркеры залипли дольше этого окна.
+const workersLostGrace = 2 * time.Second
 
 const (
 	trafficStallThreshold    = 8 * time.Second // залипание пути (игры не терпят 20–30 с)
@@ -976,21 +979,26 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 	o.mu.Lock()
 	preserve := o.preserveOnSessionEnd
 	o.preserveOnSessionEnd = false
+	suppress := o.suppressWorkersLost
+	tunnelUp := o.tunnelUp
+	swap := o.softSwapInProgress
 	o.mu.Unlock()
 
-	if o.tunnelUp && !o.suppressWorkersLost && !preserve {
+	// CORE сдох сам, а TUN ещё жив (типичный RAW/WG blip) — soft вместо «Отключено».
+	// Не трогаем явный Stop (tunnelUp уже false) и текущий soft-swap.
+	autoSoft := shouldAutoSoftOnCoreEnd(preserve, swap, suppress, tunnelUp, wgTunnelActive())
+
+	if autoSoft {
+		runtime.EventsEmit(o.appCtx, "log", "WARN",
+			"[SOFT] CORE завершился при живом TUN — soft-восстановление…")
+	} else if tunnelUp && !suppress && !preserve {
 		o.emitWorkersLost("Сессия VPN завершилась — нажмите «Переподключить»")
 	}
-	if !preserve {
-		o.tunnelUp = false
-		o.suppressWorkersLost = false
-		o.stopTrafficWatch()
-		o.stopNetworkWatch()
-		teardownWG()
-		o.stopInternetPing()
-		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
-	} else {
-		runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VPN-интерфейс сохранён, перезапуск TURN-воркеров…")
+
+	if preserve || autoSoft {
+		if preserve {
+			runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VPN-интерфейс сохранён, перезапуск TURN-воркеров…")
+		}
 		// Soft-сессия умерла сама (не swap SoftReconnect) без воркеров —
 		// короткий cool-down, затем можно повторить soft.
 		o.mu.Lock()
@@ -999,6 +1007,14 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 			o.softRecoverUntil = time.Now().Add(3 * time.Second)
 		}
 		o.mu.Unlock()
+	} else {
+		o.tunnelUp = false
+		o.suppressWorkersLost = false
+		o.stopTrafficWatch()
+		o.stopNetworkWatch()
+		teardownWG()
+		o.stopInternetPing()
+		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 	}
 	// Останавливаем буферизованный логгер и восстанавливаем оригинальный
 	if lw, ok := log.Writer().(*wailsLogWriter); ok {
@@ -1016,7 +1032,7 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 	}
 	ts := time.Now().Format("15:04:05")
 	runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] Сессия завершена", ts))
-	if o.onTray != nil && !preserve {
+	if o.onTray != nil && !preserve && !autoSoft {
 		o.onTray(false, 0, 0, 0)
 	}
 	o.mu.Lock()
@@ -1024,6 +1040,10 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		o.sess = nil
 	}
 	o.mu.Unlock()
+	if autoSoft {
+		o.triggerAutoReconnect("CORE упал — soft-восстановление…")
+		return
+	}
 	if !preserve {
 		runtime.EventsEmit(o.appCtx, "state_changed", "disconnected", "")
 	}
