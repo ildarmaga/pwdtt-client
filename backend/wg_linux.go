@@ -57,8 +57,13 @@ func applyWGConfig(conf string, turnIPs []string) error {
 			return fmt.Errorf("soft wg setconf: %w", err)
 		}
 		EnsureTurnDirectRoutes(turnIPs)
+		markSoftPreserveConsumed()
 		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, ключи WG обновлены", wgIface)
 		return nil
+	}
+	if SoftReconnectPreserve() {
+		log.Printf("[WG] Soft: нет WG device — полный create")
+		markSoftPreserveConsumed()
 	}
 	teardownWG()
 
@@ -124,8 +129,13 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		if err := rebindRawBridgeSoft("9000"); err != nil {
 			return fmt.Errorf("soft raw bridge: %w", err)
 		}
+		markSoftPreserveConsumed()
 		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, bridge + TURN routes обновлены", wgIface)
 		return nil
+	}
+	if SoftReconnectPreserve() {
+		log.Printf("[RAW] Soft: нет RAW TUN — полный create")
+		markSoftPreserveConsumed()
 	}
 	teardownWG()
 

@@ -22,6 +22,17 @@ func shouldSkipFinishSoftRecover(softSwap, softCoreStarted bool) bool {
 	return softSwap && !softCoreStarted
 }
 
+// shouldClearSoftPreserveOnWorkerReady — READY раньше raw_config при TunAlreadyReady.
+// Preserve снимает только soft apply конфига, иначе Creating adapter.
+func shouldClearSoftPreserveOnWorkerReady() bool {
+	return false
+}
+
+// decideSoftApplyPath — soft apply vs full create при raw_config/wg_config.
+func decideSoftApplyPath(preserve, tunAlive bool) (softApply bool) {
+	return preserve && tunAlive
+}
+
 // shouldAutoSoftOnCoreEnd — CORE умер сам, TUN ещё жив → soft вместо «Отключено».
 func shouldAutoSoftOnCoreEnd(preserve, swap, suppress, tunnelUp, wgActive bool) bool {
 	return !preserve && !swap && !suppress && tunnelUp && wgActive

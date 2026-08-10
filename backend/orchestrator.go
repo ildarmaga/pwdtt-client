@@ -425,8 +425,10 @@ func (o *Orchestrator) inSoftRecoverWindow() bool {
 	return !o.softRecoverUntil.IsZero() && time.Now().Before(o.softRecoverUntil)
 }
 
-// finishSoftRecoverVK — после первого живого воркера вернуть VK веб/API в туннель
-// и снять SoftReconnectPreserve (можно снова применять wg_config).
+// finishSoftRecoverVK — после первого живого воркера вернуть VK веб/API в туннель.
+// SoftReconnectPreserve НЕ снимаем здесь: при TunAlreadyReady воркер READY
+// приходит раньше raw_config; если снять preserve — applyRawConfig сделает
+// Creating adapter и убьёт soft. Preserve снимает soft apply (markSoftPreserveConsumed).
 func (o *Orchestrator) finishSoftRecoverVK() {
 	o.mu.Lock()
 	// Пока SoftReconnect ещё гасит старую сессию — workers>0 от неё не снимают preserve.
@@ -434,8 +436,8 @@ func (o *Orchestrator) finishSoftRecoverVK() {
 		o.mu.Unlock()
 		return
 	}
-	need := o.softRecoverVKDirect || SoftReconnectPreserve()
-	startVerify := need && o.softRecoverCount > 0 && o.softRecoverVerifyUntil.IsZero()
+	needVK := o.softRecoverVKDirect
+	startVerify := needVK && o.softRecoverCount > 0 && o.softRecoverVerifyUntil.IsZero()
 	o.softRecoverVKDirect = false
 	o.softRecoverUntil = time.Time{}
 	now := time.Now()
@@ -445,14 +447,13 @@ func (o *Orchestrator) finishSoftRecoverVK() {
 		o.lastTrafficAt = now
 		o.sessionWatchUntil = now.Add(sessionWatchAfterConnect)
 	}
-	if need {
+	if needVK {
 		o.softStallImmuneUntil = now.Add(softStallImmuneAfter)
 	}
 	o.mu.Unlock()
-	if !need {
+	if !needVK {
 		return
 	}
-	SetSoftReconnectPreserve(false)
 	if err := SetVKThroughTunnel(true); err != nil {
 		runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[SOFT] не удалось вернуть VK в туннель: %v", err))
 		return

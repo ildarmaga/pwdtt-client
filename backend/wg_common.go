@@ -2,6 +2,7 @@ package backend
 
 import (
 	"bufio"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10,12 +11,20 @@ import (
 var softReconnectPreserve atomic.Bool
 var activeRawPrimaryIP atomic.Value // string — IP TUN в RAW (для soft-reconnect rewrite)
 
-// SetSoftReconnectPreserve — soft-reconnect: не сносить wg-turn/маршруты;
-// applyWGConfig всё равно обновляет ключи peer (IpcSet / wg setconf).
+// SetSoftReconnectPreserve — soft-reconnect: не сносить wg-turn/маршруты.
+// Снимать только после soft-apply raw/wg_config (не на первом READY воркере:
+// иначе TunAlreadyReady → READY раньше raw_config → Creating adapter).
 func SetSoftReconnectPreserve(v bool) { softReconnectPreserve.Store(v) }
 
 // SoftReconnectPreserve — soft: skip teardown, refresh WG keys in place.
 func SoftReconnectPreserve() bool { return softReconnectPreserve.Load() }
+
+// markSoftPreserveConsumed — soft apply прошёл (или soft упал в full create).
+func markSoftPreserveConsumed() {
+	if softReconnectPreserve.CompareAndSwap(true, false) {
+		log.Printf("[SOFT] preserve снят после apply конфига")
+	}
+}
 
 func setActiveRawPrimaryIP(ip string) {
 	activeRawPrimaryIP.Store(strings.TrimSpace(ip))

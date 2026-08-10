@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.285] — 2026-08-10
+
+### Fix — soft не сносит TUN (READY раньше raw_config)
+- При TunAlreadyReady воркер READY приходит до `raw_config`; раньше finishSoft снимал preserve → Creating adapter.
+- SoftReconnectPreserve снимается только после soft-apply raw/wg конфига.
+- Локальные тесты матрицы stall/soft (без рестарта сервера).
+
 ## [0.3.284] — 2026-08-10
 
 ### Fix — ложный soft после паузы и гонка preserve

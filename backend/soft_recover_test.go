@@ -133,3 +133,61 @@ func TestFinishSoftRecoverSkipsDyingSession(t *testing.T) {
 		t.Fatal("idle session finish allowed")
 	}
 }
+
+func TestSoftPreserveUntilConfigApply(t *testing.T) {
+	if shouldClearSoftPreserveOnWorkerReady() {
+		t.Fatal("READY must not clear preserve (TunAlreadyReady race)")
+	}
+	if !decideSoftApplyPath(true, true) {
+		t.Fatal("preserve+TUN → soft apply")
+	}
+	if decideSoftApplyPath(true, false) {
+		t.Fatal("preserve without TUN → full create")
+	}
+	if decideSoftApplyPath(false, true) {
+		t.Fatal("no preserve → full create")
+	}
+}
+
+// Матрица: когда stall-soft имеет право рвать сессию (без живого VPN).
+func TestStallSoftDecisionMatrix(t *testing.T) {
+	thr := trafficStallThreshold
+	cases := []struct {
+		name                         string
+		watch                        bool
+		stall, since                 time.Duration
+		wasActive, immune, verifying bool
+		want                         bool
+	}{
+		{"zombie keepalive после активности", true, thr, time.Minute, true, false, false, true},
+		{"idle 8s после soft — НЕ soft (старый баг 283)", true, 8 * time.Second, time.Minute, true, false, false, false},
+		{"idle 20s после soft immune", true, thr, time.Minute, true, true, false, false},
+		{"во время verify окна", true, thr, time.Minute, true, false, true, false},
+		{"старт без трафика < grace", true, thr, 5 * time.Second, false, false, false, false},
+		{"старт без трафика > grace", true, thr, trafficStallStartupGrace, false, false, false, true},
+		{"keepalive delta не двигает stall — уже в stallDur", true, thr, time.Minute, true, false, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldStallSoft(tc.watch, tc.stall, tc.since, tc.wasActive, tc.immune, tc.verifying)
+			if got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMarkSoftPreserveConsumed(t *testing.T) {
+	SetSoftReconnectPreserve(true)
+	if !SoftReconnectPreserve() {
+		t.Fatal("preserve must be on")
+	}
+	markSoftPreserveConsumed()
+	if SoftReconnectPreserve() {
+		t.Fatal("preserve must clear after consume")
+	}
+	markSoftPreserveConsumed() // idempotent
+	if SoftReconnectPreserve() {
+		t.Fatal("still off")
+	}
+}
