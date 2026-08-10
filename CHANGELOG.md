@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.283] — 2026-08-10
+
+### Fix — zombie 18/18 download 0: soft по реальному трафику
+- Keepalive (~1 КБ/с) больше не сбрасывает stall-таймер.
+- Нужен прирост ≥8 KiB, иначе через ~8–20 с soft (bridge/ключи).
+- Чинит UI «воркеры живы, download 0 B/s» без авто-восстановления.
+
 ## [0.3.282] — 2026-08-10
 
 ### Fix — RAW/WG: CORE упал → soft, не «Отключено»

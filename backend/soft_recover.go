@@ -52,3 +52,21 @@ func softRecoverTrafficOK(now, lastTrafficAt time.Time, bytesSinceSoft int64) bo
 	}
 	return bytesSinceSoft >= softRecoverTrafficNeed
 }
+
+// meaningfulTrafficDelta — keepalive TURN/RAW (~1 КБ/с) не считается «живым».
+// Иначе zombie (18 воркеров, download 0) никогда не триггерит soft.
+func meaningfulTrafficDelta(delta int64) bool {
+	return delta >= trafficStallMinBytes
+}
+
+// shouldStallSoft — soft при залипании; первые секунды после connect ждём
+// реальный трафик, не soft'им на пустом старте.
+func shouldStallSoft(watch bool, stallDur, sinceConnect time.Duration, wasActive bool) bool {
+	if !watch || stallDur < trafficStallThreshold {
+		return false
+	}
+	if wasActive {
+		return true
+	}
+	return sinceConnect >= trafficStallStartupGrace
+}

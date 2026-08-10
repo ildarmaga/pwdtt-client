@@ -276,7 +276,9 @@ const workersLostGrace = 2 * time.Second
 
 const (
 	trafficStallThreshold    = 8 * time.Second // залипание пути (игры не терпят 20–30 с)
-	trafficActiveMinBytes    = int64(512)      // мелкие игровые пакеты
+	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive, stall-часы не сбрасываем
+	trafficStallStartupGrace = 20 * time.Second
+	trafficActiveMinBytes    = int64(512) // мелкие игровые пакеты → «был активен»
 	trafficActiveWindow      = 3 * time.Minute
 	sessionWatchAfterConnect = 3 * time.Minute // после Connect всегда следим за залипанием
 	autoReconnectCooldown    = 10 * time.Second
@@ -514,8 +516,11 @@ func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
 	if total > o.lastTrafficBytes {
 		delta := total - o.lastTrafficBytes
 		o.lastTrafficBytes = total
-		o.lastTrafficAt = now
-		o.internetProbeFails = 0
+		// Keepalive не двигает lastTrafficAt → stall-soft увидит зависание.
+		if meaningfulTrafficDelta(delta) {
+			o.lastTrafficAt = now
+			o.internetProbeFails = 0
+		}
 		if delta >= trafficActiveMinBytes {
 			o.trafficWasActive = true
 			o.trafficActiveUntil = now.Add(trafficActiveWindow)
@@ -625,7 +630,11 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	verifyUntil := o.softRecoverVerifyUntil
 	bytesSinceSoft := o.lastTrafficBytes - o.softRecoverBytesAt
 	lastAt := o.lastTrafficAt
-	softCount := o.softRecoverCount
+	wasActive := o.trafficWasActive
+	var sinceConnect time.Duration
+	if !o.connectedAt.IsZero() {
+		sinceConnect = now.Sub(o.connectedAt)
+	}
 	o.mu.Unlock()
 
 	// Soft поднял воркеров, но данные не пошли — ещё раз soft (с обновлением ключей WG).
@@ -645,8 +654,7 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 		}
 	}
 
-	if watch && stallDur >= trafficStallThreshold {
-		_ = softCount
+	if shouldStallSoft(watch, stallDur, sinceConnect, wasActive) {
 		o.triggerAutoReconnect(fmt.Sprintf("Трафик не движется %s — soft-восстановление…", stallDur.Round(time.Second)))
 	}
 }

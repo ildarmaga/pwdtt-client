@@ -84,3 +84,33 @@ func TestShouldAutoSoftOnCoreEnd(t *testing.T) {
 		t.Fatal("no TUN iface must not auto-soft")
 	}
 }
+
+func TestMeaningfulTrafficDelta(t *testing.T) {
+	if meaningfulTrafficDelta(1024) {
+		t.Fatal("1KiB keepalive must not count")
+	}
+	if meaningfulTrafficDelta(trafficStallMinBytes - 1) {
+		t.Fatal("just below threshold must not count")
+	}
+	if !meaningfulTrafficDelta(trafficStallMinBytes) {
+		t.Fatal("threshold must count")
+	}
+}
+
+func TestShouldStallSoft(t *testing.T) {
+	if shouldStallSoft(false, 30*time.Second, time.Minute, true) {
+		t.Fatal("no watch → no soft")
+	}
+	if shouldStallSoft(true, 2*time.Second, time.Minute, true) {
+		t.Fatal("short stall → no soft")
+	}
+	if !shouldStallSoft(true, trafficStallThreshold, time.Minute, true) {
+		t.Fatal("was active + stall → soft")
+	}
+	if shouldStallSoft(true, trafficStallThreshold, 5*time.Second, false) {
+		t.Fatal("startup grace → no soft yet")
+	}
+	if !shouldStallSoft(true, trafficStallThreshold, trafficStallStartupGrace, false) {
+		t.Fatal("past startup + no traffic → soft")
+	}
+}
