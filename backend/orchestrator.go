@@ -257,6 +257,12 @@ type Orchestrator struct {
 	// softRecoverVKDirect — во время soft-recover VK веб/API временно напрямую;
 	// после первого живого воркера вернём «через туннель».
 	softRecoverVKDirect bool
+	// softRecoverCount — сколько soft подряд; после softRecoverMax → полный reconnect.
+	softRecoverCount int
+	// softRecoverVerifyUntil — дедлайн проверки трафика после soft (воркеры↑ ≠ данные).
+	softRecoverVerifyUntil time.Time
+	// softRecoverBytesAt — суммарный rx+tx на старте verify-окна.
+	softRecoverBytesAt int64
 }
 
 const networkChangeDebounce = 1500 * time.Millisecond
@@ -295,6 +301,9 @@ func (o *Orchestrator) Reconnect() error {
 	params := o.lastParams
 	o.softRecoverUntil = time.Time{}
 	o.softRecoverVKDirect = false
+	o.softRecoverCount = 0
+	o.softRecoverVerifyUntil = time.Time{}
+	o.softRecoverBytesAt = 0
 	o.mu.Unlock()
 	SetSoftReconnectPreserve(false)
 	if params.Profile == "" {
@@ -338,7 +347,10 @@ func (o *Orchestrator) SoftReconnect() error {
 	o.lastTrafficBytes = 0
 	o.lastTrafficAt = time.Time{}
 	o.internetProbeFails = 0
+	o.softRecoverVerifyUntil = time.Time{}
+	o.softRecoverBytesAt = 0
 	if canPreserve {
+		o.softRecoverCount++
 		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
 		o.softRecoverVKDirect = true
 	} else {
@@ -367,8 +379,20 @@ func (o *Orchestrator) inSoftRecoverWindow() bool {
 func (o *Orchestrator) finishSoftRecoverVK() {
 	o.mu.Lock()
 	need := o.softRecoverVKDirect || SoftReconnectPreserve()
+	startVerify := need && o.softRecoverCount > 0 && o.softRecoverVerifyUntil.IsZero()
 	o.softRecoverVKDirect = false
 	o.softRecoverUntil = time.Time{}
+	if startVerify {
+		now := time.Now()
+		o.softRecoverVerifyUntil = now.Add(softRecoverVerifyWait)
+		o.softRecoverBytesAt = o.lastTrafficBytes
+		o.lastTrafficAt = now
+		// После soft обязательно следим за залипанием — иначе zombie
+		// (воркеры↑, данные↓) не эскалируется в полный reconnect.
+		o.sessionWatchUntil = now.Add(sessionWatchAfterConnect)
+		o.trafficWasActive = true
+		o.trafficActiveUntil = now.Add(trafficActiveWindow)
+	}
 	o.mu.Unlock()
 	if !need {
 		return
@@ -379,6 +403,10 @@ func (o *Orchestrator) finishSoftRecoverVK() {
 		return
 	}
 	runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK снова через туннель (воркеры живы)")
+	if startVerify {
+		runtime.EventsEmit(o.appCtx, "log", "INFO",
+			fmt.Sprintf("[SOFT] Проверка трафика %s — иначе полный перезапуск туннеля", softRecoverVerifyWait.Round(time.Second)))
+	}
 }
 
 func (o *Orchestrator) resetWorkersLostState() {
@@ -423,9 +451,14 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		return
 	}
 	zeroFor := time.Since(o.workersZeroAt)
+	softCount := o.softRecoverCount
 	o.mu.Unlock()
 	if zeroFor >= workersLostGrace {
-		o.triggerAutoReconnect("Нет активных воркеров — быстрое восстановление…")
+		if softCount >= softRecoverMax {
+			o.triggerReconnect("Нет активных воркеров — полный перезапуск туннеля…", true)
+		} else {
+			o.triggerAutoReconnect("Нет активных воркеров — быстрое восстановление…")
+		}
 	}
 }
 
@@ -455,6 +488,13 @@ func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
 		if delta >= trafficActiveMinBytes {
 			o.trafficWasActive = true
 			o.trafficActiveUntil = now.Add(trafficActiveWindow)
+		}
+		// Soft verify прошёл — сбрасываем счётчик эскалации.
+		if !o.softRecoverVerifyUntil.IsZero() &&
+			softRecoverTrafficOK(now, o.lastTrafficAt, total-o.softRecoverBytesAt) {
+			o.softRecoverCount = 0
+			o.softRecoverVerifyUntil = time.Time{}
+			o.softRecoverBytesAt = 0
 		}
 		return
 	}
@@ -486,7 +526,7 @@ func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 	}
 	o.autoReconnecting = true
 	o.lastAutoReconnectAt = time.Now()
-	soft := !forceFull && o.tunnelUp && wgTunnelActive()
+	mode := decideRecoverMode(forceFull, o.softRecoverCount, o.tunnelUp, wgTunnelActive())
 	o.mu.Unlock()
 
 	runtime.EventsEmit(o.appCtx, "log", "WARN", msg)
@@ -499,9 +539,12 @@ func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 			o.mu.Unlock()
 		}()
 		var err error
-		if soft {
+		if mode == recoverSoft {
 			err = o.SoftReconnect()
 		} else {
+			if !forceFull {
+				runtime.EventsEmit(o.appCtx, "log", "WARN", "[SOFT] лимит soft исчерпан — полный перезапуск туннеля")
+			}
 			err = o.Reconnect()
 		}
 		if err != nil {
@@ -551,9 +594,37 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	if !o.lastTrafficAt.IsZero() {
 		stallDur = now.Sub(o.lastTrafficAt)
 	}
+	verifyUntil := o.softRecoverVerifyUntil
+	bytesSinceSoft := o.lastTrafficBytes - o.softRecoverBytesAt
+	lastAt := o.lastTrafficAt
+	softCount := o.softRecoverCount
 	o.mu.Unlock()
 
+	// Soft поднял воркеров, но данные не пошли (типично после рестарта сервера).
+	if !verifyUntil.IsZero() && now.After(verifyUntil) {
+		if softRecoverTrafficOK(now, lastAt, bytesSinceSoft) {
+			o.mu.Lock()
+			o.softRecoverCount = 0
+			o.softRecoverVerifyUntil = time.Time{}
+			o.softRecoverBytesAt = 0
+			o.mu.Unlock()
+		} else {
+			o.mu.Lock()
+			o.softRecoverVerifyUntil = time.Time{}
+			o.mu.Unlock()
+			o.triggerReconnect("Soft-reconnect без трафика — полный перезапуск туннеля…", true)
+			return
+		}
+	}
+
 	if watch && stallDur >= trafficStallThreshold {
+		if softCount >= softRecoverMax {
+			o.triggerReconnect(
+				fmt.Sprintf("Трафик не движется %s — полный перезапуск туннеля…", stallDur.Round(time.Second)),
+				true,
+			)
+			return
+		}
 		o.triggerAutoReconnect(fmt.Sprintf("Трафик не движется %s — быстрое восстановление…", stallDur.Round(time.Second)))
 	}
 }
@@ -955,6 +1026,9 @@ func (o *Orchestrator) Stop() {
 	o.mu.Lock()
 	o.softRecoverUntil = time.Time{}
 	o.softRecoverVKDirect = false
+	o.softRecoverCount = 0
+	o.softRecoverVerifyUntil = time.Time{}
+	o.softRecoverBytesAt = 0
 	o.mu.Unlock()
 	o.stopCoreSession(true)
 	o.mu.Lock()
