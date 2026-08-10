@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.286] — 2026-08-10
+
+### Fix — шторм soft/реконнектов (idle ≠ zombie)
+- Verify после soft: **воркеры >0 = успех** (больше не требуем 64KiB за 30с → не рвём idle).
+- Stall soft только при живых воркерах и **≥90с** без meaningful-трафика (было 20с).
+- Immune 3 мин после soft; cooldown 60с; workers=0 grace 10с; макс 3 soft / 10 мин.
+- Простой с 18/18 воркерами больше не крутит soft по кругу.
+
 ## [0.3.285] — 2026-08-10
 
 ### Fix — soft не сносит TUN (READY раньше raw_config)

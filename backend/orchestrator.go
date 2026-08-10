@@ -270,34 +270,33 @@ type Orchestrator struct {
 	softCoreStarted bool
 	// softStallImmuneUntil — не stall-soft после успешного soft (verify отдельно).
 	softStallImmuneUntil time.Time
+	// softStormStarted / softStormCount — лимит soft за окно (анти-шторм).
+	softStormStarted time.Time
+	softStormCount   int
 }
 
 const networkChangeDebounce = 1500 * time.Millisecond
 
-// workersLostGrace — сколько workers=0 терпим до soft. RAW/WG воркеры
-// сами переподключаются за ~2–3 с; soft нужен когда CORE уже мёртв или
-// воркеры залипли дольше этого окна.
-const workersLostGrace = 2 * time.Second
+// workersLostGrace — сколько workers=0 терпим до soft. Группы/TURN
+// сами встают за несколько секунд; 2s давал ложный soft на каждом blip.
+const workersLostGrace = 10 * time.Second
 
 const (
-	// 20s: 8s ловил паузу после бурста (ложный soft). Keepalive <8KiB всё ещё не сбрасывает.
-	trafficStallThreshold    = 20 * time.Second
-	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive, stall-часы не сбрасываем
-	trafficStallStartupGrace = 20 * time.Second
-	// softStallImmuneAfter — после первого живого воркера не stall-soft'ить
-	// (burst→idle в браузере иначе рвёт только что поднятую сессию).
-	softStallImmuneAfter     = 45 * time.Second
-	trafficActiveMinBytes    = int64(512) // мелкие игровые пакеты → «был активен»
+	// Zombie: воркеры живы, а реального трафика нет долго. Idle 20–40 с — норма.
+	trafficStallThreshold    = 90 * time.Second
+	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive
+	trafficStallStartupGrace = 60 * time.Second
+	// После soft не дёргать stall долго (иначе idle → soft → idle → soft).
+	softStallImmuneAfter     = 3 * time.Minute
+	trafficActiveMinBytes    = int64(512)
 	trafficActiveWindow      = 3 * time.Minute
-	sessionWatchAfterConnect = 3 * time.Minute // после Connect всегда следим за залипанием
-	autoReconnectCooldown    = 10 * time.Second
-	autoReconnectProbeEvery  = 1 * time.Second
+	sessionWatchAfterConnect = 5 * time.Minute
+	autoReconnectCooldown    = 60 * time.Second
+	autoReconnectProbeEvery  = 2 * time.Second
 	internetProbeInterval    = 2 * time.Second
 	internetProbeTimeout     = 1500 * time.Millisecond
 	internetProbeFailNeed    = 2
-	// softRecoverAuthGrace — VK Calls + DNS + TURN Allocate при «мёртвом» WG
-	// легко занимают 30–60 с; 4 с workersLostGrace этого не покрывает.
-	softRecoverAuthGrace = 90 * time.Second
+	softRecoverAuthGrace     = 90 * time.Second
 )
 
 func NewOrchestrator(ctx context.Context, onTray func(bool, int64, int64, int32)) *Orchestrator {
@@ -322,6 +321,8 @@ func (o *Orchestrator) Reconnect() error {
 	o.softRecoverBytesAt = 0
 	o.softStallImmuneUntil = time.Time{}
 	o.softCoreStarted = false
+	o.softStormStarted = time.Time{}
+	o.softStormCount = 0
 	o.mu.Unlock()
 	SetSoftReconnectPreserve(false)
 	if params.Profile == "" {
@@ -378,6 +379,7 @@ func (o *Orchestrator) SoftReconnect() error {
 		o.softRecoverCount++
 		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
 		o.softRecoverVKDirect = true
+		o.softStallImmuneUntil = time.Now().Add(softStallImmuneAfter)
 		o.mu.Unlock()
 	}
 	if o.IsRunning() {
@@ -491,6 +493,12 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		o.mu.Lock()
 		o.workersZeroAt = time.Time{}
 		o.workersLostAt = false
+		// Живые воркеры = soft verify пройден (не ждём 64KiB / idle).
+		if !o.softRecoverVerifyUntil.IsZero() {
+			o.softRecoverCount = 0
+			o.softRecoverVerifyUntil = time.Time{}
+			o.softRecoverBytesAt = 0
+		}
 		o.mu.Unlock()
 		o.finishSoftRecoverVK()
 		return
@@ -557,7 +565,7 @@ func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
 		}
 		// Soft verify прошёл — сбрасываем счётчик эскалации.
 		if !o.softRecoverVerifyUntil.IsZero() &&
-			softRecoverTrafficOK(now, o.lastTrafficAt, total-o.softRecoverBytesAt) {
+			softRecoverSucceeded(now, o.lastTrafficAt, total-o.softRecoverBytesAt, o.lastWorkers) {
 			o.softRecoverCount = 0
 			o.softRecoverVerifyUntil = time.Time{}
 			o.softRecoverBytesAt = 0
@@ -590,9 +598,21 @@ func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 		o.mu.Unlock()
 		return
 	}
+	mode := decideRecoverMode(forceFull, o.softRecoverCount, o.tunnelUp, wgTunnelActive())
+	if mode == recoverSoft {
+		allow, nextCount, nextStart := softStormAllows(o.softStormCount, o.softStormStarted, time.Now())
+		if !allow {
+			o.mu.Unlock()
+			runtime.EventsEmit(o.appCtx, "log", "WARN",
+				"Слишком много soft подряд — авто-восстановление остановлено. Нажмите «Переподключить».")
+			o.emitWorkersLost("Слишком много soft — нажмите «Переподключить».")
+			return
+		}
+		o.softStormCount = nextCount
+		o.softStormStarted = nextStart
+	}
 	o.autoReconnecting = true
 	o.lastAutoReconnectAt = time.Now()
-	mode := decideRecoverMode(forceFull, o.softRecoverCount, o.tunnelUp, wgTunnelActive())
 	o.mu.Unlock()
 
 	runtime.EventsEmit(o.appCtx, "log", "WARN", msg)
@@ -661,6 +681,7 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	bytesSinceSoft := o.lastTrafficBytes - o.softRecoverBytesAt
 	lastAt := o.lastTrafficAt
 	wasActive := o.trafficWasActive
+	workers := o.lastWorkers
 	stallImmune := !o.softStallImmuneUntil.IsZero() && now.Before(o.softStallImmuneUntil)
 	verifyPending := !verifyUntil.IsZero() && now.Before(verifyUntil)
 	var sinceConnect time.Duration
@@ -669,9 +690,9 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	}
 	o.mu.Unlock()
 
-	// Soft поднял воркеров, но данные не пошли — ещё раз soft (с обновлением ключей WG).
+	// Soft поднял воркеров — этого достаточно (idle ≠ провал). Иначе шторм soft.
 	if !verifyUntil.IsZero() && now.After(verifyUntil) {
-		if softRecoverTrafficOK(now, lastAt, bytesSinceSoft) {
+		if softRecoverSucceeded(now, lastAt, bytesSinceSoft, workers) {
 			o.mu.Lock()
 			o.softRecoverCount = 0
 			o.softRecoverVerifyUntil = time.Time{}
@@ -681,12 +702,12 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 			o.mu.Lock()
 			o.softRecoverVerifyUntil = time.Time{}
 			o.mu.Unlock()
-			o.triggerAutoReconnect("Soft без трафика — повторный soft (обновление ключей WG)…")
+			o.triggerAutoReconnect("Soft без воркеров — повторный soft…")
 			return
 		}
 	}
 
-	if shouldStallSoft(watch, stallDur, sinceConnect, wasActive, stallImmune, verifyPending) {
+	if shouldStallSoft(watch, stallDur, sinceConnect, wasActive, stallImmune, verifyPending, workers) {
 		o.triggerAutoReconnect(fmt.Sprintf("Трафик не движется %s — soft-восстановление…", stallDur.Round(time.Second)))
 	}
 }
@@ -1121,6 +1142,8 @@ func (o *Orchestrator) Stop() {
 	o.softRecoverBytesAt = 0
 	o.softStallImmuneUntil = time.Time{}
 	o.softCoreStarted = false
+	o.softStormStarted = time.Time{}
+	o.softStormCount = 0
 	o.mu.Unlock()
 	o.stopCoreSession(true)
 	o.mu.Lock()

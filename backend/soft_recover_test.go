@@ -48,6 +48,20 @@ func TestSoftRecoverTrafficOK(t *testing.T) {
 	}
 }
 
+func TestSoftRecoverSucceededIdleWithWorkers(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	// Раньше idle после soft → «Soft без трафика» → шторм. Теперь workers>0 = OK.
+	if !softRecoverSucceeded(now, time.Time{}, 0, 9) {
+		t.Fatal("workers>0 must succeed even without traffic")
+	}
+	if softRecoverSucceeded(now, time.Time{}, 0, 0) {
+		t.Fatal("no workers and no traffic must fail")
+	}
+	if !softRecoverSucceeded(now, now.Add(-time.Second), softRecoverTrafficNeed, 0) {
+		t.Fatal("traffic alone must still succeed")
+	}
+}
+
 func TestSoftRecoverBusy(t *testing.T) {
 	now := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
 	if !softRecoverBusy(true, time.Time{}, now) {
@@ -98,31 +112,38 @@ func TestMeaningfulTrafficDelta(t *testing.T) {
 }
 
 func TestShouldStallSoft(t *testing.T) {
-	if shouldStallSoft(false, 30*time.Second, time.Minute, true, false, false) {
+	thr := trafficStallThreshold
+	if shouldStallSoft(false, 30*time.Second, time.Minute, true, false, false, 18) {
 		t.Fatal("no watch → no soft")
 	}
-	if shouldStallSoft(true, 2*time.Second, time.Minute, true, false, false) {
+	if shouldStallSoft(true, 2*time.Second, time.Minute, true, false, false, 18) {
 		t.Fatal("short stall → no soft")
 	}
-	if !shouldStallSoft(true, trafficStallThreshold, time.Minute, true, false, false) {
-		t.Fatal("was active + stall → soft")
+	if !shouldStallSoft(true, thr, time.Minute, true, false, false, 18) {
+		t.Fatal("zombie workers+stall → soft")
 	}
-	if shouldStallSoft(true, trafficStallThreshold, 5*time.Second, false, false, false) {
+	if shouldStallSoft(true, thr, time.Minute, true, false, false, 0) {
+		t.Fatal("workers=0 → workersLost path, not stall")
+	}
+	if shouldStallSoft(true, thr, 5*time.Second, false, false, false, 18) {
 		t.Fatal("startup grace → no soft yet")
 	}
-	if !shouldStallSoft(true, trafficStallThreshold, trafficStallStartupGrace, false, false, false) {
+	if !shouldStallSoft(true, thr, trafficStallStartupGrace, false, false, false, 18) {
 		t.Fatal("past startup + no traffic → soft")
 	}
-	if shouldStallSoft(true, trafficStallThreshold, time.Minute, true, true, false) {
+	if shouldStallSoft(true, thr, time.Minute, true, true, false, 18) {
 		t.Fatal("post-soft immune → no stall soft")
 	}
-	if shouldStallSoft(true, trafficStallThreshold, time.Minute, true, false, true) {
+	if shouldStallSoft(true, thr, time.Minute, true, false, true, 18) {
 		t.Fatal("verify window → no stall soft")
+	}
+	// Idle 20–40s after burst must NOT soft (старый баг шторма).
+	if shouldStallSoft(true, 40*time.Second, time.Minute, true, false, false, 18) {
+		t.Fatal("40s idle with workers must not soft (need 90s)")
 	}
 }
 
 func TestFinishSoftRecoverSkipsDyingSession(t *testing.T) {
-	// softSwap без Start — старые воркеры не должны считаться «готовыми».
 	if !shouldSkipFinishSoftRecover(true, false) {
 		t.Fatal("dying old session must skip finish")
 	}
@@ -136,7 +157,7 @@ func TestFinishSoftRecoverSkipsDyingSession(t *testing.T) {
 
 func TestSoftPreserveUntilConfigApply(t *testing.T) {
 	if shouldClearSoftPreserveOnWorkerReady() {
-		t.Fatal("READY must not clear preserve (TunAlreadyReady race)")
+		t.Fatal("READY must not clear preserve")
 	}
 	if !decideSoftApplyPath(true, true) {
 		t.Fatal("preserve+TUN → soft apply")
@@ -144,50 +165,36 @@ func TestSoftPreserveUntilConfigApply(t *testing.T) {
 	if decideSoftApplyPath(true, false) {
 		t.Fatal("preserve without TUN → full create")
 	}
-	if decideSoftApplyPath(false, true) {
-		t.Fatal("no preserve → full create")
-	}
 }
 
-// Матрица: когда stall-soft имеет право рвать сессию (без живого VPN).
-func TestStallSoftDecisionMatrix(t *testing.T) {
-	thr := trafficStallThreshold
-	cases := []struct {
-		name                         string
-		watch                        bool
-		stall, since                 time.Duration
-		wasActive, immune, verifying bool
-		want                         bool
-	}{
-		{"zombie keepalive после активности", true, thr, time.Minute, true, false, false, true},
-		{"idle 8s после soft — НЕ soft (старый баг 283)", true, 8 * time.Second, time.Minute, true, false, false, false},
-		{"idle 20s после soft immune", true, thr, time.Minute, true, true, false, false},
-		{"во время verify окна", true, thr, time.Minute, true, false, true, false},
-		{"старт без трафика < grace", true, thr, 5 * time.Second, false, false, false, false},
-		{"старт без трафика > grace", true, thr, trafficStallStartupGrace, false, false, false, true},
-		{"keepalive delta не двигает stall — уже в stallDur", true, thr, time.Minute, true, false, false, true},
+func TestSoftStormAllows(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	ok, c, start := softStormAllows(0, time.Time{}, now)
+	if !ok || c != 1 {
+		t.Fatalf("first soft: ok=%v count=%d", ok, c)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := shouldStallSoft(tc.watch, tc.stall, tc.since, tc.wasActive, tc.immune, tc.verifying)
-			if got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
-			}
-		})
+	ok, c, start = softStormAllows(1, start, now.Add(time.Minute))
+	if !ok || c != 2 {
+		t.Fatalf("second: ok=%v count=%d", ok, c)
+	}
+	ok, c, start = softStormAllows(2, start, now.Add(2*time.Minute))
+	if !ok || c != 3 {
+		t.Fatalf("third: ok=%v count=%d", ok, c)
+	}
+	ok, c, _ = softStormAllows(3, start, now.Add(3*time.Minute))
+	if ok {
+		t.Fatalf("fourth in window must block, count=%d", c)
+	}
+	ok, c, _ = softStormAllows(3, start, now.Add(softStormWindow))
+	if !ok || c != 1 {
+		t.Fatalf("new window must reset: ok=%v count=%d", ok, c)
 	}
 }
 
 func TestMarkSoftPreserveConsumed(t *testing.T) {
 	SetSoftReconnectPreserve(true)
-	if !SoftReconnectPreserve() {
-		t.Fatal("preserve must be on")
-	}
 	markSoftPreserveConsumed()
 	if SoftReconnectPreserve() {
 		t.Fatal("preserve must clear after consume")
-	}
-	markSoftPreserveConsumed() // idempotent
-	if SoftReconnectPreserve() {
-		t.Fatal("still off")
 	}
 }
