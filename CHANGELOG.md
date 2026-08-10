@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.284] — 2026-08-10
+
+### Fix — ложный soft после паузы и гонка preserve
+- Stall-порог 8s→20s; 45s immune после успешного soft; во время verify не stall-soft.
+- Старые воркеры при SoftReconnect больше не сбрасывают preserve до `Start` (TunAlreadyReady / без Creating adapter).
+- Обнуление счётчика трафика после soft не крутит stall от старых МБ.
+
 ## [0.3.283] — 2026-08-10
 
 ### Fix — zombie 18/18 download 0: soft по реальному трафику

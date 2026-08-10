@@ -17,6 +17,11 @@ func softRecoverBusy(vkDirect bool, until, now time.Time) bool {
 	return !until.IsZero() && now.Before(until)
 }
 
+// shouldSkipFinishSoftRecover — старая сессия ещё гасится, Start ещё не был.
+func shouldSkipFinishSoftRecover(softSwap, softCoreStarted bool) bool {
+	return softSwap && !softCoreStarted
+}
+
 // shouldAutoSoftOnCoreEnd — CORE умер сам, TUN ещё жив → soft вместо «Отключено».
 func shouldAutoSoftOnCoreEnd(preserve, swap, suppress, tunnelUp, wgActive bool) bool {
 	return !preserve && !swap && !suppress && tunnelUp && wgActive
@@ -61,8 +66,12 @@ func meaningfulTrafficDelta(delta int64) bool {
 
 // shouldStallSoft — soft при залипании; первые секунды после connect ждём
 // реальный трафик, не soft'им на пустом старте.
-func shouldStallSoft(watch bool, stallDur, sinceConnect time.Duration, wasActive bool) bool {
-	if !watch || stallDur < trafficStallThreshold {
+// stallImmune / verifyPending — только что был soft, ждём verify или паузу idle.
+func shouldStallSoft(watch bool, stallDur, sinceConnect time.Duration, wasActive, stallImmune, verifyPending bool) bool {
+	if !watch || stallImmune || verifyPending {
+		return false
+	}
+	if stallDur < trafficStallThreshold {
 		return false
 	}
 	if wasActive {

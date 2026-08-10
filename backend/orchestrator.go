@@ -265,6 +265,11 @@ type Orchestrator struct {
 	softRecoverBytesAt int64
 	// softSwapInProgress — SoftReconnect между stop старой и Start новой сессии.
 	softSwapInProgress bool
+	// softCoreStarted — SoftReconnect уже вызвал Start; finishSoftRecoverVK
+	// можно применять. До Start старые воркеры (>0) не должны сбрасывать preserve.
+	softCoreStarted bool
+	// softStallImmuneUntil — не stall-soft после успешного soft (verify отдельно).
+	softStallImmuneUntil time.Time
 }
 
 const networkChangeDebounce = 1500 * time.Millisecond
@@ -275,9 +280,13 @@ const networkChangeDebounce = 1500 * time.Millisecond
 const workersLostGrace = 2 * time.Second
 
 const (
-	trafficStallThreshold    = 8 * time.Second // залипание пути (игры не терпят 20–30 с)
+	// 20s: 8s ловил паузу после бурста (ложный soft). Keepalive <8KiB всё ещё не сбрасывает.
+	trafficStallThreshold    = 20 * time.Second
 	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive, stall-часы не сбрасываем
 	trafficStallStartupGrace = 20 * time.Second
+	// softStallImmuneAfter — после первого живого воркера не stall-soft'ить
+	// (burst→idle в браузере иначе рвёт только что поднятую сессию).
+	softStallImmuneAfter     = 45 * time.Second
 	trafficActiveMinBytes    = int64(512) // мелкие игровые пакеты → «был активен»
 	trafficActiveWindow      = 3 * time.Minute
 	sessionWatchAfterConnect = 3 * time.Minute // после Connect всегда следим за залипанием
@@ -311,6 +320,8 @@ func (o *Orchestrator) Reconnect() error {
 	o.softRecoverCount = 0
 	o.softRecoverVerifyUntil = time.Time{}
 	o.softRecoverBytesAt = 0
+	o.softStallImmuneUntil = time.Time{}
+	o.softCoreStarted = false
 	o.mu.Unlock()
 	SetSoftReconnectPreserve(false)
 	if params.Profile == "" {
@@ -339,10 +350,12 @@ func (o *Orchestrator) SoftReconnect() error {
 		return fmt.Errorf("soft-восстановление уже идёт")
 	}
 	o.softSwapInProgress = true
+	o.softCoreStarted = false
 	o.mu.Unlock()
 	defer func() {
 		o.mu.Lock()
 		o.softSwapInProgress = false
+		o.softCoreStarted = false
 		o.mu.Unlock()
 	}()
 	if params.Profile == "" {
@@ -374,10 +387,11 @@ func (o *Orchestrator) SoftReconnect() error {
 	o.resetWorkersLostState()
 	o.mu.Lock()
 	o.lastTrafficBytes = 0
-	o.lastTrafficAt = time.Time{}
+	o.lastTrafficAt = time.Now() // stall-часы с нуля после soft, не от старой сессии
 	o.internetProbeFails = 0
 	o.softRecoverVerifyUntil = time.Time{}
 	o.softRecoverBytesAt = 0
+	o.softStallImmuneUntil = time.Time{}
 	if canPreserve {
 		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
 		o.softRecoverVKDirect = true
@@ -386,6 +400,7 @@ func (o *Orchestrator) SoftReconnect() error {
 		o.softRecoverVKDirect = false
 		SetSoftReconnectPreserve(false)
 	}
+	o.softCoreStarted = true // дальше Start: finishSoftRecoverVK можно
 	o.mu.Unlock()
 	err := o.Start(params)
 	if err != nil {
@@ -414,16 +429,24 @@ func (o *Orchestrator) inSoftRecoverWindow() bool {
 // и снять SoftReconnectPreserve (можно снова применять wg_config).
 func (o *Orchestrator) finishSoftRecoverVK() {
 	o.mu.Lock()
+	// Пока SoftReconnect ещё гасит старую сессию — workers>0 от неё не снимают preserve.
+	if shouldSkipFinishSoftRecover(o.softSwapInProgress, o.softCoreStarted) {
+		o.mu.Unlock()
+		return
+	}
 	need := o.softRecoverVKDirect || SoftReconnectPreserve()
 	startVerify := need && o.softRecoverCount > 0 && o.softRecoverVerifyUntil.IsZero()
 	o.softRecoverVKDirect = false
 	o.softRecoverUntil = time.Time{}
+	now := time.Now()
 	if startVerify {
-		now := time.Now()
 		o.softRecoverVerifyUntil = now.Add(softRecoverVerifyWait)
 		o.softRecoverBytesAt = o.lastTrafficBytes
 		o.lastTrafficAt = now
 		o.sessionWatchUntil = now.Add(sessionWatchAfterConnect)
+	}
+	if need {
+		o.softStallImmuneUntil = now.Add(softStallImmuneAfter)
 	}
 	o.mu.Unlock()
 	if !need {
@@ -509,6 +532,12 @@ func (o *Orchestrator) noteTrafficBytes(rx, tx int64) {
 	total := rx + tx
 	now := time.Now()
 	if o.lastTrafficAt.IsZero() {
+		o.lastTrafficBytes = total
+		o.lastTrafficAt = now
+		return
+	}
+	// Счётчик сессии обнулился после soft — новая база, не stall от старых МБ.
+	if total < o.lastTrafficBytes {
 		o.lastTrafficBytes = total
 		o.lastTrafficAt = now
 		return
@@ -631,6 +660,8 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 	bytesSinceSoft := o.lastTrafficBytes - o.softRecoverBytesAt
 	lastAt := o.lastTrafficAt
 	wasActive := o.trafficWasActive
+	stallImmune := !o.softStallImmuneUntil.IsZero() && now.Before(o.softStallImmuneUntil)
+	verifyPending := !verifyUntil.IsZero() && now.Before(verifyUntil)
 	var sinceConnect time.Duration
 	if !o.connectedAt.IsZero() {
 		sinceConnect = now.Sub(o.connectedAt)
@@ -654,7 +685,7 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 		}
 	}
 
-	if shouldStallSoft(watch, stallDur, sinceConnect, wasActive) {
+	if shouldStallSoft(watch, stallDur, sinceConnect, wasActive, stallImmune, verifyPending) {
 		o.triggerAutoReconnect(fmt.Sprintf("Трафик не движется %s — soft-восстановление…", stallDur.Round(time.Second)))
 	}
 }
@@ -1087,6 +1118,8 @@ func (o *Orchestrator) Stop() {
 	o.softRecoverCount = 0
 	o.softRecoverVerifyUntil = time.Time{}
 	o.softRecoverBytesAt = 0
+	o.softStallImmuneUntil = time.Time{}
+	o.softCoreStarted = false
 	o.mu.Unlock()
 	o.stopCoreSession(true)
 	o.mu.Lock()

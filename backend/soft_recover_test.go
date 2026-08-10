@@ -98,19 +98,38 @@ func TestMeaningfulTrafficDelta(t *testing.T) {
 }
 
 func TestShouldStallSoft(t *testing.T) {
-	if shouldStallSoft(false, 30*time.Second, time.Minute, true) {
+	if shouldStallSoft(false, 30*time.Second, time.Minute, true, false, false) {
 		t.Fatal("no watch → no soft")
 	}
-	if shouldStallSoft(true, 2*time.Second, time.Minute, true) {
+	if shouldStallSoft(true, 2*time.Second, time.Minute, true, false, false) {
 		t.Fatal("short stall → no soft")
 	}
-	if !shouldStallSoft(true, trafficStallThreshold, time.Minute, true) {
+	if !shouldStallSoft(true, trafficStallThreshold, time.Minute, true, false, false) {
 		t.Fatal("was active + stall → soft")
 	}
-	if shouldStallSoft(true, trafficStallThreshold, 5*time.Second, false) {
+	if shouldStallSoft(true, trafficStallThreshold, 5*time.Second, false, false, false) {
 		t.Fatal("startup grace → no soft yet")
 	}
-	if !shouldStallSoft(true, trafficStallThreshold, trafficStallStartupGrace, false) {
+	if !shouldStallSoft(true, trafficStallThreshold, trafficStallStartupGrace, false, false, false) {
 		t.Fatal("past startup + no traffic → soft")
+	}
+	if shouldStallSoft(true, trafficStallThreshold, time.Minute, true, true, false) {
+		t.Fatal("post-soft immune → no stall soft")
+	}
+	if shouldStallSoft(true, trafficStallThreshold, time.Minute, true, false, true) {
+		t.Fatal("verify window → no stall soft")
+	}
+}
+
+func TestFinishSoftRecoverSkipsDyingSession(t *testing.T) {
+	// softSwap без Start — старые воркеры не должны считаться «готовыми».
+	if !shouldSkipFinishSoftRecover(true, false) {
+		t.Fatal("dying old session must skip finish")
+	}
+	if shouldSkipFinishSoftRecover(true, true) {
+		t.Fatal("after Start finish allowed")
+	}
+	if shouldSkipFinishSoftRecover(false, false) {
+		t.Fatal("idle session finish allowed")
 	}
 }
