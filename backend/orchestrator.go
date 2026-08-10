@@ -366,8 +366,16 @@ func (o *Orchestrator) SoftReconnect() error {
 		o.softRecoverUntil = time.Time{}
 		o.softRecoverVKDirect = false
 		o.mu.Unlock()
+		return err
 	}
-	return err
+	// RAW: core уже слушает новый :9000 — сразу переподключить bridge,
+	// не ждать raw_config (иначе TUN жив, а пакеты в никуда).
+	if canPreserve && params.TunnelMode == "raw" {
+		if rerr := rebindRawBridgeSoft("9000"); rerr != nil {
+			runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[RAW] Soft bridge rebind: %v", rerr))
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) inSoftRecoverWindow() bool {

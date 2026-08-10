@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -33,6 +34,23 @@ func stopRawBridge() {
 		_ = uc.Close()
 	}
 	rawBridgeWG.Wait()
+}
+
+// rebindRawBridgeSoft — после SoftReconnect core слушает новый UDP :9000,
+// а старый Dial в bridge мёртв. Переподключаем TUN↔dispatcher без сноса интерфейса.
+func rebindRawBridgeSoft(listenPort string) error {
+	tunDev := rawSoftTun()
+	if tunDev == nil {
+		return fmt.Errorf("нет активного RAW TUN")
+	}
+	if listenPort == "" {
+		listenPort = "9000"
+	}
+	if err := startRawBridge(tunDev, listenPort); err != nil {
+		return err
+	}
+	log.Printf("[RAW] Soft-reconnect: bridge переподключён к 127.0.0.1:%s", listenPort)
+	return nil
 }
 
 // startRawBridge pipes IPv4 packets between TUN and local UDP dispatcher (127.0.0.1:listenPort).

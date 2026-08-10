@@ -183,10 +183,21 @@ func applyWGConfig(conf string, turnIPs []string) error {
 	return nil
 }
 
+// rawSoftTun — TUN для RAW soft-rebind (без WireGuard device).
+func rawSoftTun() tun.Device {
+	if activeTun != nil && activeDevice == nil {
+		return activeTun
+	}
+	return nil
+}
+
 func applyRawConfig(conf string, turnIPs []string) error {
-	if SoftReconnectPreserve() && activeTun != nil && activeDevice == nil {
-		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+	if SoftReconnectPreserve() && rawSoftTun() != nil {
 		EnsureTurnDirectRoutes(turnIPs)
+		if err := rebindRawBridgeSoft("9000"); err != nil {
+			return fmt.Errorf("soft raw bridge: %w", err)
+		}
+		log.Printf("[RAW] Soft-reconnect: интерфейс %s сохранён, bridge + TURN routes обновлены", wgIface)
 		return nil
 	}
 	teardownWG()

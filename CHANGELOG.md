@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.280] — 2026-08-10
+
+### Fix — RAW SoftReconnect: self-восстановление bridge
+- После soft core поднимает новый UDP `:9000`, а старый TUN↔bridge Dial был мёртв → трафик не шёл.
+- Soft сразу `rebindRawBridgeSoft` + снова при `raw_config`; интерфейс/маршруты не сносятся.
+- Primary IP TUN сохраняется через `RawPrimaryIP` rewrite (как раньше).
+
 ## [0.3.279] — 2026-08-10
 
 ### Fix — SoftReconnect обновляет ключи WG (без full)
