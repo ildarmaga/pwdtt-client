@@ -88,7 +88,18 @@ func wgTunnelActive() bool { return activeDevice != nil || activeTun != nil }
 
 func applyWGConfig(conf string, turnIPs []string) error {
 	if SoftReconnectPreserve() && activeDevice != nil {
-		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
+		// Интерфейс/маршруты оставляем, но ключи peer ОБЯЗАТЕЛЬНО обновляем
+		// (после рестарта сервера старый peer = zombie, трафик не идёт).
+		_, _, _, wgConf := parseWGConfig(conf)
+		if wgConf == "" {
+			return fmt.Errorf("soft-reconnect: пустой WG config")
+		}
+		uapi := "replace_peers=true\n" + uapiConf(wgConf)
+		if err := activeDevice.IpcSetOperation(strings.NewReader(uapi)); err != nil {
+			return fmt.Errorf("soft IpcSet: %w", err)
+		}
+		EnsureTurnDirectRoutes(turnIPs)
+		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, ключи WG обновлены", wgIface)
 		return nil
 	}
 	teardownWG()

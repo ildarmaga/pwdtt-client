@@ -25,12 +25,6 @@ func wgTunnelActive() bool {
 }
 
 func applyWGConfig(conf string, turnIPs []string) error {
-	if SoftReconnectPreserve() && wgTunnelActive() && activeRawTun == nil {
-		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, перезапуск только TURN-воркеров", wgIface)
-		return nil
-	}
-	teardownWG()
-
 	addr, mtu, allowedIPs, wgConf := parseWGConfig(conf)
 	if addr == "" {
 		return fmt.Errorf("Address not found in wg config")
@@ -56,6 +50,17 @@ func applyWGConfig(conf string, turnIPs []string) error {
 
 	// Делаем файл читаемым для root (sudo)
 	_ = os.Chmod(tmpName, 0644)
+
+	if SoftReconnectPreserve() && wgTunnelActive() && activeRawTun == nil {
+		// Не сносим link/routes — только sync ключей peer (иначе zombie после рестарта сервера).
+		if err := run("wg", "setconf", wgIface, tmpName); err != nil {
+			return fmt.Errorf("soft wg setconf: %w", err)
+		}
+		EnsureTurnDirectRoutes(turnIPs)
+		log.Printf("[WG] Soft-reconnect: интерфейс %s сохранён, ключи WG обновлены", wgIface)
+		return nil
+	}
+	teardownWG()
 
 	if err := run("ip", "link", "add", wgIface, "type", "wireguard"); err != nil {
 		return fmt.Errorf("ip link add: %w", err)

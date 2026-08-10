@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.279] — 2026-08-10
+
+### Fix — SoftReconnect обновляет ключи WG (без full)
+- Soft больше **не игнорирует** новый `GETCONF`: `IpcSet` / `wg setconf` с `replace_peers`, интерфейс и маршруты остаются.
+- После рестарта сервера soft снова поднимает данные (раньше оставлял zombie peer).
+- Авто-восстановление — только soft; full только при смене сети.
+
 ## [0.3.278] — 2026-08-10
 
 ### Fix — self full-restart после мёртвого SoftReconnect

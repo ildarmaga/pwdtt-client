@@ -7,17 +7,17 @@ import (
 
 func TestDecideRecoverMode(t *testing.T) {
 	cases := []struct {
-		name                 string
-		forceFull            bool
-		softCount            int
-		tunnelUp, wgActive   bool
-		want                 recoverMode
+		name               string
+		forceFull          bool
+		softCount          int
+		tunnelUp, wgActive bool
+		want               recoverMode
 	}{
-		{"force full", true, 0, true, true, recoverFull},
-		{"soft first", false, 0, true, true, recoverSoft},
-		{"soft exhausted", false, 1, true, true, recoverFull},
-		{"no wg", false, 0, true, false, recoverFull},
-		{"tunnel down", false, 0, false, true, recoverFull},
+		{"force full (сеть)", true, 0, true, true, recoverFull},
+		{"soft always", false, 0, true, true, recoverSoft},
+		{"soft даже после многих soft", false, 5, true, true, recoverSoft},
+		{"no wg → full", false, 0, true, false, recoverFull},
+		{"tunnel down → full", false, 0, false, true, recoverFull},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

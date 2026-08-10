@@ -10,10 +10,11 @@ import (
 var softReconnectPreserve atomic.Bool
 var activeRawPrimaryIP atomic.Value // string — IP TUN в RAW (для soft-reconnect rewrite)
 
-// SetSoftReconnectPreserve — soft-reconnect: не трогать wg-turn, только перезапуск core/воркеров.
+// SetSoftReconnectPreserve — soft-reconnect: не сносить wg-turn/маршруты;
+// applyWGConfig всё равно обновляет ключи peer (IpcSet / wg setconf).
 func SetSoftReconnectPreserve(v bool) { softReconnectPreserve.Store(v) }
 
-// SoftReconnectPreserve reports whether the next applyWGConfig should skip teardown.
+// SoftReconnectPreserve — soft: skip teardown, refresh WG keys in place.
 func SoftReconnectPreserve() bool { return softReconnectPreserve.Load() }
 
 func setActiveRawPrimaryIP(ip string) {

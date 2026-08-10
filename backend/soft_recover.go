@@ -2,13 +2,10 @@ package backend
 
 import "time"
 
-// Soft-recover escalation for WDTT (WG/RAW via Orchestrator).
-// SoftReconnect keeps wg-turn; after a server restart that is often a zombie
-// path (workers up, data dead). One soft attempt, then full reconnect.
+// Soft-only recovery for WDTT. Full reconnect — только смена сети (forceFull).
 const (
-	softRecoverMax         = 1
-	softRecoverVerifyWait  = 45 * time.Second
-	softRecoverTrafficNeed = int64(2048) // meaningful progress after soft
+	softRecoverVerifyWait  = 30 * time.Second
+	softRecoverTrafficNeed = int64(64 * 1024) // после soft ждём реальный downlink/uplink
 )
 
 type recoverMode int
@@ -18,13 +15,11 @@ const (
 	recoverFull
 )
 
-// decideRecoverMode выбирает soft vs полный reconnect.
-// forceFull — смена сети / эскалация после неудачного soft.
+// decideRecoverMode: soft пока жив TUN; full только при forceFull (смена сети)
+// или если WG интерфейса уже нет.
 func decideRecoverMode(forceFull bool, softCount int, tunnelUp, wgActive bool) recoverMode {
+	_ = softCount
 	if forceFull {
-		return recoverFull
-	}
-	if softCount >= softRecoverMax {
 		return recoverFull
 	}
 	if tunnelUp && wgActive {
