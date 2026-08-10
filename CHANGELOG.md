@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.290] — 2026-08-10
+
+### Perf — быстрый старт при независимом cred pool
+- Bootstrap: воркеры стартуют после **1** слота VK Calls (~1–2 с), остальные 3 слота — в фоне.
+- Пока preferred-слот не готов, воркер берёт любой ready (обычно slot0); после догрузки пула — preferred.
+- Убран лишний sleep 2 с между слотами (throttle уже в GetCreds).
+
 ## [0.3.289] — 2026-08-10
 
 ### Fix — RAW TCP soft reconnect после mass VK RST

@@ -56,6 +56,29 @@ func credPoolSizeForWorkers(n int) int {
 	return size
 }
 
+// credBootstrapMinSlots — сколько слотов ждать до старта воркеров.
+// 1 = туннель поднимается сразу после первого VK Calls; остальные слоты
+// догружаются в фоне (воркеры временно сидят на готовых слотах).
+func credBootstrapMinSlots(poolSize int) int {
+	if poolSize <= 0 {
+		return 1
+	}
+	return 1
+}
+
+// pickReadyCredSlot — preferred слот если готов, иначе любой готовый, иначе -1.
+func pickReadyCredSlot(preferred int, ready []bool) int {
+	if preferred >= 0 && preferred < len(ready) && ready[preferred] {
+		return preferred
+	}
+	for i, ok := range ready {
+		if ok {
+			return i
+		}
+	}
+	return -1
+}
+
 // WorkerGroup:
 // Запускает N потоков с пулом call-credential (несколько кредов на группу).
 func WorkerGroup(
@@ -179,42 +202,9 @@ func WorkerGroup(
 		}
 	}
 
-	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s..., pool=%d слотов)", groupID, shortHash, poolSize)
+	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s..., pool=%d слотов, bootstrap=%d)",
+		groupID, shortHash, poolSize, credBootstrapMinSlots(poolSize))
 	credSlots := make([]*Credentials, poolSize)
-	for s := 0; s < poolSize; s++ {
-		if s > 0 {
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-				return
-			}
-		}
-		c, err := fetchCredSlot(s)
-		if err != nil {
-			return
-		}
-		credSlots[s] = c
-	}
-
-	log.Printf("[ГРУППА #%d] Креды OK, pool=%d, TURN: %v, %d воркеров",
-		groupID, poolSize, credSlots[0].TurnURLs, len(activeWorkerIDs))
-
-	if onTurnURLs != nil {
-		seen := make(map[string]struct{})
-		var all []string
-		for _, c := range credSlots {
-			if c == nil {
-				continue
-			}
-			for _, u := range c.TurnURLs {
-				if _, ok := seen[u]; !ok {
-					seen[u] = struct{}{}
-					all = append(all, u)
-				}
-			}
-		}
-		onTurnURLs(all)
-	}
 
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
@@ -222,6 +212,53 @@ func WorkerGroup(
 	// Per-slot cooldown — раньше один atomic на всю группу блокировал
 	// параллельный refresh соседних слотов после mass RST.
 	lastCredRefresh := make([]atomic.Int64, poolSize)
+
+	emitTurnURLs := func(c *Credentials) {
+		if onTurnURLs == nil || c == nil || len(c.TurnURLs) == 0 {
+			return
+		}
+		onTurnURLs(c.TurnURLs)
+	}
+
+	storeCredSlot := func(slot int, c *Credentials) {
+		credsMu.Lock()
+		credSlots[slot] = c
+		credsMu.Unlock()
+		emitTurnURLs(c)
+	}
+
+	// Быстрый старт: ждём только bootstrap-слоты, остальное — фон.
+	bootN := credBootstrapMinSlots(poolSize)
+	for s := 0; s < bootN; s++ {
+		c, err := fetchCredSlot(s)
+		if err != nil {
+			return
+		}
+		storeCredSlot(s, c)
+	}
+	log.Printf("[ГРУППА #%d] Bootstrap-креды OK (%d/%d), TURN: %v — стартуем воркеров, остальное в фоне",
+		groupID, bootN, poolSize, credSlots[0].TurnURLs)
+
+	if poolSize > bootN {
+		go func() {
+			for s := bootN; s < poolSize; s++ {
+				if ctx.Err() != nil {
+					return
+				}
+				c, err := fetchCredSlot(s)
+				if err != nil {
+					log.Printf("[ГРУППА #%d] Фоновый слот %d: %v", groupID, s, err)
+					if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
+						return
+					}
+					continue
+				}
+				storeCredSlot(s, c)
+				log.Printf("[ГРУППА #%d] Фоновый слот %d/%d готов", groupID, s+1, poolSize)
+			}
+			log.Printf("[ГРУППА #%d] Пул кредов заполнен (%d слотов)", groupID, poolSize)
+		}()
+	}
 	var quotaBackoffUntil atomic.Int64
 	var signalOnce sync.Once
 	fireSignalReady := func() {
@@ -378,14 +415,28 @@ func WorkerGroup(
 				}
 
 				credsMu.RLock()
-				slotCreds := credSlots[slot]
+				ready := make([]bool, poolSize)
+				for i := range credSlots {
+					ready[i] = credSlots[i] != nil
+				}
+				useSlot := pickReadyCredSlot(slot, ready)
+				var slotCreds *Credentials
+				if useSlot >= 0 {
+					slotCreds = credSlots[useSlot]
+				}
+				credsMu.RUnlock()
 				if slotCreds == nil {
-					credsMu.RUnlock()
-					return
+					// Bootstrap ещё не дал ни одного слота / гонка — ждём фон.
+					select {
+					case <-time.After(200 * time.Millisecond):
+					case <-ctx.Done():
+						return
+					}
+					continue
 				}
 				credsSnapshot := *slotCreds
 				credsSnapshot.TurnURLs = cloneStringSlice(slotCreds.TurnURLs)
-				credsMu.RUnlock()
+				// refresh после recycle бьёт по preferred слоту (slot), не по fallback.
 
 				sessStart := time.Now()
 				configDelivered, sessErr := RunSession(ctx, tp, peer, d, localPort,
