@@ -116,3 +116,93 @@ func softStormAllows(count int, windowStart, now time.Time) (allow bool, nextCou
 	}
 	return true, count + 1, windowStart
 }
+
+// softTickAction — решение одного тика traffic-watch (для симуляции сценариев).
+type softTickAction int
+
+const (
+	softTickNone softTickAction = iota
+	softTickVerifyOK
+	softTickVerifyFailSoft
+	softTickStallSoft
+	softTickStormBlock
+)
+
+// SoftTickInput — снимок состояния для decideSoftTick (без Orchestrator/Wails).
+type SoftTickInput struct {
+	Now            time.Time
+	Watch          bool
+	StallDur       time.Duration
+	SinceConnect   time.Duration
+	WasActive      bool
+	StallImmune    bool
+	VerifyPending  bool
+	VerifyExpired  bool
+	Workers        int32
+	LastTrafficAt  time.Time
+	BytesSinceSoft int64
+	SoftBusy       bool
+	CooldownActive  bool
+	StormCount     int
+	StormStarted   time.Time
+}
+
+// SoftTickResult — что делать и новое состояние storm-счётчика.
+type SoftTickResult struct {
+	Action       softTickAction
+	StormCount   int
+	StormStarted time.Time
+}
+
+// DecideSoftTick — единая точка политики soft на тике (тесты/симуляция).
+func DecideSoftTick(in SoftTickInput) SoftTickResult {
+	out := SoftTickResult{StormCount: in.StormCount, StormStarted: in.StormStarted}
+	if in.SoftBusy || in.CooldownActive {
+		out.Action = softTickNone
+		return out
+	}
+	trySoft := func(action softTickAction) SoftTickResult {
+		allow, next, start := softStormAllows(in.StormCount, in.StormStarted, in.Now)
+		if !allow {
+			out.Action = softTickStormBlock
+			return out
+		}
+		out.Action = action
+		out.StormCount = next
+		out.StormStarted = start
+		return out
+	}
+	if in.VerifyExpired {
+		if softRecoverSucceeded(in.Now, in.LastTrafficAt, in.BytesSinceSoft, in.Workers) {
+			out.Action = softTickVerifyOK
+			return out
+		}
+		return trySoft(softTickVerifyFailSoft)
+	}
+	if shouldStallSoft(in.Watch, in.StallDur, in.SinceConnect, in.WasActive, in.StallImmune, in.VerifyPending, in.Workers) {
+		return trySoft(softTickStallSoft)
+	}
+	out.Action = softTickNone
+	return out
+}
+
+// SimTrafficNote — как noteTrafficBytes двигает lastTrafficAt (keepalive vs real).
+func SimTrafficNote(lastAt time.Time, lastBytes, total int64, now time.Time) (newAt time.Time, newBytes int64, meaningful bool) {
+	newBytes = lastBytes
+	newAt = lastAt
+	if lastAt.IsZero() {
+		return now, total, false
+	}
+	if total < lastBytes {
+		return now, total, false
+	}
+	if total <= lastBytes {
+		return lastAt, lastBytes, false
+	}
+	delta := total - lastBytes
+	newBytes = total
+	if meaningfulTrafficDelta(delta) {
+		return now, newBytes, true
+	}
+	return lastAt, newBytes, false
+}

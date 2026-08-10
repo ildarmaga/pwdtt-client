@@ -139,7 +139,10 @@ func TestShouldStallSoft(t *testing.T) {
 	}
 	// Idle 20–40s after burst must NOT soft (старый баг шторма).
 	if shouldStallSoft(true, 40*time.Second, time.Minute, true, false, false, 18) {
-		t.Fatal("40s idle with workers must not soft (need 90s)")
+		t.Fatal("40s idle with workers must not soft (need 3m)")
+	}
+	if shouldStallSoft(true, 2*time.Minute, time.Minute, true, false, false, 18) {
+		t.Fatal("2m idle must not soft yet")
 	}
 }
 

@@ -282,15 +282,16 @@ const networkChangeDebounce = 1500 * time.Millisecond
 const workersLostGrace = 10 * time.Second
 
 const (
-	// Zombie: воркеры живы, а реального трафика нет долго. Idle 20–40 с — норма.
-	trafficStallThreshold    = 90 * time.Second
+	// Zombie: воркеры живы, а реального трафика нет ОЧЕНЬ долго.
+	// 90с ловило «читаю страницу» → soft. 3 мин — компромисс zombie vs idle.
+	trafficStallThreshold    = 3 * time.Minute
 	trafficStallMinBytes     = int64(8 * 1024) // <8KiB = keepalive
-	trafficStallStartupGrace = 60 * time.Second
+	trafficStallStartupGrace = 90 * time.Second
 	// После soft не дёргать stall долго (иначе idle → soft → idle → soft).
-	softStallImmuneAfter     = 3 * time.Minute
+	softStallImmuneAfter     = 5 * time.Minute
 	trafficActiveMinBytes    = int64(512)
 	trafficActiveWindow      = 3 * time.Minute
-	sessionWatchAfterConnect = 5 * time.Minute
+	sessionWatchAfterConnect = 10 * time.Minute
 	autoReconnectCooldown    = 60 * time.Second
 	autoReconnectProbeEvery  = 2 * time.Second
 	internetProbeInterval    = 2 * time.Second

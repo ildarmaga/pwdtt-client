@@ -1,13 +1,20 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.287] — 2026-08-10
+
+### Test — симулятор soft-сценариев + stall 3 мин
+- `soft_scenario_test.go`: idle browsing, zombie 18/18, verify OK без трафика, storm cap, keepalive clock, preserve race.
+- `DecideSoftTick` / `SimTrafficNote` — политика без живого VPN.
+- Stall soft **3 мин** (90с ещё ловило «читаю страницу»).
+
 ## [0.3.286] — 2026-08-10
 
 ### Fix — шторм soft/реконнектов (idle ≠ zombie)
 - Verify после soft: **воркеры >0 = успех** (больше не требуем 64KiB за 30с → не рвём idle).
-- Stall soft только при живых воркерах и **≥90с** без meaningful-трафика (было 20с).
-- Immune 3 мин после soft; cooldown 60с; workers=0 grace 10с; макс 3 soft / 10 мин.
-- Простой с 18/18 воркерами больше не крутит soft по кругу.
+- Stall soft только при живых воркерах и **≥3 мин** без meaningful-трафика (было 8–20с).
+- Immune 5 мин после soft; cooldown 60с; workers=0 grace 10с; макс 3 soft / 10 мин.
+- Симулятор сценариев: `soft_scenario_test.go` (idle / zombie / storm / preserve race).
 
 ## [0.3.285] — 2026-08-10
 
