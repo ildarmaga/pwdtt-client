@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.281] — 2026-08-10
+
+### Fix — быстрый SoftReconnect без «TUN не готов» и nested soft
+- Soft сразу `TunAlreadyReady` / `NotifyTunReady` — воркеры не ждут 20s на wg_config (параллельный TURN).
+- Пока идёт soft (VK direct / grace) — повторный SoftReconnect не рвёт context mid-flight.
+- Grace продлевается, пока soft auth жив; если soft-сессия умерла без воркеров — короткий cool-down и ещё soft.
+
 ## [0.3.280] — 2026-08-10
 
 ### Fix — RAW SoftReconnect: self-восстановление bridge

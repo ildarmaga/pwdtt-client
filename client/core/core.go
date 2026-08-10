@@ -27,8 +27,9 @@ type Config struct {
 	ObfsMode      string   // audio|video — RTP маскировка (PT 111 / 96)
 	TunnelMode    string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
 	TurnTransport string   // tcp|udp — канал клиент↔TURN (default tcp)
-	RawPrimaryIP  string   // soft-reconnect: IP сохранённого TUN для rewrite
-	RawDirectPort int      // 0 = peer DTLS+3; иначе явный UDP порт RAW
+	RawPrimaryIP    string // soft-reconnect: IP сохранённого TUN для rewrite
+	RawDirectPort   int    // 0 = peer DTLS+3; иначе явный UDP порт RAW
+	TunAlreadyReady bool   // soft: TUN/маршруты уже живы — не ждать wg_config
 }
 
 // EventType — тип события от ядра.
@@ -356,6 +357,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	}()
 
 	c.emit(Event{Type: EventState, Status: "connecting"})
+	if c.cfg.TunAlreadyReady {
+		// SoftReconnect: интерфейс уже поднят — воркеры не ждут 20s на wg_config.
+		c.NotifyTunReady()
+		log.Printf("[SOFT] TUN уже готов — воркеры стартуют без ожидания")
+	}
 
 	go func() {
 		defer close(c.events)
@@ -394,9 +400,14 @@ func (c *Core) Start() (<-chan Event, error) {
 			}
 
 			waitTun := func(ctx context.Context) bool {
-				ok := c.WaitTunReady(ctx, 20*time.Second)
+				// Soft уже открыл tunReady; обычный старт ждёт wg_config/raw_config.
+				timeout := 20 * time.Second
+				if c.cfg.TunAlreadyReady {
+					timeout = 2 * time.Second
+				}
+				ok := c.WaitTunReady(ctx, timeout)
 				if !ok {
-					log.Printf("[ГРУППА] TUN не готов за 20s — воркер не стартует")
+					log.Printf("[ГРУППА] TUN не готов за %s — воркер не стартует", timeout)
 				}
 				return ok
 			}

@@ -263,6 +263,8 @@ type Orchestrator struct {
 	softRecoverVerifyUntil time.Time
 	// softRecoverBytesAt — суммарный rx+tx на старте verify-окна.
 	softRecoverBytesAt int64
+	// softSwapInProgress — SoftReconnect между stop старой и Start новой сессии.
+	softSwapInProgress bool
 }
 
 const networkChangeDebounce = 1500 * time.Millisecond
@@ -321,7 +323,23 @@ func (o *Orchestrator) SoftReconnect() error {
 	o.mu.Lock()
 	params := o.lastParams
 	canPreserve := o.tunnelUp && wgTunnelActive()
+	// Уже идёт soft и сессия жива — не убивать TURN/VK mid-flight.
+	if softRecoverBusy(o.softRecoverVKDirect, o.softRecoverUntil, time.Now()) &&
+		o.sess != nil && o.sess.c != nil {
+		o.mu.Unlock()
+		return fmt.Errorf("soft-восстановление уже идёт")
+	}
+	if o.softSwapInProgress {
+		o.mu.Unlock()
+		return fmt.Errorf("soft-восстановление уже идёт")
+	}
+	o.softSwapInProgress = true
 	o.mu.Unlock()
+	defer func() {
+		o.mu.Lock()
+		o.softSwapInProgress = false
+		o.mu.Unlock()
+	}()
 	if params.Profile == "" {
 		return fmt.Errorf("нет сохранённых параметров подключения")
 	}
@@ -337,6 +355,12 @@ func (o *Orchestrator) SoftReconnect() error {
 		} else {
 			runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VK временно напрямую (auth/DNS), пока поднимаются TURN-воркеры")
 		}
+		// Блокируем nested soft сразу, до stop старой сессии.
+		o.mu.Lock()
+		o.softRecoverCount++
+		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
+		o.softRecoverVKDirect = true
+		o.mu.Unlock()
 	}
 	if o.IsRunning() {
 		o.stopCoreSession(!canPreserve)
@@ -350,7 +374,6 @@ func (o *Orchestrator) SoftReconnect() error {
 	o.softRecoverVerifyUntil = time.Time{}
 	o.softRecoverBytesAt = 0
 	if canPreserve {
-		o.softRecoverCount++
 		o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
 		o.softRecoverVKDirect = true
 	} else {
@@ -431,7 +454,6 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 	o.mu.Lock()
 	o.lastWorkers = workers
 	tunnelUp := o.tunnelUp
-	inSoft := o.inSoftRecoverWindow()
 	o.mu.Unlock()
 	if !tunnelUp {
 		return
@@ -444,11 +466,18 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		o.finishSoftRecoverVK()
 		return
 	}
-	// Soft-reconnect: workers=0 ожидаем, пока идёт auth — не зацикливать SoftReconnect.
-	if inSoft {
+	o.mu.Lock()
+	vkDirect := o.softRecoverVKDirect
+	until := o.softRecoverUntil
+	busy := softRecoverBusy(vkDirect, until, time.Now())
+	// Пока soft auth/TURN — продлеваем grace, не стартуем второй SoftReconnect.
+	if busy {
+		if vkDirect {
+			o.softRecoverUntil = time.Now().Add(softRecoverAuthGrace)
+		}
+		o.mu.Unlock()
 		return
 	}
-	o.mu.Lock()
 	if o.workersZeroAt.IsZero() {
 		o.workersZeroAt = time.Now()
 		o.mu.Unlock()
@@ -515,7 +544,7 @@ func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 	}
 	// Во время soft-recover auth окна не рвём сессию повторно (кроме forceFull —
 	// смена сети/шлюза, когда /32 к TURN устарели).
-	if !forceFull && o.inSoftRecoverWindow() {
+	if !forceFull && softRecoverBusy(o.softRecoverVKDirect, o.softRecoverUntil, time.Now()) {
 		o.mu.Unlock()
 		return
 	}
@@ -818,8 +847,11 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		RawPrimaryIP:  "",
 		RawDirectPort: prof.RawDirectPort,
 	}
-	if tunnelMode == "raw" && SoftReconnectPreserve() {
-		cfg.RawPrimaryIP = ActiveRawPrimaryIP()
+	if SoftReconnectPreserve() {
+		cfg.TunAlreadyReady = true
+		if tunnelMode == "raw" {
+			cfg.RawPrimaryIP = ActiveRawPrimaryIP()
+		}
 	}
 	if len(p.Hashes) > 0 {
 		cfg.Hashes = p.Hashes
@@ -959,6 +991,14 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 		runtime.EventsEmit(o.appCtx, "tunnel_stats", int64(0), int64(0), int32(0), int32(0), int64(0), float64(0), float64(0), float64(0))
 	} else {
 		runtime.EventsEmit(o.appCtx, "log", "INFO", "[SOFT] VPN-интерфейс сохранён, перезапуск TURN-воркеров…")
+		// Soft-сессия умерла сама (не swap SoftReconnect) без воркеров —
+		// короткий cool-down, затем можно повторить soft.
+		o.mu.Lock()
+		if !o.softSwapInProgress && o.softRecoverVKDirect && o.lastWorkers == 0 {
+			o.softRecoverVKDirect = false
+			o.softRecoverUntil = time.Now().Add(3 * time.Second)
+		}
+		o.mu.Unlock()
 	}
 	// Останавливаем буферизованный логгер и восстанавливаем оригинальный
 	if lw, ok := log.Writer().(*wailsLogWriter); ok {

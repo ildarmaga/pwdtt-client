@@ -8,6 +8,15 @@ const (
 	softRecoverTrafficNeed = int64(64 * 1024) // после soft ждём реальный downlink/uplink
 )
 
+// softRecoverBusy — нельзя рвать текущий soft повторным SoftReconnect
+// (иначе context canceled посреди TURN/VK auth).
+func softRecoverBusy(vkDirect bool, until, now time.Time) bool {
+	if vkDirect {
+		return true
+	}
+	return !until.IsZero() && now.Before(until)
+}
+
 type recoverMode int
 
 const (

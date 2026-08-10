@@ -47,3 +47,19 @@ func TestSoftRecoverTrafficOK(t *testing.T) {
 		t.Fatal("fresh + enough bytes must pass")
 	}
 }
+
+func TestSoftRecoverBusy(t *testing.T) {
+	now := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
+	if !softRecoverBusy(true, time.Time{}, now) {
+		t.Fatal("vkDirect must block nested soft")
+	}
+	if softRecoverBusy(false, time.Time{}, now) {
+		t.Fatal("idle must allow soft")
+	}
+	if !softRecoverBusy(false, now.Add(30*time.Second), now) {
+		t.Fatal("grace window must block")
+	}
+	if softRecoverBusy(false, now.Add(-time.Second), now) {
+		t.Fatal("expired grace must allow")
+	}
+}
