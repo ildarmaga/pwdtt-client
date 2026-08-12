@@ -933,6 +933,9 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	}
 
 	obfsMode := p.ObfsMode
+	if obfsMode == "vkquic" {
+		return nil, fmt.Errorf("VKQUIC (CSQTT «Сложная») пока не поддерживается в desktop-клиенте")
+	}
 	if obfsMode != "video" {
 		obfsMode = "audio"
 	}

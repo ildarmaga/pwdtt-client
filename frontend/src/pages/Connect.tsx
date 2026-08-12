@@ -356,6 +356,11 @@ export default function Connect() {
     logStore.push('INFO', `[WB] ${selected!.name} · room ${maskRoomPreview(room)}`);
     try {
       const s = settingsStore.get();
+      let did = (selected?.deviceId || '').trim();
+      if (!did && selected?.id) {
+        const prof = await GetProfile(selected.id).catch(() => null);
+        did = prof?.device_id?.trim() ?? '';
+      }
       await WailsConnectWB(
         room,
         buildRoutingPayload(s.wbRoutingMode, s.wbRoutingRules),
@@ -366,9 +371,8 @@ export default function Connect() {
         s.wbSocksPort || 10809,
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
         s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',
-        (selected?.deviceId || '').trim(),
+        did,
       );
-      const did = (selected?.deviceId || '').trim();
       const pass = (selected?.password || '').trim();
       const sub = (selected?.subUrl || '').trim();
       if (did && pass && sub) {
@@ -404,7 +408,7 @@ export default function Connect() {
     logStore.push('INFO', 'Подключение VK…');
     const mode = s.tunnelMode === 'raw' ? 'raw' : 'wg';
     const turnTr = s.turnTransport === 'udp' ? 'udp' : 'tcp';
-    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode === 'video' ? 'video' : 'audio'} · mode ${mode} · turn ${turnTr}`);
+    logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode} · mode ${mode} · turn ${turnTr}`);
     try {
       const workers = s.useGlobalHashes
         ? (s.power || 9)
@@ -417,7 +421,7 @@ export default function Connect() {
         mtu: s.mtu || 1280,
         hashes,
         vkThroughTunnel: true,
-        obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
+        obfsMode: s.obfsMode === 'video' || s.obfsMode === 'vkquic' ? s.obfsMode : 'audio',
         tunnelMode: mode,
         turnTransport: turnTr,
       });

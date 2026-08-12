@@ -561,15 +561,16 @@ export default function Settings({ onClose }: Props) {
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>
               <span>Маскировка</span>
+              <div className="st-vk-hint" style={{ marginTop: 4 }}>Простая · Средняя · VKQUIC (CSQTT)</div>
             </div>
-            <div className="st-seg">
+            <div className="st-seg st-seg--triple">
               <button
                 type="button"
-                className={`st-seg-btn${settings.obfsMode !== 'video' ? ' st-seg-btn--active' : ''}`}
+                className={`st-seg-btn${settings.obfsMode === 'audio' ? ' st-seg-btn--active' : ''}`}
                 disabled={locked}
                 onClick={() => update('obfsMode', 'audio')}
               >
-                Аудио
+                Простая
               </button>
               <button
                 type="button"
@@ -577,7 +578,16 @@ export default function Settings({ onClose }: Props) {
                 disabled={locked}
                 onClick={() => update('obfsMode', 'video')}
               >
-                Видео
+                Средняя
+              </button>
+              <button
+                type="button"
+                className={`st-seg-btn${settings.obfsMode === 'vkquic' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('obfsMode', 'vkquic')}
+                title="CSQTT «Сложная» — bare UDP VKQUIC (в разработке)"
+              >
+                VKQUIC
               </button>
             </div>
           </div>

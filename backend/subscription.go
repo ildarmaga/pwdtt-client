@@ -75,6 +75,12 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 			vpnName = stats.Title
 		}
 	}
+	wbRoom := parsed.WbRoom
+	if wbRoom == "" && parsed.Password != "" {
+		if room, err := fetchWBRoomViaAuth(rawURL, parsed.Password); err == nil && room != "" {
+			wbRoom = room
+		}
+	}
 	return &SubImportResult{
 		IP:       parsed.IP,
 		DtlsPort: parsed.DtlsPort,
@@ -85,9 +91,17 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		Hashes:   parsed.Hashes,
 		SubURL:   strings.Split(rawURL, "?")[0],
 		DeviceID: parsed.DeviceID,
-		WbRoom:   parsed.WbRoom,
+		WbRoom:   wbRoom,
 		Stats:    stats,
 	}, nil
+}
+
+func fetchWBRoomViaAuth(subURL, password string) (string, error) {
+	resp, err := postWBAuth(subURL, password, "")
+	if err != nil || resp == nil || !resp.OK {
+		return "", err
+	}
+	return strings.TrimSpace(resp.WbRoom), nil
 }
 
 func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
