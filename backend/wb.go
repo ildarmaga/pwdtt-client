@@ -89,6 +89,7 @@ type WBManager struct {
 	runGen atomic.Uint64
 
 	room           string
+	displayName    string
 	routingMode    string
 	routingPayload string
 	vp8Fps         int
@@ -141,7 +142,7 @@ func (m *WBManager) IsRunning() bool {
 	return true
 }
 
-func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass string) error {
+func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass, deviceID string) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -152,8 +153,13 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	if socksPort <= 0 {
 		socksPort = 10809
 	}
+	displayName := strings.TrimSpace(deviceID)
+	if displayName == "" {
+		displayName = "WDTT"
+	}
 	m.mu.Lock()
 	m.stop = false // user explicitly asked to connect
+	m.displayName = displayName
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
 	m.vp8DualTrack = dualTrack
@@ -254,6 +260,10 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	socksPort := m.socksPort
 	socksUser := m.socksUser
 	socksPass := m.socksPass
+	displayName := m.displayName
+	if displayName == "" {
+		displayName = "WDTT"
+	}
 	m.mu.Unlock()
 
 	m.emitLog("INFO", "Подключение WB Stream…")
@@ -263,7 +273,7 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		defer close(done)
 		cfg := wbjrunner.Config{
 			Room:              room,
-			DisplayName:       "WDTT",
+			DisplayName:       displayName,
 			UseTUN:            false,
 			UseXray:           false,
 			SocksOnly:         true,

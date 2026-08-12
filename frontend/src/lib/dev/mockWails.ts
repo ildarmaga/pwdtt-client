@@ -144,7 +144,7 @@ function installGoMock() {
           }
           startDevTunnelStats();
         },
-        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, _socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown) => {
+        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, _socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown, _deviceId?: unknown) => {
           emitDevEvent('log', 'INFO', 'Подключение WB Stream (SOCKS для v2rayN)…');
           emitDevEvent('state_changed', 'connecting');
           await new Promise(r => setTimeout(r, 700));
@@ -227,6 +227,37 @@ function installGoMock() {
             return {
               ok: false,
               expired: true,
+              useCookies,
+              hint: 'remixsid не найден — проверьте формат cookies',
+              path,
+            };
+          }
+          return {
+            ok: true,
+            expired: false,
+            useCookies,
+            hint: useCookies ? 'Cookies действительны' : 'Cookies действительны (тумблер выключен)',
+            path,
+          };
+        },
+        CheckVKCookiesDraft: async (payload: unknown) => {
+          const useCookies = readVkUseCookies();
+          const raw = String(payload ?? '');
+          const path = 'localStorage · pwdtt_vk_cookies_raw';
+          if (!raw.trim()) {
+            return {
+              ok: false,
+              expired: false,
+              useCookies,
+              hint: 'Cookies не заданы — войдите через VK или вставьте вручную',
+              path,
+            };
+          }
+          const ok = vkCookiesHasRemix(raw);
+          if (!ok) {
+            return {
+              ok: false,
+              expired: false,
               useCookies,
               hint: 'remixsid не найден — проверьте формат cookies',
               path,

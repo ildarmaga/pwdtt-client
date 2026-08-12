@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { IconSettings2, IconHash, IconChevronDown } from '@tabler/icons-react';
 import Hash from './Hash';
 import { settingsStore, serverStore } from '../lib/store';
@@ -13,11 +13,14 @@ import { saveServerProfile } from '../lib/utils/profileSync';
 import {
   SetTrayEnabled, SetAutoStart, GetAutoStart,
   GetVKCookiesStatus, GetVKCookiesRaw, SaveVKCookies, ClearVKCookies, GetVKUseCookies, SetVKUseCookies,
+  CheckVKCookiesDraft,
   CheckForUpdate, DownloadAndApplyUpdate, CancelUpdateDownload, GetUpdateDownloadState, IsUpdateDownloading,
   GetDataDir,
 } from '../../wailsjs/go/backend/App';
 import type { backend } from '../../wailsjs/go/models';
 import { vkModeStore } from '../lib/stores/vkModeStore';
+
+const VK_COOKIES_DRAFT_DEBOUNCE_MS = 600;
 
 interface Props {
   onClose: () => void;
@@ -90,9 +93,13 @@ export default function Settings({ onClose }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedConfirm, setAdvancedConfirm] = useState(false);
   const [vkCookies, setVkCookies] = useState('');
+  const [vkCookiesSaved, setVkCookiesSaved] = useState('');
   const [vkStatus, setVkStatus] = useState<backend.VKCookiesStatus | null>(null);
   const [vkSaveMsg, setVkSaveMsg] = useState('');
   const [vkUseCookies, setVkUseCookies] = useState(false);
+  const vkDraftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vkRawLoaded = useRef(false);
+  const vkStatusSeq = useRef(0);
   const [updateMsg, setUpdateMsg] = useState('');
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<backend.UpdateInfo | null>(null);
@@ -126,16 +133,63 @@ export default function Settings({ onClose }: Props) {
     void GetDataDir().then(setDataDir).catch(() => setDataDir(''));
   }, []);
 
-  const refreshVkStatus = () => {
-    GetVKCookiesStatus().then(setVkStatus).catch(() => setVkStatus(null));
+  const applyVkRaw = (raw: string) => {
+    const next = raw ?? '';
+    setVkCookies(next);
+    setVkCookiesSaved(next);
+    vkRawLoaded.current = true;
+  };
+
+  const applyVkStatus = (seq: number, status: backend.VKCookiesStatus | null) => {
+    if (seq !== vkStatusSeq.current) return;
+    setVkStatus(status);
+  };
+
+  /** Status/toggle only — never overwrites an unsaved textarea draft. */
+  const refreshVkStatus = (opts?: { reloadRaw?: boolean }) => {
+    const seq = ++vkStatusSeq.current;
+    GetVKCookiesStatus().then(s => applyVkStatus(seq, s)).catch(() => applyVkStatus(seq, null));
     GetVKUseCookies().then(setVkUseCookies).catch(() => setVkUseCookies(false));
-    GetVKCookiesRaw()
-      .then(raw => setVkCookies(raw ?? ''))
-      .catch(() => { /* keep textarea as-is */ });
+    if (opts?.reloadRaw) {
+      GetVKCookiesRaw()
+        .then(raw => applyVkRaw(raw ?? ''))
+        .catch(() => { vkRawLoaded.current = true; });
+    }
     vkModeStore.notify();
   };
 
-  useEffect(() => { if (isVk) refreshVkStatus(); }, [isVk]);
+  useEffect(() => { if (isVk) refreshVkStatus({ reloadRaw: true }); }, [isVk]);
+
+  useEffect(() => {
+    if (!isVk || !vkRawLoaded.current) return;
+    if (vkDraftTimer.current) clearTimeout(vkDraftTimer.current);
+    vkDraftTimer.current = setTimeout(() => {
+      const draft = vkCookies;
+      const seq = ++vkStatusSeq.current;
+      if (!draft.trim()) {
+        setVkStatus(prev => {
+          if (seq !== vkStatusSeq.current) return prev;
+          return {
+            ok: false,
+            expired: false,
+            useCookies: vkUseCookies,
+            hint: 'Cookies не заданы — войдите через VK или вставьте вручную',
+            path: prev?.path ?? '',
+          };
+        });
+        return;
+      }
+      if (draft === vkCookiesSaved) {
+        GetVKCookiesStatus().then(s => applyVkStatus(seq, s)).catch(() => applyVkStatus(seq, null));
+        return;
+      }
+      setVkStatus(null);
+      CheckVKCookiesDraft(draft).then(s => applyVkStatus(seq, s)).catch(() => applyVkStatus(seq, null));
+    }, VK_COOKIES_DRAFT_DEBOUNCE_MS);
+    return () => {
+      if (vkDraftTimer.current) clearTimeout(vkDraftTimer.current);
+    };
+  }, [vkCookies, vkCookiesSaved, vkUseCookies, isVk]);
 
   useEffect(() => {
     void (async () => {
@@ -574,14 +628,19 @@ export default function Settings({ onClose }: Props) {
                   className="st-vk-textarea"
                   placeholder={'[{"name":"remixsid","value":"..."}] или remixsid=...; remixlang=0'}
                   value={vkCookies}
-                  onChange={e => setVkCookies(e.target.value)}
+                  onChange={e => {
+                    setVkCookies(e.target.value);
+                    setVkSaveMsg('');
+                  }}
                 />
                 <div className="st-vk-actions">
                   <button
                     className="st-vk-btn st-vk-btn--primary"
                     onClick={async () => {
                       try {
-                        await SaveVKCookies(vkCookies.trim());
+                        const saved = vkCookies.trim();
+                        await SaveVKCookies(saved);
+                        setVkCookiesSaved(saved);
                         setVkSaveMsg('Cookies сохранены');
                         refreshVkStatus();
                       } catch (e) {
@@ -596,6 +655,7 @@ export default function Settings({ onClose }: Props) {
                     onClick={async () => {
                       await ClearVKCookies();
                       setVkCookies('');
+                      setVkCookiesSaved('');
                       setVkSaveMsg('Cookies удалены');
                       refreshVkStatus();
                     }}
@@ -605,7 +665,9 @@ export default function Settings({ onClose }: Props) {
                 </div>
               </>
             )}
-            <div className="st-vk-msg">{vkSaveMsg}</div>
+            <div className="st-vk-msg">
+              {vkSaveMsg || (vkCookies !== vkCookiesSaved && vkCookies.trim() ? 'Черновик — нажмите «Сохранить cookies», чтобы применить' : '')}
+            </div>
           </div>
 
           <button

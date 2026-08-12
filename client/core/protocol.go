@@ -59,7 +59,7 @@ func RequestRawConfigCapabilities(conn net.Conn, deviceID, password string, mtu 
 	if mtu < 576 {
 		mtu = 1280
 	}
-	payload := fmt.Sprintf("RAWCONF:%s|%s|%d", deviceID, password, mtu)
+	payload := fmt.Sprintf("RAWCONF:%s|%s|%d|CHAL1", deviceID, password, mtu)
 	if requireChunk {
 		payload += "|CHUNK1"
 	}

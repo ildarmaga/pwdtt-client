@@ -33,6 +33,20 @@ func (a *App) GetVKCookiesStatus() VKCookiesStatus {
 	}
 }
 
+// CheckVKCookiesDraft validates Settings textarea contents without reading the saved file.
+func (a *App) CheckVKCookiesDraft(payload string) VKCookiesStatus {
+	ok, hint := core.VKCookiesStatusFromPayload(payload)
+	header, parseErr := core.ParseVKCookieHeader(payload)
+	hasRemix := parseErr == nil && header != ""
+	return VKCookiesStatus{
+		OK:         ok,
+		Hint:       hint,
+		Path:       core.VKCookiesPathForUI(),
+		Expired:    hasRemix && !ok,
+		UseCookies: core.VKUseCookies(),
+	}
+}
+
 // GetVKCookiesRaw returns cookies-vk.json contents for the Settings textarea.
 func (a *App) GetVKCookiesRaw() (string, error) {
 	return core.ReadVKCookiesRaw()

@@ -61,6 +61,11 @@ func vkParseCookiesPayload(raw []byte) (string, error) {
 	return header, nil
 }
 
+// ParseVKCookieHeader parses a cookies draft/file payload into a Cookie header.
+func ParseVKCookieHeader(raw string) (string, error) {
+	return vkParseCookiesPayload([]byte(raw))
+}
+
 func normalizeCookieHeader(s string) string {
 	s = strings.TrimSpace(strings.TrimSuffix(s, ";"))
 	if !strings.Contains(s, vkAuthCookieName+"=") {
@@ -106,6 +111,25 @@ func VKCookiesStatus() (ok bool, hint string) {
 		return false, "Cookies не заданы — войдите через VK или вставьте вручную"
 	}
 	if err := vkCookiesLiveValid(header); err != nil {
+		return false, vkCookieExpiredHint
+	}
+	if !VKUseCookies() {
+		return true, "Cookies действительны (тумблер выключен)"
+	}
+	return true, "Cookies действительны"
+}
+
+// VKCookiesStatusFromPayload validates a draft cookies payload (Settings textarea)
+// without reading the saved secrets file. Uses ValidateVKCookieHeader (no TTL cache).
+func VKCookiesStatusFromPayload(raw string) (ok bool, hint string) {
+	header, err := vkParseCookiesPayload([]byte(raw))
+	if err != nil || header == "" {
+		if err != nil {
+			return false, err.Error()
+		}
+		return false, "Cookies не заданы — войдите через VK или вставьте вручную"
+	}
+	if err := ValidateVKCookieHeader(header); err != nil {
 		return false, vkCookieExpiredHint
 	}
 	if !VKUseCookies() {

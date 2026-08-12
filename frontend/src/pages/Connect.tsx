@@ -76,7 +76,7 @@ import type { Server, TunnelState, TunnelProtocol } from '../lib/types';
 import { resolveConnectHashes } from '../lib/resolveConnectHashes';
 import { buildRoutingPayload } from '../lib/wbRouting';
 import { logStore } from '../lib/stores/logStore';
-import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB, GetWBSocksEndpoint, IsWBRunning } from '../../wailsjs/go/backend/App';
+import { Connect as WailsConnect, Disconnect as WailsDisconnect, ConnectWB as WailsConnectWB, DisconnectWB as WailsDisconnectWB, GetWBSocksEndpoint, IsWBRunning, ReportWBPresence } from '../../wailsjs/go/backend/App';
 
 const PING_COLORS: Record<string, string> = {
   good: '#22c55e',
@@ -366,7 +366,14 @@ export default function Connect() {
         s.wbSocksPort || 10809,
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
         s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',
+        (selected?.deviceId || '').trim(),
       );
+      const did = (selected?.deviceId || '').trim();
+      const pass = (selected?.password || '').trim();
+      const sub = (selected?.subUrl || '').trim();
+      if (did && pass && sub) {
+        try { void ReportWBPresence(sub, pass, did); } catch { /* ignore */ }
+      }
     } catch (e) {
       tunnelStore.set('idle');
       activeServerStore.setId(null);
