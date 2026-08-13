@@ -59,12 +59,14 @@ type Peer struct {
 	closed    chan struct{}
 	sess      *RoomSession
 	closeOnce sync.Once
+	spoke     atomic.Uint32
 }
 
 func (p *Peer) push(b []byte) {
 	if len(b) == 0 {
 		return
 	}
+	p.spoke.Store(1)
 	cp := append([]byte(nil), b...)
 	select {
 	case p.recv <- cp:
@@ -341,7 +343,7 @@ func (s *RoomSession) ensurePeer(identity, name, meta string) *Peer {
 		}
 		return p
 	}
-	if name != "" && p.Name == "" {
+	if name != "" {
 		p.Name = name
 	}
 	if meta != "" {
@@ -397,9 +399,45 @@ func (s *RoomSession) SetOnPeer(fn func(*Peer)) {
 	}
 }
 
-// WaitCreator blocks until a remote named WDTT (panel creator) appears.
+// StartCreatorBeacon broadcasts a WDTT-WB1 ping so joiners find us without
+// waiting for LiveKit SetName (WB often leaves remote Name empty).
+func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
+	go func() {
+		tick := time.NewTicker(400 * time.Millisecond)
+		defer tick.Stop()
+		send := func() {
+			if s.room == nil {
+				return
+			}
+			wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Payload: []byte("wdtt-wb1-creator")})
+			if err != nil {
+				return
+			}
+			pkt := lksdk.UserData(wire)
+			pkt.Topic = DataTopic
+			_ = s.room.LocalParticipant.PublishDataPacket(
+				pkt,
+				lksdk.WithDataPublishReliable(true),
+				lksdk.WithDataPublishTopic(DataTopic),
+			)
+		}
+		send()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.done:
+				return
+			case <-tick.C:
+				send()
+			}
+		}
+	}()
+}
+
+// WaitCreator blocks until the panel creator is identified (name, metadata, or WB1 traffic).
 func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if p := s.creatorPeer(); p != nil {
@@ -418,7 +456,7 @@ func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
 func (s *RoomSession) creatorPeer() *Peer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var fallback *Peer
+	var spoke *Peer
 	for _, p := range s.peers {
 		if p == nil {
 			continue
@@ -427,12 +465,11 @@ func (s *RoomSession) creatorPeer() *Peer {
 		if n == CreatorName || strings.HasPrefix(n, CreatorName) || strings.Contains(p.Meta, "wdtt-wb1-creator") {
 			return p
 		}
-		fallback = p
+		if p.spoke.Load() != 0 {
+			spoke = p
+		}
 	}
-	if len(s.peers) == 1 {
-		return fallback
-	}
-	return nil
+	return spoke
 }
 
 // Close leaves the room.

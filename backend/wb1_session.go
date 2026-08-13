@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -52,12 +53,12 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	}
 	defer sess.Close()
 
-	m.emitLog("INFO", "[WB] Жду creator в комнате (как в групповом звонке)…")
-	waitCtx, waitCancel := context.WithTimeout(ctx, 45*time.Second)
+	m.emitLog("INFO", "[WB] Жду creator в комнате…")
+	waitCtx, waitCancel := context.WithTimeout(ctx, 8*time.Second)
 	creator, err := sess.WaitCreator(waitCtx)
 	waitCancel()
 	if err != nil {
-		return fmt.Errorf("creator не в комнате: %w", err)
+		return fmt.Errorf("creator не в комнате (%s): %w", strings.Join(sess.PeerLabels(), ","), err)
 	}
 	m.emitLog("INFO", "[WB] creator "+creator.Name+" / "+creator.Identity)
 
@@ -88,6 +89,13 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() { _ = mux.Run(runCtx) }()
+
+	pingCtx, pingCancel := context.WithTimeout(runCtx, 3*time.Second)
+	if _, err := mux.Ping(pingCtx); err != nil {
+		pingCancel()
+		return fmt.Errorf("creator не отвечает на ping: %w", err)
+	}
+	pingCancel()
 
 	addr := net.JoinHostPort(socksHost, fmt.Sprintf("%d", socksPort))
 	ln, err := net.Listen("tcp", addr)

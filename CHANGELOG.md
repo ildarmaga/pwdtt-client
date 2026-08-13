@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.297] — 2026-08-14
+
+### Fix — WB creator за ~1 с, не 45 с
+- Ждём маяк/имя creator (8 с), не fallback на чужой пустой peer.
+- SOCKS поднимается после ping creator. Нужна панель ≥1.5.17.
+
 ## [0.3.296] — 2026-08-14
 
 ### Fix — WB SOCKS как раньше + VP8 fps
