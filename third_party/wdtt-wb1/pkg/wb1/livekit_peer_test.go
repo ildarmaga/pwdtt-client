@@ -68,6 +68,48 @@ func TestPeerPushBeaconMarksCreator(t *testing.T) {
 	}
 }
 
+func TestCreatorPeerPrefersBeaconIdentityOverSender(t *testing.T) {
+	ghost := &Peer{Identity: "e8214196-ghost"}
+	ghost.beacon.Store(1)
+	real := &Peer{Identity: "panel-creator"}
+	s := &RoomSession{
+		beaconID: "panel-creator",
+		peers:    map[string]*Peer{"e8214196-ghost": ghost, "panel-creator": real},
+	}
+	p := s.creatorPeer()
+	if p == nil || p.Identity != "panel-creator" {
+		t.Fatalf("beacon payload identity must win over leftover sender: %#v", p)
+	}
+}
+
+func TestCreatorBeaconWithIdentity(t *testing.T) {
+	key, err := DeriveKey("pass", "room-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := Pack(key, Frame{Type: TypePing, Payload: []byte(CreatorBeaconPayload + "|panel-id-1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isCreatorBeacon(key, wire) {
+		t.Fatal("prefix beacon")
+	}
+	if got := creatorIDFromBeacon(key, wire); got != "panel-id-1" {
+		t.Fatalf("id %q", got)
+	}
+	s := &RoomSession{key: key, peers: map[string]*Peer{}}
+	ghost := &Peer{Identity: "ghost", recv: make(chan []byte, 2), sess: s}
+	s.peers["ghost"] = ghost
+	ghost.push(wire)
+	if s.beaconID != "panel-id-1" {
+		t.Fatalf("beaconID %q", s.beaconID)
+	}
+	p := s.creatorPeer()
+	if p == nil || p.Identity != "panel-id-1" {
+		t.Fatalf("got %#v", p)
+	}
+}
+
 func TestJoinerPingIsNotCreatorBeacon(t *testing.T) {
 	key, err := DeriveKey("pass", "room-1")
 	if err != nil {

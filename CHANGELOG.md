@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.300] — 2026-08-14
+
+### Fix — WB download 0 B
+- Mux читает кадры со всей комнаты, не только с leftover identity (`e8214196…`).
+- Нужна панель ≥1.5.27 (маяк с id creator).
+
 ## [0.3.299] — 2026-08-14
 
 ### Fix — WB creator ping
