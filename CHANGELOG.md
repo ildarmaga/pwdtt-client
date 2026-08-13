@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.298] — 2026-08-14
+
+### Fix — WB SOCKS скорость
+- Mux кадры только в LiveKit data topic; VP8 больше не блокирует каждый chunk (было ~1 MB/s).
+- Кадр до 8 КБ. Нужна панель ≥1.5.24.
+
 ## [0.3.297] — 2026-08-14
 
 ### Fix — WB creator за ~1 с, не 45 с

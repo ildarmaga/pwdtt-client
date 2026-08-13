@@ -152,3 +152,25 @@ func TestPackEmptyPayload(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestPackMaxPayloadRoundTrip(t *testing.T) {
+	if MaxPayload < 8000 {
+		t.Fatalf("MaxPayload=%d; SOCKS over WB needs >=8000 or each Send is ~1KB and VP8 pacing caps ~1 MB/s", MaxPayload)
+	}
+	key, err := DeriveKey("secret", "room-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("w"), MaxPayload)
+	wire, err := Pack(key, Frame{Type: TypeData, StreamID: 9, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Unpack(key, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Payload, payload) {
+		t.Fatalf("roundtrip len %d want %d", len(got.Payload), len(payload))
+	}
+}

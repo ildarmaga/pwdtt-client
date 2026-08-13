@@ -17,7 +17,7 @@ const (
 	MagicSize  = 4
 	NonceSize  = chacha20poly1305.NonceSize
 	KeySize    = chacha20poly1305.KeySize
-	MaxPayload = 1000
+	MaxPayload = 8192 // LiveKit data packets ~15KiB; 1KB chunks + blocking VP8 capped SOCKS at ~1 MB/s
 	headerLen  = MagicSize + 1 + 2
 )
 

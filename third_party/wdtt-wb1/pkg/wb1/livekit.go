@@ -86,7 +86,9 @@ func (p *Peer) Close() {
 	p.closeOnce.Do(func() { close(p.closed) })
 }
 
-// Send implements Carrier: unicast data + VP8 (dest-stamped for the shared creator track).
+// Send implements Carrier. Mux frames go on the LiveKit data topic.
+// VP8 is a 30fps keepalive plus fallback if data publish fails — stuffing every
+// mux chunk into WriteSample(Duration=33ms) capped SOCKS at ~1 MB/s.
 func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -96,13 +98,16 @@ func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	}
 	pkt := lksdk.UserData(payload)
 	pkt.Topic = DataTopic
-	_ = p.sess.room.LocalParticipant.PublishDataPacket(
+	err := p.sess.room.LocalParticipant.PublishDataPacket(
 		pkt,
 		lksdk.WithDataPublishReliable(true),
 		lksdk.WithDataPublishTopic(DataTopic),
 		lksdk.WithDataPublishDestination([]string{p.Identity}),
 	)
-	return p.sess.writeVP8(p.hash, payload)
+	if err != nil {
+		return p.sess.writeVP8(p.hash, payload)
+	}
+	return nil
 }
 
 // Recv implements Carrier.
