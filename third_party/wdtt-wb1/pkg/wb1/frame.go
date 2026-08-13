@@ -17,7 +17,7 @@ const (
 	MagicSize  = 4
 	NonceSize  = chacha20poly1305.NonceSize
 	KeySize    = chacha20poly1305.KeySize
-	MaxPayload = 12000
+	MaxPayload = 1000
 	headerLen  = MagicSize + 1 + 2
 )
 

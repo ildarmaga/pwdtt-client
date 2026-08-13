@@ -2,6 +2,7 @@ package wb1
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,49 +12,122 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 )
 
-const DataTopic = "wdtt-wb1"
+const (
+	DataTopic   = "wdtt-wb1"
+	CreatorName = "WDTT"
+)
 
-// 16×16 VP8 keyframe — satisfies WB's "publisher must send video" constraint.
+// 16×16 VP8 keyframe — keeps the WB call alive (platform wants a publisher).
 var vp8Keyframe = []byte{
 	0x90, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x10, 0x00, 0x10, 0x00,
 	0x02, 0x47, 0x08, 0x85, 0x85, 0x88, 0x85, 0x84, 0x88, 0x02,
 	0x02, 0x00, 0x0c, 0x0d, 0x60, 0x00, 0xfe, 0xfc, 0x5a, 0x00, 0x00,
 }
 
-// RoomSession is a LiveKit room used as a WDTT-WB1 packet carrier.
+// RoomSession is a LiveKit room: one call, many joiners (like VK).
 type RoomSession struct {
 	room   *lksdk.Room
-	recv   chan []byte
 	done   chan struct{}
 	cancel context.CancelFunc
+	me     [8]byte
 
-	mu     sync.Mutex
-	labels []string
+	videoMu sync.Mutex
+	video   *lksdk.LocalTrack
+
+	mu      sync.Mutex
+	peers   map[string]*Peer
+	onPeer  func(*Peer)
+	pending []*Peer
 }
 
-// ConnectRoom joins LiveKit with a WB-issued room JWT, publishes dummy VP8,
-// and receives reliable data on topic wdtt-wb1.
+// Peer is one remote participant with its own WDTT-WB1 carrier.
+type Peer struct {
+	Identity  string
+	Name      string
+	Meta      string
+	hash      [8]byte
+	recv      chan []byte
+	closed    chan struct{}
+	sess      *RoomSession
+	closeOnce sync.Once
+}
+
+func (p *Peer) push(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	cp := append([]byte(nil), b...)
+	select {
+	case p.recv <- cp:
+	default:
+		select {
+		case <-p.recv:
+		default:
+		}
+		select {
+		case p.recv <- cp:
+		default:
+		}
+	}
+}
+
+func (p *Peer) Close() {
+	p.closeOnce.Do(func() { close(p.closed) })
+}
+
+// Send implements Carrier: unicast data + VP8 (dest-stamped for the shared creator track).
+func (p *Peer) Send(ctx context.Context, payload []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.sess == nil || p.sess.room == nil {
+		return errMuxClosed
+	}
+	pkt := lksdk.UserData(payload)
+	pkt.Topic = DataTopic
+	_ = p.sess.room.LocalParticipant.PublishDataPacket(
+		pkt,
+		lksdk.WithDataPublishReliable(true),
+		lksdk.WithDataPublishTopic(DataTopic),
+		lksdk.WithDataPublishDestination([]string{p.Identity}),
+	)
+	return p.sess.writeVP8(p.hash, payload)
+}
+
+// Recv implements Carrier.
+func (p *Peer) Recv(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.closed:
+		return nil, context.Canceled
+	case <-p.sess.done:
+		return nil, context.Canceled
+	case b := <-p.recv:
+		return b, nil
+	}
+}
+
+// ConnectRoom joins LiveKit, publishes VP8, and accepts N remote peers.
 func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSession, error) {
 	ctx, cancel := context.WithCancel(parent)
 	s := &RoomSession{
-		recv:   make(chan []byte, 64),
 		done:   make(chan struct{}),
 		cancel: cancel,
+		peers:  make(map[string]*Peer),
 	}
 	cb := &lksdk.RoomCallback{
 		OnDisconnected: func() {
-			s.refreshLabels()
 			s.cancel()
 		},
 		OnDisconnectedWithReason: func(_ lksdk.DisconnectionReason) {
-			s.refreshLabels()
 			s.cancel()
 		},
-		OnParticipantConnected: func(_ *lksdk.RemoteParticipant) {
-			s.refreshLabels()
+		OnParticipantConnected: func(rp *lksdk.RemoteParticipant) {
+			s.ensurePeer(rp.Identity(), rp.Name(), rp.Metadata())
 		},
-		OnParticipantDisconnected: func(_ *lksdk.RemoteParticipant) {
-			s.refreshLabels()
+		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
+			s.dropPeer(rp.Identity())
 		},
 		ParticipantCallback: lksdk.ParticipantCallback{
 			OnDataPacket: func(data lksdk.DataPacket, params lksdk.DataReceiveParams) {
@@ -68,7 +142,29 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 				if topic != "" && topic != DataTopic {
 					return
 				}
-				s.push(ud.Payload)
+				from := params.SenderIdentity
+				if from == "" && params.Sender != nil {
+					from = params.Sender.Identity()
+				}
+				s.dispatch(from, ud.Payload)
+			},
+			OnTrackSubscribed: func(track *webrtc.TrackRemote, _ *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
+				if track.Kind() != webrtc.RTPCodecTypeVideo {
+					return
+				}
+				p := s.ensurePeer(rp.Identity(), rp.Name(), rp.Metadata())
+				go s.readTrack(track, p)
+			},
+			OnMetadataChanged: func(_ string, part lksdk.Participant) {
+				rp, ok := part.(*lksdk.RemoteParticipant)
+				if !ok {
+					return
+				}
+				p := s.ensurePeer(rp.Identity(), rp.Name(), rp.Metadata())
+				if p != nil {
+					p.Name = rp.Name()
+					p.Meta = rp.Metadata()
+				}
 			},
 		},
 	}
@@ -78,11 +174,14 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		return nil, err
 	}
 	s.room = room
-	s.refreshLabels()
+	s.me = IdentityHash(room.LocalParticipant.Identity())
 	if err := s.publishDummyVideo(ctx); err != nil {
 		room.Disconnect()
 		cancel()
 		return nil, err
+	}
+	for _, rp := range room.GetRemoteParticipants() {
+		s.ensurePeer(rp.Identity(), rp.Name(), rp.Metadata())
 	}
 	go func() {
 		<-ctx.Done()
@@ -90,17 +189,6 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		close(s.done)
 	}()
 	return s, nil
-}
-
-func (s *RoomSession) push(p []byte) {
-	if len(p) == 0 {
-		return
-	}
-	cp := append([]byte(nil), p...)
-	select {
-	case s.recv <- cp:
-	default:
-	}
 }
 
 func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
@@ -119,41 +207,190 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	s.videoMu.Lock()
+	s.video = track
+	s.videoMu.Unlock()
 	go func() {
-		tick := time.NewTicker(time.Second)
+		tick := time.NewTicker(200 * time.Millisecond)
 		defer tick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				_ = track.WriteSample(media.Sample{Data: vp8Keyframe, Duration: time.Second}, nil)
+				s.videoMu.Lock()
+				v := s.video
+				s.videoMu.Unlock()
+				if v != nil {
+					_ = v.WriteSample(media.Sample{Data: vp8Keyframe, Duration: 200 * time.Millisecond}, nil)
+				}
 			}
 		}
 	}()
 	return nil
 }
 
-// Send implements Carrier.
-func (s *RoomSession) Send(ctx context.Context, payload []byte) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (s *RoomSession) writeVP8(dest [8]byte, frame []byte) error {
+	s.videoMu.Lock()
+	v := s.video
+	s.videoMu.Unlock()
+	if v == nil {
+		return errMuxClosed
 	}
-	pkt := lksdk.UserData(payload)
-	pkt.Topic = DataTopic
-	return s.room.LocalParticipant.PublishDataPacket(pkt, lksdk.WithDataPublishReliable(true), lksdk.WithDataPublishTopic(DataTopic))
+	return v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: 20 * time.Millisecond}, nil)
 }
 
-// Recv implements Carrier.
-func (s *RoomSession) Recv(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.done:
-		return nil, context.Canceled
-	case p := <-s.recv:
-		return p, nil
+func (s *RoomSession) readTrack(track *webrtc.TrackRemote, p *Peer) {
+	for {
+		pkt, _, err := track.ReadRTP()
+		if err != nil {
+			return
+		}
+		if pkt == nil {
+			continue
+		}
+		dest, frame, ok := UnwrapVP8(pkt.Payload)
+		if !ok {
+			continue
+		}
+		if !DestForMe(s.me, dest) {
+			continue
+		}
+		p.push(frame)
 	}
+}
+
+func (s *RoomSession) dispatch(from string, payload []byte) {
+	if from == "" || len(payload) == 0 {
+		return
+	}
+	p := s.ensurePeer(from, "", "")
+	if p != nil {
+		p.push(payload)
+	}
+}
+
+func (s *RoomSession) ensurePeer(identity, name, meta string) *Peer {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return nil
+	}
+	s.mu.Lock()
+	p, ok := s.peers[identity]
+	if !ok {
+		p = &Peer{
+			Identity: identity,
+			Name:     name,
+			Meta:     meta,
+			hash:     IdentityHash(identity),
+			recv:     make(chan []byte, 256),
+			closed:   make(chan struct{}),
+			sess:     s,
+		}
+		s.peers[identity] = p
+		fn := s.onPeer
+		s.mu.Unlock()
+		if fn != nil {
+			fn(p)
+		} else {
+			s.mu.Lock()
+			s.pending = append(s.pending, p)
+			s.mu.Unlock()
+		}
+		return p
+	}
+	if name != "" && p.Name == "" {
+		p.Name = name
+	}
+	if meta != "" {
+		p.Meta = meta
+	}
+	s.mu.Unlock()
+	return p
+}
+
+// AnnounceCreator marks this participant as the panel WDTT-WB1 creator.
+func (s *RoomSession) AnnounceCreator() {
+	if s.room == nil {
+		return
+	}
+	s.room.LocalParticipant.SetName(CreatorName)
+	s.room.LocalParticipant.SetMetadata("wdtt-wb1-creator")
+}
+
+func (s *RoomSession) dropPeer(identity string) {
+	s.mu.Lock()
+	p := s.peers[identity]
+	delete(s.peers, identity)
+	s.mu.Unlock()
+	if p != nil {
+		p.Close()
+	}
+}
+
+// SetOnPeer is called for every remote participant (existing and new).
+func (s *RoomSession) SetOnPeer(fn func(*Peer)) {
+	s.mu.Lock()
+	s.onPeer = fn
+	pending := append([]*Peer(nil), s.pending...)
+	s.pending = nil
+	var all []*Peer
+	for _, p := range s.peers {
+		all = append(all, p)
+	}
+	s.mu.Unlock()
+	seen := map[string]bool{}
+	deliver := func(p *Peer) {
+		if p == nil || seen[p.Identity] {
+			return
+		}
+		seen[p.Identity] = true
+		fn(p)
+	}
+	for _, p := range pending {
+		deliver(p)
+	}
+	for _, p := range all {
+		deliver(p)
+	}
+}
+
+// WaitCreator blocks until a remote named WDTT (panel creator) appears.
+func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if p := s.creatorPeer(); p != nil {
+			return p, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.done:
+			return nil, context.Canceled
+		case <-tick.C:
+		}
+	}
+}
+
+func (s *RoomSession) creatorPeer() *Peer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var fallback *Peer
+	for _, p := range s.peers {
+		if p == nil {
+			continue
+		}
+		n := strings.ToUpper(strings.TrimSpace(p.Name))
+		if n == CreatorName || strings.HasPrefix(n, CreatorName) || strings.Contains(p.Meta, "wdtt-wb1-creator") {
+			return p
+		}
+		fallback = p
+	}
+	if len(s.peers) == 1 {
+		return fallback
+	}
+	return nil
 }
 
 // Close leaves the room.
@@ -169,34 +406,21 @@ func (s *RoomSession) Close() {
 // Done is closed after disconnect.
 func (s *RoomSession) Done() <-chan struct{} { return s.done }
 
-func (s *RoomSession) refreshLabels() {
-	if s.room == nil {
-		return
-	}
-	parts := s.room.GetRemoteParticipants()
-	labels := make([]string, 0, len(parts)*2)
-	for _, p := range parts {
+// PeerLabels returns LiveKit identity/name of remote participants.
+func (s *RoomSession) PeerLabels() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.peers)*2)
+	for _, p := range s.peers {
 		if p == nil {
 			continue
 		}
-		if id := p.Identity(); id != "" {
-			labels = append(labels, id)
+		if p.Identity != "" {
+			out = append(out, p.Identity)
 		}
-		if n := p.Name(); n != "" {
-			labels = append(labels, n)
+		if p.Name != "" {
+			out = append(out, p.Name)
 		}
 	}
-	s.mu.Lock()
-	s.labels = labels
-	s.mu.Unlock()
-}
-
-// PeerLabels returns LiveKit identity/name of remote participants.
-func (s *RoomSession) PeerLabels() []string {
-	s.refreshLabels()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, len(s.labels))
-	copy(out, s.labels)
 	return out
 }

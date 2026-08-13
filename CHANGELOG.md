@@ -1,7 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
-## [0.3.294] — 2026-08-14
+## [0.3.295] — 2026-08-14
+
+### WB — WDTT-WB1 как групповой звонок
+- Ждём creator в комнате, свой mux на участника.
+- Носитель: VP8/RTP + data unicast. Нужна панель ≥1.5.15.
+- v0.3.284 и любой WBT-клиент с новым creator не работают.
+
+
 
 ### WB — свой протокол WDTT-WB1
 - Joiner больше не использует whitelist-bypass / KCP+smux.

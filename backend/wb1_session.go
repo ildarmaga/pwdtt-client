@@ -52,7 +52,16 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	}
 	defer sess.Close()
 
-	mux := wb1.NewMux(key, sess)
+	m.emitLog("INFO", "[WB] Жду creator в комнате (как в групповом звонке)…")
+	waitCtx, waitCancel := context.WithTimeout(ctx, 45*time.Second)
+	creator, err := sess.WaitCreator(waitCtx)
+	waitCancel()
+	if err != nil {
+		return fmt.Errorf("creator не в комнате: %w", err)
+	}
+	m.emitLog("INFO", "[WB] creator "+creator.Name+" / "+creator.Identity)
+
+	mux := wb1.NewMux(key, creator)
 	var rx, tx atomic.Int64
 	mux.SetTrafficHook(func(up, down int64) {
 		tx.Add(up)
