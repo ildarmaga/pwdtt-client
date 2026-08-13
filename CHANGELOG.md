@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.299] — 2026-08-14
+
+### Fix — WB creator ping
+- Не берём leftover joiner в комнате за creator (пустое имя + чужой ping).
+- Ждём маяк панели. Data без LiveKit destination. При 429 пауза 20 с.
+- Нужна панель ≥1.5.25.
+
 ## [0.3.298] — 2026-08-14
 
 ### Fix — WB SOCKS скорость

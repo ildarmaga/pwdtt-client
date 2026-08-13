@@ -38,6 +38,14 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	m.emitLog("INFO", "[WB] Гостевой вход в комнату WDTT-WB1…")
 	_, roomToken, _, serverURL, err := wbstream.AuthAsGuest(nil, displayName, roomID)
 	if err != nil {
+		if strings.Contains(err.Error(), "429") {
+			m.emitLog("WARN", "[WB] guest-register 429 — пауза 20 с")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(20 * time.Second):
+			}
+		}
 		return fmt.Errorf("wb auth: %w", err)
 	}
 
@@ -52,6 +60,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 		return fmt.Errorf("livekit: %w", err)
 	}
 	defer sess.Close()
+	sess.SetCryptoKey(key)
 
 	m.emitLog("INFO", "[WB] Жду creator в комнате…")
 	waitCtx, waitCancel := context.WithTimeout(ctx, 8*time.Second)
@@ -90,7 +99,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	defer cancel()
 	go func() { _ = mux.Run(runCtx) }()
 
-	pingCtx, pingCancel := context.WithTimeout(runCtx, 3*time.Second)
+	pingCtx, pingCancel := context.WithTimeout(runCtx, 5*time.Second)
 	if _, err := mux.Ping(pingCtx); err != nil {
 		pingCancel()
 		return fmt.Errorf("creator не отвечает на ping: %w", err)

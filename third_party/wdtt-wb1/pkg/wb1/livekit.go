@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	DataTopic      = "wdtt-wb1"
-	CreatorName    = "WDTT"
-	vp8Keepalive   = 33 * time.Millisecond
-	vp8SampleDur   = 33 * time.Millisecond
-	vp8VideoWidth  = 640
-	vp8VideoHeight = 360
+	DataTopic             = "wdtt-wb1"
+	CreatorName           = "WDTT"
+	CreatorBeaconPayload  = "wdtt-wb1-creator"
+	vp8Keepalive          = 33 * time.Millisecond
+	vp8SampleDur          = 33 * time.Millisecond
+	vp8VideoWidth         = 640
+	vp8VideoHeight        = 360
 )
 
 // 16×16 VP8 keyframe — keeps the WB call alive (platform wants a publisher).
@@ -47,6 +48,7 @@ type RoomSession struct {
 	peers   map[string]*Peer
 	onPeer  func(*Peer)
 	pending []*Peer
+	key     []byte
 }
 
 // Peer is one remote participant with its own WDTT-WB1 carrier.
@@ -60,6 +62,7 @@ type Peer struct {
 	sess      *RoomSession
 	closeOnce sync.Once
 	spoke     atomic.Uint32
+	beacon    atomic.Uint32
 }
 
 func (p *Peer) push(b []byte) {
@@ -67,6 +70,14 @@ func (p *Peer) push(b []byte) {
 		return
 	}
 	p.spoke.Store(1)
+	if p.sess != nil {
+		p.sess.mu.Lock()
+		key := p.sess.key
+		p.sess.mu.Unlock()
+		if isCreatorBeacon(key, b) {
+			p.beacon.Store(1)
+		}
+	}
 	cp := append([]byte(nil), b...)
 	select {
 	case p.recv <- cp:
@@ -86,9 +97,10 @@ func (p *Peer) Close() {
 	p.closeOnce.Do(func() { close(p.closed) })
 }
 
-// Send implements Carrier. Mux frames go on the LiveKit data topic.
-// VP8 is a 30fps keepalive plus fallback if data publish fails — stuffing every
-// mux chunk into WriteSample(Duration=33ms) capped SOCKS at ~1 MB/s.
+// Send implements Carrier. Mux frames go on the LiveKit data topic as a
+// room broadcast: WB's SFU drops WithDataPublishDestination, so a unicast
+// ping never reached the creator (WaitCreator then latched a leftover joiner).
+// VP8 carries only control frames (not SOCKS TypeData) so download stays fast.
 func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -102,8 +114,10 @@ func (p *Peer) Send(ctx context.Context, payload []byte) error {
 		pkt,
 		lksdk.WithDataPublishReliable(true),
 		lksdk.WithDataPublishTopic(DataTopic),
-		lksdk.WithDataPublishDestination([]string{p.Identity}),
 	)
+	if isControlFrame(payload) {
+		_ = p.sess.writeVP8(p.hash, payload)
+	}
 	if err != nil {
 		return p.sess.writeVP8(p.hash, payload)
 	}
@@ -414,7 +428,7 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 			if s.room == nil {
 				return
 			}
-			wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Payload: []byte("wdtt-wb1-creator")})
+			wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Payload: []byte(CreatorBeaconPayload)})
 			if err != nil {
 				return
 			}
@@ -461,7 +475,7 @@ func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
 func (s *RoomSession) creatorPeer() *Peer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var spoke *Peer
+	var beacon *Peer
 	for _, p := range s.peers {
 		if p == nil {
 			continue
@@ -470,11 +484,39 @@ func (s *RoomSession) creatorPeer() *Peer {
 		if n == CreatorName || strings.HasPrefix(n, CreatorName) || strings.Contains(p.Meta, "wdtt-wb1-creator") {
 			return p
 		}
-		if p.spoke.Load() != 0 {
-			spoke = p
+		if p.beacon.Load() != 0 {
+			beacon = p
 		}
 	}
-	return spoke
+	return beacon
+}
+
+func isCreatorBeacon(key, wire []byte) bool {
+	if len(key) == 0 || len(wire) == 0 {
+		return false
+	}
+	f, err := Unpack(key, wire)
+	if err != nil {
+		return false
+	}
+	return f.Type == TypePing && string(f.Payload) == CreatorBeaconPayload
+}
+
+func isControlFrame(wire []byte) bool {
+	if len(wire) < MagicSize+1 {
+		return false
+	}
+	if !bytesEqual(wire[:MagicSize], Magic[:]) {
+		return false
+	}
+	return wire[MagicSize] != TypeData
+}
+
+// SetCryptoKey lets WaitCreator recognize the panel beacon among leftover joiners.
+func (s *RoomSession) SetCryptoKey(key []byte) {
+	s.mu.Lock()
+	s.key = append([]byte(nil), key...)
+	s.mu.Unlock()
 }
 
 // Close leaves the room.
