@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/livekit/protocol/livekit"
@@ -13,8 +14,12 @@ import (
 )
 
 const (
-	DataTopic   = "wdtt-wb1"
-	CreatorName = "WDTT"
+	DataTopic      = "wdtt-wb1"
+	CreatorName    = "WDTT"
+	vp8Keepalive   = 33 * time.Millisecond
+	vp8SampleDur   = 33 * time.Millisecond
+	vp8VideoWidth  = 640
+	vp8VideoHeight = 360
 )
 
 // 16×16 VP8 keyframe — keeps the WB call alive (platform wants a publisher).
@@ -33,6 +38,10 @@ type RoomSession struct {
 
 	videoMu sync.Mutex
 	video   *lksdk.LocalTrack
+
+	vp8N     atomic.Uint64
+	vp8Stamp atomic.Int64
+	vp8FPS   atomic.Int64
 
 	mu      sync.Mutex
 	peers   map[string]*Peer
@@ -202,8 +211,8 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 	if _, err := s.room.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{
 		Name:        "camera",
 		Source:      livekit.TrackSource_CAMERA,
-		VideoWidth:  16,
-		VideoHeight: 16,
+		VideoWidth:  vp8VideoWidth,
+		VideoHeight: vp8VideoHeight,
 	}); err != nil {
 		return err
 	}
@@ -211,7 +220,7 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 	s.video = track
 	s.videoMu.Unlock()
 	go func() {
-		tick := time.NewTicker(200 * time.Millisecond)
+		tick := time.NewTicker(vp8Keepalive)
 		defer tick.Stop()
 		for {
 			select {
@@ -222,7 +231,8 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 				v := s.video
 				s.videoMu.Unlock()
 				if v != nil {
-					_ = v.WriteSample(media.Sample{Data: vp8Keyframe, Duration: 200 * time.Millisecond}, nil)
+					_ = v.WriteSample(media.Sample{Data: vp8Keyframe, Duration: vp8SampleDur}, nil)
+					s.noteVP8()
 				}
 			}
 		}
@@ -237,7 +247,39 @@ func (s *RoomSession) writeVP8(dest [8]byte, frame []byte) error {
 	if v == nil {
 		return errMuxClosed
 	}
-	return v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: 20 * time.Millisecond}, nil)
+	err := v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: vp8SampleDur}, nil)
+	if err == nil {
+		s.noteVP8()
+	}
+	return err
+}
+
+func (s *RoomSession) noteVP8() {
+	n := s.vp8N.Add(1)
+	now := time.Now().UnixNano()
+	start := s.vp8Stamp.Load()
+	if start == 0 {
+		s.vp8Stamp.Store(now)
+		return
+	}
+	if now-start >= int64(time.Second) {
+		s.vp8FPS.Store(int64(n))
+		s.vp8N.Store(0)
+		s.vp8Stamp.Store(now)
+	}
+}
+
+// VP8FPS is samples written in the last 1s window (keepalive + data).
+func (s *RoomSession) VP8FPS() int64 {
+	fps := s.vp8FPS.Load()
+	if fps <= 0 {
+		n := s.vp8N.Load()
+		if n > 0 {
+			return int64(n)
+		}
+		return 1
+	}
+	return fps
 }
 
 func (s *RoomSession) readTrack(track *webrtc.TrackRemote, p *Peer) {
@@ -283,7 +325,7 @@ func (s *RoomSession) ensurePeer(identity, name, meta string) *Peer {
 			Name:     name,
 			Meta:     meta,
 			hash:     IdentityHash(identity),
-			recv:     make(chan []byte, 256),
+			recv:     make(chan []byte, 1024),
 			closed:   make(chan struct{}),
 			sess:     s,
 		}

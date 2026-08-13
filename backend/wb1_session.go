@@ -97,7 +97,9 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	}
 	defer ln.Close()
 	go func() {
-		_ = wb1.ServeSOCKS(runCtx, ln, socksUser, socksPass, mux.Dial)
+		_ = wb1.ServeSOCKSUDP(runCtx, ln, socksUser, socksPass, mux.Dial, func(ctx context.Context, dest string) (net.Conn, error) {
+			return mux.Dial(ctx, wb1.UDPDest(dest))
+		})
 	}()
 
 	m.mu.Lock()
@@ -126,7 +128,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 					rttMs = 1
 				}
 			}
-			m.onStats(rx.Load(), tx.Load(), rttMs, 1)
+			m.onStats(rx.Load(), tx.Load(), rttMs, sess.VP8FPS())
 		}
 	}
 }

@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.296] — 2026-08-14
+
+### Fix — WB SOCKS как раньше + VP8 fps
+- SOCKS5 UDP ASSOCIATE (как старый WBT) — v2rayN ping/TUN/DNS.
+- VP8 больше не рисует захардкоженный 1 fps: keepalive ~30 fps, в UI реальный счётчик.
+- Нужна панель ≥1.5.16.
+
 ## [0.3.295] — 2026-08-14
 
 ### WB — WDTT-WB1 как групповой звонок

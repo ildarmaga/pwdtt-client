@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 )
 
-const vp8Desc byte = 0x10
-
 // IdentityHash is a stable 8-byte routing id for a LiveKit identity.
 func IdentityHash(identity string) [8]byte {
 	sum := sha256.Sum256([]byte(identity))
@@ -15,12 +13,13 @@ func IdentityHash(identity string) [8]byte {
 	return h
 }
 
-// WrapVP8 puts a WDTT-WB1 frame after a 1-byte VP8 descriptor and dest hash.
+// WrapVP8 appends dest hash + WDTT-WB1 frame after a real 16×16 VP8 keyframe
+// so the SFU still sees a valid video payload (extra bytes ride along).
 func WrapVP8(dest [8]byte, frame []byte) []byte {
-	out := make([]byte, 1+8+len(frame))
-	out[0] = vp8Desc
-	copy(out[1:9], dest[:])
-	copy(out[9:], frame)
+	out := make([]byte, len(vp8Keyframe)+8+len(frame))
+	copy(out, vp8Keyframe)
+	copy(out[len(vp8Keyframe):], dest[:])
+	copy(out[len(vp8Keyframe)+8:], frame)
 	return out
 }
 

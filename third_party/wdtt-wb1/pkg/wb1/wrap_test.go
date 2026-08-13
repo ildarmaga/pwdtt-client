@@ -16,8 +16,8 @@ func TestWrapUnwrapVP8(t *testing.T) {
 	}
 	dest := IdentityHash("joiner-a")
 	wire := WrapVP8(dest, frame)
-	if wire[0] != vp8Desc {
-		t.Fatalf("vp8 descriptor %x", wire[0])
+	if !bytes.HasPrefix(wire, vp8Keyframe) {
+		t.Fatal("wrap must start with a real VP8 keyframe")
 	}
 	gotDest, gotFrame, ok := UnwrapVP8(wire)
 	if !ok {

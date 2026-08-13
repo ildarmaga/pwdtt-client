@@ -17,18 +17,59 @@ const socksReadTimeout = 10 * time.Second
 // DialFunc opens a TCP stream to dest ("host:port").
 type DialFunc func(ctx context.Context, dest string) (net.Conn, error)
 
+const udpDestPrefix = "udp:"
+
+// UDPDest marks a mux Open as a datagram flow (SOCKS UDP ASSOCIATE).
+func UDPDest(hostPort string) string {
+	return udpDestPrefix + hostPort
+}
+
+func stripUDPDest(dest string) (string, bool) {
+	if strings.HasPrefix(dest, udpDestPrefix) {
+		return dest[len(udpDestPrefix):], true
+	}
+	return dest, false
+}
+
 // ServeAccept handles remote Open frames by dialing dest and copying bytes.
+// Destinations starting with "udp:" are datagram flows (length-prefixed).
 func ServeAccept(ctx context.Context, m *Mux, dial func(dest string) (net.Conn, error)) {
+	ServeAcceptUDP(ctx, m, dial, nil)
+}
+
+// ServeAcceptUDP is ServeAccept plus a UDP dialer for "udp:" streams.
+// If udpDial is nil, UDP dests use net.Dial("udp", host:port) from this process.
+func ServeAcceptUDP(ctx context.Context, m *Mux, dial func(dest string) (net.Conn, error), udpDial DialFunc) {
+	if udpDial == nil {
+		udpDial = func(ctx context.Context, dest string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 15 * time.Second}
+			return d.DialContext(ctx, "udp", dest)
+		}
+	}
 	for {
 		dest, conn, err := m.Accept(ctx)
 		if err != nil {
 			return
 		}
 		go func(dest string, conn net.Conn) {
+			sendErr := func(msg string) {
+				if sc, ok := conn.(*streamConn); ok {
+					_ = m.send(ctx, Frame{Type: TypeErr, StreamID: sc.id, Payload: []byte(msg)})
+				}
+				_ = conn.Close()
+			}
+			if hostPort, ok := stripUDPDest(dest); ok {
+				up, err := udpDial(ctx, hostPort)
+				if err != nil {
+					sendErr(err.Error())
+					return
+				}
+				RelayDatagrams(conn, up)
+				return
+			}
 			up, err := dial(dest)
 			if err != nil {
-				_ = m.send(ctx, Frame{Type: TypeErr, StreamID: conn.(*streamConn).id, Payload: []byte(err.Error())})
-				_ = conn.Close()
+				sendErr(err.Error())
 				return
 			}
 			CopyBoth(conn, up)
@@ -75,8 +116,15 @@ func ProbeSOCKS(addr, user, pass string) error {
 	return last
 }
 
-// ServeSOCKS is a SOCKS5 listener (CONNECT only) that dials via DialFunc.
+// ServeSOCKS is a SOCKS5 listener (CONNECT). UDP ASSOCIATE needs ServeSOCKSUDP.
 func ServeSOCKS(ctx context.Context, ln net.Listener, user, pass string, dial DialFunc) error {
+	return ServeSOCKSUDP(ctx, ln, user, pass, dial, nil)
+}
+
+// ServeSOCKSUDP is SOCKS5 CONNECT + UDP ASSOCIATE (v2rayN TUN / DNS).
+func ServeSOCKSUDP(ctx context.Context, ln net.Listener, user, pass string, dial, udpDial DialFunc) error {
+	relay := newUDPRelay(ctx, udpDial)
+	defer relay.Close()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -86,14 +134,14 @@ func ServeSOCKS(ctx context.Context, ln net.Listener, user, pass string, dial Di
 			return err
 		}
 		go func(c net.Conn) {
-			if err := socksHandle(ctx, c, user, pass, dial); err != nil {
+			if err := socksHandle(ctx, c, user, pass, dial, relay); err != nil {
 				_ = c.Close()
 			}
 		}(c)
 	}
 }
 
-func socksHandle(ctx context.Context, c net.Conn, user, pass string, dial DialFunc) error {
+func socksHandle(ctx context.Context, c net.Conn, user, pass string, dial DialFunc, relay *udpRelay) error {
 	_ = c.SetDeadline(time.Now().Add(socksReadTimeout))
 	hdr := make([]byte, 2)
 	if _, err := io.ReadFull(c, hdr); err != nil {
@@ -136,7 +184,13 @@ func socksHandle(ctx context.Context, c net.Conn, user, pass string, dial DialFu
 	if _, err := io.ReadFull(c, req); err != nil {
 		return err
 	}
-	if req[0] != 0x05 || req[1] != 0x01 {
+	if req[0] != 0x05 {
+		return fmt.Errorf("socks version %d", req[0])
+	}
+	if req[1] == 0x03 {
+		return socksUDPAssociate(c, req[3], relay)
+	}
+	if req[1] != 0x01 {
 		_, _ = c.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return fmt.Errorf("socks: command %d", req[1])
 	}
