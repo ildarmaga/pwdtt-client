@@ -372,6 +372,7 @@ export default function Connect() {
         s.wbProxyAuth === 'manual' ? s.wbProxyUser : '',
         s.wbProxyAuth === 'manual' ? s.wbProxyPass : '',
         did,
+        (selected?.password || '').trim(),
       );
       const pass = (selected?.password || '').trim();
       const sub = (selected?.subUrl || '').trim();

@@ -97,13 +97,13 @@ func (a *App) IsWBRunning() bool { return a.wb.IsRunning() }
 
 // ConnectWB поднимает WB Stream в режиме SOCKS-only (как iOS → V2BOX). socksOnly игнорируется (всегда true).
 // deviceID уходит в LiveKit DisplayName — панель подсвечивает этот device_id в таблице пользователей.
-func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass, deviceID string) error {
+func (a *App) ConnectWB(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass, deviceID, password string) error {
 	// Ensure the VK/orch tunnel is stopped before starting WB so the two
 	// don't coexist and fight over routes / produce a peer-restart storm.
 	if a.orch.IsRunning() {
 		a.orch.Stop()
 	}
-	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch, dualTrack, true, socksPort, socksUser, socksPass, deviceID)
+	return a.wb.Connect(room, routingPayload, vp8Fps, vp8Batch, dualTrack, true, socksPort, socksUser, socksPass, deviceID, password)
 }
 
 // GetWBSocksEndpoint returns local SOCKS5 details when WB is in socks-only mode.

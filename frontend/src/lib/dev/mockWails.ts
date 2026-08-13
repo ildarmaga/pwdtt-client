@@ -144,7 +144,7 @@ function installGoMock() {
           }
           startDevTunnelStats();
         },
-        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, _socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown, _deviceId?: unknown) => {
+        ConnectWB: async (_room: unknown, _routing: unknown, _fps: unknown, _batch: unknown, _dual: unknown, _socksOnly: unknown, socksPort: unknown, socksUser: unknown, socksPass: unknown, _deviceId?: unknown, _password?: unknown) => {
           emitDevEvent('log', 'INFO', 'Подключение WB Stream (SOCKS для v2rayN)…');
           emitDevEvent('state_changed', 'connecting');
           await new Promise(r => setTimeout(r, 700));

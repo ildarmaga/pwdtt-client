@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.294] — 2026-08-14
+
+### WB — свой протокол WDTT-WB1
+- Joiner больше не использует whitelist-bypass / KCP+smux.
+- Канал: LiveKit data topic `wdtt-wb1` + AEAD ChaCha20-Poly1305 + свой mux.
+- Старый creator WBT не совместим — нужна панель ≥1.5.14.
+
 ## [0.3.291] — 2026-08-12
 
 ### Fix — подсветка онлайн-устройства на панели (WB)

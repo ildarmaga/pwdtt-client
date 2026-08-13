@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ildarmaga/whitelist-bypass/relay/wbjrunner"
-	"github.com/ildarmaga/whitelist-bypass/relay/wbxray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -89,6 +87,7 @@ type WBManager struct {
 	runGen atomic.Uint64
 
 	room           string
+	password       string
 	displayName    string
 	routingMode    string
 	routingPayload string
@@ -110,7 +109,7 @@ type WBManager struct {
 	lastLogRx    int64
 	lastLogTx    int64
 
-	recoverCh chan wbjrunner.RecoverRequest
+	recoverCh chan struct{}
 
 	lastTrafficAt    time.Time
 	lastTrafficBytes int64
@@ -142,7 +141,7 @@ func (m *WBManager) IsRunning() bool {
 	return true
 }
 
-func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass, deviceID string) error {
+func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch int, dualTrack bool, socksOnly bool, socksPort int, socksUser, socksPass, deviceID, password string) error {
 	room = strings.TrimSpace(room)
 	if room == "" {
 		return fmt.Errorf("не задана WB-комната (wb_room) — обновите подписку")
@@ -160,6 +159,7 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	m.mu.Lock()
 	m.stop = false // user explicitly asked to connect
 	m.displayName = displayName
+	m.password = strings.TrimSpace(password)
 	m.vp8Fps = vp8Fps
 	m.vp8Batch = vp8Batch
 	m.vp8DualTrack = dualTrack
@@ -223,12 +223,7 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		return fmt.Errorf("подключение отменено")
 	}
 	m.room = room
-	mode, customRules, err := wbxray.ParseConnectPayload(routingPayload)
-	if err != nil {
-		m.mu.Unlock()
-		return fmt.Errorf("маршрутизация: %w", err)
-	}
-	m.routingMode = string(mode)
+	m.routingMode = "socks"
 	m.routingPayload = routingPayload
 	m.connectedAt = time.Now()
 	m.sessionStartedAt = time.Time{}
@@ -247,63 +242,23 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	m.lastSoftRecover = time.Time{}
 	m.tunnelErrBurst = 0
 	m.lastTunnelErrLog = time.Time{}
-	recoverCh := make(chan wbjrunner.RecoverRequest, 1)
-	m.recoverCh = recoverCh
+	m.recoverCh = nil
 	gen := m.runGen.Add(1)
 	ctx, cancel := context.WithCancel(m.ctx)
 	done := make(chan struct{})
 	m.cancel = cancel
 	m.done = done
-	vp8Fps, vp8Batch := m.vp8Fps, m.vp8Batch
-	vp8DualTrack := m.vp8DualTrack
-	socksHost := m.socksHost
-	socksPort := m.socksPort
-	socksUser := m.socksUser
-	socksPass := m.socksPass
-	displayName := m.displayName
-	if displayName == "" {
-		displayName = "WDTT"
-	}
 	m.mu.Unlock()
 
-	m.emitLog("INFO", "Подключение WB Stream…")
+	m.emitLog("INFO", "Подключение WB Stream (WDTT-WB1)…")
 	runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 
 	go func() {
 		defer close(done)
-		cfg := wbjrunner.Config{
-			Room:              room,
-			DisplayName:       displayName,
-			UseTUN:            false,
-			UseXray:           false,
-			SocksOnly:         true,
-			SocksHost:         socksHost,
-			SocksPort:         socksPort,
-			SocksUser:         socksUser,
-			SocksPass:         socksPass,
-			RoutingMode:       mode,
-			CustomRoutingJSON: customRules,
-			VP8FPS:            vp8Fps,
-			VP8Batch:          vp8Batch,
-			DualTrack:         vp8DualTrack,
-			RecoverCh:         recoverCh,
-			LogFn: func(format string, args ...any) {
-				m.logRelay(fmt.Sprintf(format, args...))
-			},
-			OnStatus: m.onStatus,
-			OnStats:  m.onStats,
-			OnSocksReady: func(host string, port int, user, pass string) {
-				m.mu.Lock()
-				m.socksHost = host
-				m.socksPort = port
-				m.socksUser = user
-				m.socksPass = pass
-				m.socksReady = true
-				m.mu.Unlock()
-				runtime.EventsEmit(m.ctx, "wb_socks_ready", host, port, user, pass)
-			},
+		runErr := m.runWB1(ctx)
+		if runErr != nil && ctx.Err() == nil {
+			m.emitLog("WARN", "[WB] сессия: "+runErr.Error())
 		}
-		_ = wbjrunner.Run(ctx, cfg)
 
 		m.mu.Lock()
 		stale := m.runGen.Load() != gen
@@ -322,14 +277,9 @@ func (m *WBManager) connect(room, routingPayload string) error {
 		if stopped {
 			return
 		}
-		// ctx canceled = deliberate teardown (Disconnect or reconnect), not a
-		// crash. A quick user re-Connect resets stop=false before this old run
-		// finishes exiting — without this check the handler would spawn a
-		// second dial racing the user's one (reconnect storm).
 		if ctx.Err() != nil {
 			return
 		}
-		// Tunnel died without user action — rebuild it from scratch.
 		m.emitLog("WARN", "[WB] Туннель завершился — пересоздаю подключение…")
 		runtime.EventsEmit(m.ctx, "state_changed", "connecting")
 		go m.reconnect(gen)
@@ -659,16 +609,8 @@ func wbProbeIntervalForRTT(rttMs int64) time.Duration {
 }
 
 func (m *WBManager) softRecover(forceSession bool) {
-	m.mu.Lock()
-	ch := m.recoverCh
-	m.mu.Unlock()
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- wbjrunner.RecoverRequest{ForceSession: forceSession}:
-	default:
-	}
+	_ = forceSession
+	go m.reconnect(m.runGen.Load())
 }
 
 // reconnect tears the current run down (if any) and dials again with the same

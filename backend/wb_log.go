@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// classifyWBLog maps relay/wbjrunner lines to UI log entries.
+// classifyWBLog maps WB session lines to UI log entries.
 // Diagnostic mode: pass almost everything; only drop per-frame VP8 spam (freezes WebView).
 func classifyWBLog(raw string) (level, msg string, emit bool) {
 	raw = strings.TrimSpace(raw)
