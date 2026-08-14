@@ -10,6 +10,15 @@ func TestCreatorPeerIgnoresNamedLeftoverWithoutBeacon(t *testing.T) {
 	}
 }
 
+func TestCreatorPeerIgnoresLeftoverBeaconFlag(t *testing.T) {
+	ghost := &Peer{Identity: "e8214196", Name: "WDTT", Meta: "wdtt-wb1-creator"}
+	ghost.beacon.Store(1)
+	s := &RoomSession{peers: map[string]*Peer{ghost.Identity: ghost}}
+	if p := s.creatorPeer(); p != nil {
+		t.Fatalf("leftover beacon flag must not win without beaconID: %s", p.Identity)
+	}
+}
+
 func TestLeftoverCreatorPeer(t *testing.T) {
 	if !IsLeftoverCreator(&Peer{Identity: "e8214196", Name: "WDTT"}) {
 		t.Fatal("named WDTT leftover")
@@ -22,28 +31,50 @@ func TestLeftoverCreatorPeer(t *testing.T) {
 	}
 }
 
-func TestDispatchReroutesLeftoverSenderToJoiner(t *testing.T) {
-	s := &RoomSession{peers: map[string]*Peer{}, incoming: make(chan []byte, 4)}
+func TestDispatchLeftoverDoesNotCloneToAllJoiners(t *testing.T) {
+	s := &RoomSession{peers: map[string]*Peer{}}
 	s.isCreator.Store(1)
 	ghost := &Peer{
 		Identity: "e8214196", Name: "WDTT", Meta: "wdtt-wb1-creator",
 		recv: make(chan []byte, 4), sess: s,
 	}
-	joiner := &Peer{
-		Identity: "70cc629c", Name: "",
-		recv: make(chan []byte, 4), sess: s,
-	}
+	a := &Peer{Identity: "joiner-a", recv: make(chan []byte, 4), sess: s}
+	b := &Peer{Identity: "joiner-b", recv: make(chan []byte, 4), sess: s}
 	s.peers[ghost.Identity] = ghost
-	s.peers[joiner.Identity] = joiner
+	s.peers[a.Identity] = a
+	s.peers[b.Identity] = b
 
-	s.dispatch("e8214196", []byte("open-from-joiner"))
+	s.dispatch("e8214196", []byte("open-from-one-user"))
 	select {
-	case b := <-joiner.recv:
-		if string(b) != "open-from-joiner" {
+	case <-a.recv:
+		t.Fatal("leftover stamp must not be copied to joiner A")
+	default:
+	}
+	select {
+	case <-b.recv:
+		t.Fatal("leftover stamp must not be copied to joiner B")
+	default:
+	}
+}
+
+func TestFanInSkipsOtherJoiners(t *testing.T) {
+	s := &RoomSession{incoming: make(chan []byte, 4), beaconID: "panel-creator"}
+	other := &Peer{Identity: "other-joiner", recv: make(chan []byte, 2), sess: s}
+	creator := &Peer{Identity: "panel-creator", Name: "WDTT", Meta: "wdtt-wb1-creator", recv: make(chan []byte, 2), sess: s}
+	other.fanIn([]byte("other-socks"))
+	select {
+	case <-s.incoming:
+		t.Fatal("other joiner must not fan-in")
+	default:
+	}
+	creator.fanIn([]byte("creator-data"))
+	select {
+	case b := <-s.incoming:
+		if string(b) != "creator-data" {
 			t.Fatalf("got %q", b)
 		}
 	default:
-		t.Fatal("joiner mux must get leftover-stamped frames")
+		t.Fatal("creator frames must fan-in")
 	}
 }
 
@@ -61,7 +92,10 @@ func TestCreatorPeerPrefersBeacon(t *testing.T) {
 	ghost.spoke.Store(1)
 	real := &Peer{Identity: "real"}
 	real.beacon.Store(1)
-	s := &RoomSession{peers: map[string]*Peer{"ghost": ghost, "real": real}}
+	s := &RoomSession{
+		beaconID: "real",
+		peers:    map[string]*Peer{"ghost": ghost, "real": real},
+	}
 	p := s.creatorPeer()
 	if p == nil || p.Identity != "real" {
 		t.Fatalf("got %#v", p)

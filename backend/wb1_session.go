@@ -24,8 +24,8 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	socksPass := m.socksPass
 	m.mu.Unlock()
 
-	if displayName == "" {
-		displayName = "WDTT"
+	if displayName == "" || strings.EqualFold(displayName, "WDTT") {
+		displayName = "PWDTT"
 	}
 	roomID := wbstream.ParseRoomID(roomLink)
 	if roomID == "" {
@@ -63,7 +63,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	sess.SetCryptoKey(key)
 
 	m.emitLog("INFO", "[WB] Жду creator в комнате…")
-	waitCtx, waitCancel := context.WithTimeout(ctx, 8*time.Second)
+	waitCtx, waitCancel := context.WithTimeout(ctx, 12*time.Second)
 	creator, err := sess.WaitCreator(waitCtx)
 	waitCancel()
 	if err != nil {

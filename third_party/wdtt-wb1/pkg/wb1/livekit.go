@@ -145,6 +145,12 @@ func (p *Peer) fanIn(b []byte) {
 	if p.sess == nil || p.sess.incoming == nil || len(b) == 0 {
 		return
 	}
+	if p.sess.isCreator.Load() != 0 {
+		return
+	}
+	if !p.sess.joinerShouldTake(p) {
+		return
+	}
 	cp := append([]byte(nil), b...)
 	select {
 	case p.sess.incoming <- cp:
@@ -158,6 +164,17 @@ func (p *Peer) fanIn(b []byte) {
 		default:
 		}
 	}
+}
+
+func (s *RoomSession) joinerShouldTake(p *Peer) bool {
+	if p == nil {
+		return false
+	}
+	id := strings.TrimSpace(s.beaconID)
+	if id != "" {
+		return p.Identity == id || IsLeftoverCreator(p)
+	}
+	return IsLeftoverCreator(p) || p.beacon.Load() != 0
 }
 
 // JoinerCarrier is the joiner mux pipe: send is room broadcast, recv is every
@@ -335,7 +352,7 @@ func (s *RoomSession) writeVP8(dest [8]byte, frame []byte) error {
 	if v == nil {
 		return errMuxClosed
 	}
-	err := v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: vp8SampleDur}, nil)
+	err := v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: time.Millisecond}, nil)
 	if err == nil {
 		s.noteVP8()
 	}
@@ -399,9 +416,6 @@ func (s *RoomSession) dispatch(from string, payload []byte) {
 		return
 	}
 	if s.isCreator.Load() != 0 && IsLeftoverCreator(p) {
-		for _, j := range s.liveJoiners() {
-			j.push(payload)
-		}
 		return
 	}
 	p.push(payload)
@@ -518,6 +532,8 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 				lksdk.WithDataPublishReliable(true),
 				lksdk.WithDataPublishTopic(DataTopic),
 			)
+			var zero [8]byte
+			_ = s.writeVP8(zero, wire)
 		}
 		send()
 		for {
@@ -560,17 +576,8 @@ func (s *RoomSession) creatorPeer() *Peer {
 			return p
 		}
 	}
-	var beacon *Peer
-	for _, p := range s.peers {
-		if p == nil {
-			continue
-		}
-		if p.beacon.Load() != 0 {
-			beacon = p
-		}
-	}
 	s.mu.Unlock()
-	return beacon
+	return nil
 }
 
 // IsLeftoverCreator reports a stale LiveKit participant that still looks like
@@ -584,19 +591,6 @@ func IsLeftoverCreator(p *Peer) bool {
 	}
 	n := strings.ToUpper(strings.TrimSpace(p.Name))
 	return n == CreatorName || strings.HasPrefix(n, CreatorName)
-}
-
-func (s *RoomSession) liveJoiners() []*Peer {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]*Peer, 0, len(s.peers))
-	for _, p := range s.peers {
-		if p == nil || IsLeftoverCreator(p) {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 func (s *RoomSession) noteBeaconCreator(id string) {

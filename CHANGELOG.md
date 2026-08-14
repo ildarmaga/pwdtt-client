@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.302] — 2026-08-14
+
+### Fix — несколько пользователей на одну комнату WB
+- Mux joiner'а не читает чужие SOCKS-кадры.
+- WaitCreator только по маяку, не leftover `e8214196`.
+- VP8 без паузы 33 мс. Нужна панель ≥1.5.30.
+
 ## [0.3.301] — 2026-08-14
 
 ### Fix — WB download 0 B
