@@ -22,11 +22,14 @@ const (
 	KeySize       = chacha20poly1305.KeySize
 	MaxPayload    = 1024 // WrapVP8(Pack(max)) must fit one Pion VP8 RTP payload (<=1199)
 	VP8MaxSample  = 1199 // Pion VP8Payloader outboundMTU=1200 minus 1-byte descriptor
-	ARQWindow     = 32
-	StreamRecvCap = 64 * 1024 // per-stream app recv cap; Data is not ACKed until admitted here
+	ARQWindow     = 1024
+	initialFlight = 32   // flight/cwnd until a valid peer ACK (mixed old peers)
+	StreamRecvCap = 256 * 1024 // per-stream app recv cap; Data is not ACKed until admitted here
 	headerLen     = MagicSize + 1 + 2 + SIDSize + SIDSize
 	relHdrLen     = 4 + 4 + 4 // epoch + seq + stream_id
-	ackBodyLen    = 4 + 8 + 2 // cumAck + sack + recvWnd
+	ackBodyLen    = 4 + 8 + 2 // cumAck + sack64 + recvWnd (minimum; extra SACK words may follow)
+	sackWords     = 16        // 1024 SACK bits
+	ackExtLen     = ackBodyLen + (sackWords-1)*8
 )
 
 // SessionID is a random 8-byte endpoint id for one RoomSession (not LiveKit identity).
@@ -170,6 +173,14 @@ func PeekRoute(wire []byte) (typ byte, dest, src SessionID, ok bool) {
 // Pack seals a v3 frame. Dest/src are in the clear and in AEAD AAD.
 // Plaintext is epoch || seq || stream_id || payload.
 func Pack(key []byte, f Frame) ([]byte, error) {
+	a, err := aead(key)
+	if err != nil {
+		return nil, err
+	}
+	return packWithAEAD(a, f)
+}
+
+func packWithAEAD(a cipher.AEAD, f Frame) ([]byte, error) {
 	if len(f.Payload) > MaxPayload {
 		return nil, errPayloadTooBig
 	}
@@ -178,10 +189,6 @@ func Pack(key []byte, f Frame) ([]byte, error) {
 	}
 	if f.Src.IsZero() {
 		return nil, errZeroSrc
-	}
-	a, err := aead(key)
-	if err != nil {
-		return nil, err
 	}
 	plain := make([]byte, relHdrLen+len(f.Payload))
 	binary.BigEndian.PutUint32(plain[0:4], f.Epoch)
@@ -211,6 +218,14 @@ func Pack(key []byte, f Frame) ([]byte, error) {
 
 // Unpack opens a sealed v3 frame. v1 and v2 magic are explicit errors.
 func Unpack(key []byte, wire []byte) (Frame, error) {
+	a, err := aead(key)
+	if err != nil {
+		return Frame{}, err
+	}
+	return unpackWithAEAD(a, wire)
+}
+
+func unpackWithAEAD(a cipher.AEAD, wire []byte) (Frame, error) {
 	var z Frame
 	if len(wire) < headerLen+NonceSize+16 {
 		return z, errShortFrame
@@ -236,10 +251,6 @@ func Unpack(key []byte, wire []byte) (Frame, error) {
 	}
 	nonce := wire[headerLen : headerLen+NonceSize]
 	ct := wire[headerLen+NonceSize:]
-	a, err := aead(key)
-	if err != nil {
-		return z, err
-	}
 	plain, err := a.Open(nil, nonce, ct, aadWire(typ, z.Dest, z.Src))
 	if err != nil {
 		return z, err
@@ -267,18 +278,59 @@ func isReliable(typ byte) bool {
 }
 
 func packAckPayload(cum uint32, sack uint64, wnd uint16) []byte {
-	p := make([]byte, ackBodyLen)
+	var bits sackBitmap
+	bits[0] = sack
+	return packAckBitmap(cum, bits, wnd)
+}
+
+type sackBitmap [sackWords]uint64
+
+func (s *sackBitmap) set(bit uint32) {
+	if bit >= uint32(sackWords)*64 {
+		return
+	}
+	s[bit/64] |= uint64(1) << (bit % 64)
+}
+
+func (s sackBitmap) has(bit uint32) bool {
+	if bit >= uint32(sackWords)*64 {
+		return false
+	}
+	return s[bit/64]&(uint64(1)<<(bit%64)) != 0
+}
+
+func packAckBitmap(cum uint32, sack sackBitmap, wnd uint16) []byte {
+	p := make([]byte, ackExtLen)
 	binary.BigEndian.PutUint32(p[0:4], cum)
-	binary.BigEndian.PutUint64(p[4:12], sack)
+	binary.BigEndian.PutUint64(p[4:12], sack[0])
 	binary.BigEndian.PutUint16(p[12:14], wnd)
+	for i := 1; i < sackWords; i++ {
+		binary.BigEndian.PutUint64(p[14+(i-1)*8:], sack[i])
+	}
 	return p
 }
 
 func unpackAckPayload(p []byte) (cum uint32, sack uint64, wnd uint16, ok bool) {
-	if len(p) < ackBodyLen {
+	cum, bits, wnd, ok := unpackAckBitmap(p)
+	if !ok {
 		return 0, 0, 0, false
 	}
-	return binary.BigEndian.Uint32(p[0:4]), binary.BigEndian.Uint64(p[4:12]), binary.BigEndian.Uint16(p[12:14]), true
+	return cum, bits[0], wnd, true
+}
+
+func unpackAckBitmap(p []byte) (cum uint32, sack sackBitmap, wnd uint16, ok bool) {
+	if len(p) < ackBodyLen {
+		return 0, sack, 0, false
+	}
+	cum = binary.BigEndian.Uint32(p[0:4])
+	sack[0] = binary.BigEndian.Uint64(p[4:12])
+	wnd = binary.BigEndian.Uint16(p[12:14])
+	extra := p[14:]
+	for i := 1; i < sackWords && len(extra) >= 8; i++ {
+		sack[i] = binary.BigEndian.Uint64(extra[:8])
+		extra = extra[8:]
+	}
+	return cum, sack, wnd, true
 }
 
 func bytesEqual(a, b []byte) bool {

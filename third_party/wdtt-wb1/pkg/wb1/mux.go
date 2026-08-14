@@ -2,6 +2,7 @@ package wb1
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -36,6 +37,7 @@ const (
 // Mux multiplexes TCP-like streams over WDTT-WB1 frames.
 type Mux struct {
 	key     []byte
+	aead    cipher.AEAD
 	carrier Carrier
 	local   SessionID
 	remote  SessionID
@@ -63,15 +65,20 @@ type Mux struct {
 	recvBuf      map[uint32]Frame
 	peerRecvWnd  uint16
 	gotPeerWnd   bool
+	cwnd         int
+	inRecovery   bool
 	rto          time.Duration
 	srtt         time.Duration
 	rttvar       time.Duration
 	lastProgress time.Time
+	peerHookAt   atomic.Int64
 	delayAck     *time.Timer
 	closeCh      chan struct{}
 	sendWait     chan struct{}
 	drainCh      chan struct{}
 	drainMu      sync.Mutex
+	initErr      error
+	packHook     func(Frame) ([]byte, error)
 }
 
 type acceptReq struct {
@@ -89,6 +96,7 @@ func NewMux(key []byte, c Carrier) *Mux {
 	if epoch == 0 {
 		epoch = 1
 	}
+	a, err := aead(key)
 	m := &Mux{
 		key:          append([]byte(nil), key...),
 		carrier:      c,
@@ -102,6 +110,7 @@ func NewMux(key []byte, c Carrier) *Mux {
 		sendBuf:      make(map[uint32]*sendSlot),
 		recvBuf:      make(map[uint32]Frame),
 		peerRecvWnd:  uint16(ARQWindow),
+		cwnd:         initialFlight,
 		rto:          initialRTO,
 		lastProgress: time.Now(),
 		closeCh:      make(chan struct{}),
@@ -109,6 +118,11 @@ func NewMux(key []byte, c Carrier) *Mux {
 		drainCh:      make(chan struct{}, 1),
 	}
 	m.nextID.Store(1)
+	if err != nil {
+		m.initErr = fmt.Errorf("wb1: invalid AEAD key: %w", err)
+	} else {
+		m.aead = a
+	}
 	return m
 }
 
@@ -130,9 +144,32 @@ func (m *Mux) SetPeerHook(fn func()) {
 }
 
 func (m *Mux) notePeer() {
-	if m.onPeer != nil {
-		m.onPeer()
+	fn := m.onPeer
+	if fn == nil {
+		return
 	}
+	now := time.Now().UnixNano()
+	last := m.peerHookAt.Load()
+	if last != 0 && now-last < int64(10*time.Millisecond) {
+		return
+	}
+	if !m.peerHookAt.CompareAndSwap(last, now) {
+		return
+	}
+	fn()
+}
+
+func (m *Mux) packFrame(f Frame) ([]byte, error) {
+	if m.initErr != nil {
+		return nil, m.initErr
+	}
+	if h := m.packHook; h != nil {
+		return h(f)
+	}
+	if m.aead != nil {
+		return packWithAEAD(m.aead, f)
+	}
+	return Pack(m.key, f)
 }
 
 func (m *Mux) addTraffic(up, down int64) {
@@ -144,6 +181,9 @@ func (m *Mux) addTraffic(up, down int64) {
 // Run reads frames until ctx is done.
 func (m *Mux) Run(ctx context.Context) error {
 	defer m.Close()
+	if err := m.initErr; err != nil {
+		return err
+	}
 	go m.retransmitLoop(ctx)
 	go m.drainLoop(ctx)
 	if !m.local.IsZero() && !m.remote.IsZero() {
@@ -157,7 +197,12 @@ func (m *Mux) Run(ctx context.Context) error {
 			}
 			return err
 		}
-		f, err := Unpack(m.key, wire)
+		var f Frame
+		if m.aead != nil {
+			f, err = unpackWithAEAD(m.aead, wire)
+		} else {
+			f, err = Unpack(m.key, wire)
+		}
 		if err != nil {
 			continue
 		}
@@ -327,6 +372,9 @@ func (m *Mux) Ping(ctx context.Context) (time.Duration, error) {
 }
 
 func (m *Mux) send(ctx context.Context, f Frame) error {
+	if err := m.initErr; err != nil {
+		return err
+	}
 	if isReliable(f.Type) {
 		return m.sendReliable(ctx, f)
 	}

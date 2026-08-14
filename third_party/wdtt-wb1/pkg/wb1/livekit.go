@@ -46,12 +46,19 @@ type RoomSession struct {
 	cancel   context.CancelFunc
 	localSID SessionID
 
-	videoMu sync.Mutex
-	video   *lksdk.LocalTrack
+	videoMu   sync.Mutex
+	video     *lksdk.LocalTrack
+	vp8Clk    vp8SampleClock
+	pacer     *bytePacer
+	writeHook func([]byte, time.Duration) error
 
 	vp8N     atomic.Uint64
 	vp8Stamp atomic.Int64
 	vp8FPS   atomic.Int64
+	wsN      atomic.Int64
+	wsErr    atomic.Int64
+	wsLastNs atomic.Int64
+	wsMaxNs  atomic.Int64
 
 	mu             sync.Mutex
 	peers          map[string]*Peer
@@ -124,7 +131,7 @@ func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	if !ok {
 		dest = p.hash
 	}
-	return p.sess.publishWire(dest, payload)
+	return p.sess.publishWire(ctx, dest, payload)
 }
 
 // Recv implements Carrier for tests that still push onto Peer.recv.
@@ -176,7 +183,7 @@ func (p *sidPipe) Send(ctx context.Context, payload []byte) error {
 	if !ok {
 		dest = p.remote
 	}
-	return p.sess.publishWire(dest, payload)
+	return p.sess.publishWire(ctx, dest, payload)
 }
 
 func (p *sidPipe) Recv(ctx context.Context) ([]byte, error) {
@@ -232,7 +239,7 @@ func (c *joinerCarrier) Send(ctx context.Context, payload []byte) error {
 	if _, envDest, _, ok := PeekRoute(payload); ok && !envDest.IsZero() {
 		dest = envDest
 	}
-	return c.s.publishWire(dest, payload)
+	return c.s.publishWire(ctx, dest, payload)
 }
 
 func (c *joinerCarrier) Recv(ctx context.Context) ([]byte, error) {
@@ -265,6 +272,7 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		peers:    make(map[string]*Peer),
 		joiners:  make(map[SessionID]*sidPipe),
 		incoming: newPacketQueue(carrierDataCap, carrierCtrlCap),
+		pacer:    newBytePacer(float64(pacerWrappedRateBits)/8, pacerBurstBytes),
 	}
 	cb := &lksdk.RoomCallback{
 		OnDisconnected: func() {
@@ -368,12 +376,10 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				s.videoMu.Lock()
-				v := s.video
-				s.videoMu.Unlock()
-				if v != nil {
-					_ = v.WriteSample(media.Sample{Data: vp8Keyframe, Duration: vp8SampleDur}, nil)
-					s.noteVP8()
+				if err := s.pacedWriteSample(ctx, vp8Keyframe); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 				}
 			}
 		}
@@ -381,21 +387,49 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 	return nil
 }
 
-func (s *RoomSession) writeVP8(dest SessionID, frame []byte) error {
-	s.videoMu.Lock()
-	v := s.video
-	s.videoMu.Unlock()
-	if v == nil {
+func (s *RoomSession) paceWait(ctx context.Context, n int) error {
+	if s.pacer == nil {
+		return nil
+	}
+	return s.pacer.Wait(ctx, n)
+}
+
+func (s *RoomSession) writeSampleLocked(data []byte, dur time.Duration) error {
+	if s.writeHook != nil {
+		return s.writeHook(data, dur)
+	}
+	if s.video == nil {
 		return errMuxClosed
 	}
-	err := v.WriteSample(media.Sample{Data: WrapVP8(dest, frame), Duration: time.Millisecond}, nil)
-	if err == nil {
-		s.noteVP8()
+	return s.video.WriteSample(media.Sample{Data: data, Duration: dur}, nil)
+}
+
+// pacedWriteSample waits on the shared pacer with no videoMu held, then
+// serializes vp8Clk.Next + WriteSample under videoMu only.
+func (s *RoomSession) pacedWriteSample(ctx context.Context, data []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	if err := s.paceWait(ctx, len(data)); err != nil {
+		return err
+	}
+	s.videoMu.Lock()
+	defer s.videoMu.Unlock()
+	if s.writeHook == nil && s.video == nil {
+		return errMuxClosed
+	}
+	dur := s.vp8Clk.Next()
+	start := time.Now()
+	err := s.writeSampleLocked(data, dur)
+	s.noteWriteSample(err, time.Since(start))
 	return err
 }
 
-func (s *RoomSession) publishWire(dest SessionID, wire []byte) error {
+func (s *RoomSession) writeVP8(ctx context.Context, dest SessionID, frame []byte) error {
+	return s.pacedWriteSample(ctx, WrapVP8(dest, frame))
+}
+
+func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []byte) error {
 	typ, envDest, _, ok := PeekRoute(wire)
 	if !ok || envDest != dest {
 		return errBadLength
@@ -416,11 +450,31 @@ func (s *RoomSession) publishWire(dest SessionID, wire []byte) error {
 		}
 	}
 	if useVP8 {
-		if err := s.writeVP8(dest, wire); err != nil {
+		if err := s.writeVP8(ctx, dest, wire); err != nil {
 			return err
 		}
 	}
 	return dataErr
+}
+
+func (s *RoomSession) noteWriteSample(err error, d time.Duration) {
+	s.wsN.Add(1)
+	if err != nil {
+		s.wsErr.Add(1)
+	} else {
+		s.noteVP8()
+	}
+	ns := d.Nanoseconds()
+	s.wsLastNs.Store(ns)
+	for {
+		old := s.wsMaxNs.Load()
+		if ns <= old {
+			break
+		}
+		if s.wsMaxNs.CompareAndSwap(old, ns) {
+			break
+		}
+	}
 }
 
 func (s *RoomSession) noteVP8() {
@@ -449,6 +503,28 @@ func (s *RoomSession) VP8FPS() int64 {
 		return 1
 	}
 	return fps
+}
+
+// VP8WriteStats is a snapshot of WriteSample instrumentation (no per-packet logs).
+type VP8WriteStats struct {
+	Count, Errors int64
+	Last, Max     time.Duration
+}
+
+func (s *RoomSession) VP8WriteStats() VP8WriteStats {
+	return VP8WriteStats{
+		Count:  s.wsN.Load(),
+		Errors: s.wsErr.Load(),
+		Last:   time.Duration(s.wsLastNs.Load()),
+		Max:    time.Duration(s.wsMaxNs.Load()),
+	}
+}
+
+func (s *RoomSession) ResetVP8WriteStats() {
+	s.wsN.Store(0)
+	s.wsErr.Store(0)
+	s.wsLastNs.Store(0)
+	s.wsMaxNs.Store(0)
 }
 
 func (s *RoomSession) readTrack(track *webrtc.TrackRemote, p *Peer) {
@@ -723,7 +799,7 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 				return
 			}
 			var zero SessionID
-			_ = s.publishWire(zero, wire)
+			_ = s.publishWire(ctx, zero, wire)
 		}
 		send()
 		for {

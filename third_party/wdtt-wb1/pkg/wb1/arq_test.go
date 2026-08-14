@@ -292,21 +292,15 @@ func TestARQWindowBackpressureUnblocksOnAck(t *testing.T) {
 	}
 	time.Sleep(80 * time.Millisecond)
 	dropAck.Store(true)
-	chunk := bytes.Repeat([]byte("w"), MaxPayload)
-	for i := 0; i < ARQWindow; i++ {
-		if _, err := conn.Write(chunk); err != nil {
-			t.Fatal(err)
-		}
-	}
 	blocked := make(chan error, 1)
 	go func() {
-		_, err := conn.Write(chunk)
+		_, err := conn.Write(bytes.Repeat([]byte("w"), (ARQWindow+8)*MaxPayload))
 		blocked <- err
 	}()
 	select {
 	case err := <-blocked:
 		t.Fatalf("write should block on full window, got err=%v", err)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond):
 	}
 	dropAck.Store(false)
 	select {
@@ -314,7 +308,7 @@ func TestARQWindowBackpressureUnblocksOnAck(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("write did not unblock after ACKs resumed")
 	}
 	cancel()
@@ -566,8 +560,8 @@ func (s *streamConn) bufferedLen() int {
 
 func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner, creator, cancel := startMuxPair(t, left, right)
 	defer cancel()
 	defer left.Close()
@@ -596,7 +590,7 @@ func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 	}
 	sc := up.(*streamConn)
 
-	const flood = 256 * 1024
+	flood := overCapWrite()
 	done := make(chan error, 1)
 	go func() {
 		_, err := conn.Write(bytes.Repeat([]byte("x"), flood))
@@ -604,6 +598,10 @@ func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)
+	qBound := carrierDataCap
+	if qBound < 1024 {
+		qBound = 1024
+	}
 	for time.Now().Before(deadline) {
 		if sc.bufferedLen() > StreamRecvCap {
 			t.Fatalf("app recv buf %d exceeds StreamRecvCap %d", sc.bufferedLen(), StreamRecvCap)
@@ -614,7 +612,7 @@ func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 		right.mu.Lock()
 		rq := len(right.q)
 		right.mu.Unlock()
-		if lq > 1024 || rq > 1024 {
+		if lq > qBound || rq > qBound {
 			t.Fatalf("carrier queue unbounded left=%d right=%d", lq, rq)
 		}
 		creator.mu.Lock()
@@ -630,7 +628,7 @@ func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		t.Fatalf("256KiB write finished without Read (no backpressure), err=%v buf=%d", err, sc.bufferedLen())
+		t.Fatalf("over-cap write finished without Read (no backpressure), err=%v buf=%d", err, sc.bufferedLen())
 	default:
 	}
 
@@ -660,8 +658,8 @@ func TestFloodWithoutReadStaysBoundedAndBackpressures(t *testing.T) {
 
 func TestPushUnblocksOnMuxClose(t *testing.T) {
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner, creator, cancel := startMuxPair(t, left, right)
 	defer cancel()
 	defer left.Close()
@@ -690,7 +688,7 @@ func TestPushUnblocksOnMuxClose(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := conn.Write(bytes.Repeat([]byte("y"), 256*1024))
+		_, err := conn.Write(bytes.Repeat([]byte("y"), overCapWrite()))
 		done <- err
 	}()
 	time.Sleep(400 * time.Millisecond)
@@ -914,6 +912,10 @@ func TestWriteWithoutDeadlineUnblocksOnNoProgress(t *testing.T) {
 	right.Close()
 }
 
+func overCapWrite() int {
+	return StreamRecvCap + (ARQWindow+4)*MaxPayload
+}
+
 func waitStreamBuf(t *testing.T, sc *streamConn, min int, d time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(d)
@@ -1093,8 +1095,8 @@ func TestClosedStreamInFlightDataDoesNotFreezeMux(t *testing.T) {
 func TestFullStreamDoesNotBlockInboundControl(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	var acks, pongs atomic.Int64
 	creatorSend := &peekSendCarrier{inner: right, onSend: func(p []byte) {
 		typ, _, _, ok := PeekRoute(p)
@@ -1191,8 +1193,8 @@ func TestFullStreamDoesNotBlockInboundControl(t *testing.T) {
 func TestRetransmitAdmittedOnceAfterReadFreesSpace(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner := NewMux(key, left)
 	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
@@ -1287,8 +1289,8 @@ func TestRetransmitAdmittedOnceAfterReadFreesSpace(t *testing.T) {
 func TestCloseWhileFullPendingDoesNotKillMux(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner := NewMux(key, left)
 	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
@@ -1380,8 +1382,8 @@ func TestCloseWhileFullPendingDoesNotKillMux(t *testing.T) {
 func TestStreamFinTimeoutDoesNotCloseMux(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner := NewMux(key, left)
 	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
@@ -1538,8 +1540,8 @@ func TestFailedAdmitNeverDeletesRecvBuf(t *testing.T) {
 func TestSackedOOONotLostAfterPartialReadAdmit(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner := NewMux(key, left)
 	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
@@ -1654,8 +1656,8 @@ func TestSackedOOONotLostAfterPartialReadAdmit(t *testing.T) {
 func TestConcurrentReadsDrainRetainedHeadOnce(t *testing.T) {
 	key := testKey(t)
 	left, right := newCarrierPair()
-	left.maxQ = 1024
-	right.maxQ = 1024
+	left.maxQ = carrierDataCap
+	right.maxQ = carrierDataCap
 	joiner := NewMux(key, left)
 	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)

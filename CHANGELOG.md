@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.305] — 2026-08-14
+
+### Fix — WB1 v3 throughput (ARQ 1024) + pre-field hardening
+- Окно 1024, flight 32, расширенный SACK. Fast RTX 20 мс без сброса `sentAt`. minRTO 120 мс. Один cut cwnd на recovery. `lastProgress` только при newly>0. Ключ/Pack fail-closed + wakeSend. RTP tick ≥1.
+- LiveKit pacer 50 Mbit/s wrapped / 24 KiB; сон без `videoMu`. `VP8WriteStats()`.
+- Лабораторный 8 MiB @ 72 мс: clean 72.89 / 72.84 / 72.26; 1% 40.32 / 39.88 / 41.44; 3% first-tx 40.11 / 40.91 / 40.76; 3% all-packet count=5 38.44 / 36.58 / 36.68 / 38.32 / 39.67 (min 36.58). Нужна панель ≥1.5.33.
+
 ## [0.3.304] — 2026-08-14
 
 ### Fix — WB1 v3 reliable VP8

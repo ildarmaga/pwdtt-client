@@ -2,26 +2,32 @@ package wb1
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"time"
 )
 
 const (
-	ackDelay        = 10 * time.Millisecond
-	initialRTO      = 500 * time.Millisecond
-	minRTO          = 200 * time.Millisecond
-	maxRTO          = 3 * time.Second
-	arqStallTimeout = 10 * time.Second
-	maxARQRetries   = 20
-	retransmitTick  = 50 * time.Millisecond
+	ackDelay             = 10 * time.Millisecond
+	initialRTO           = 200 * time.Millisecond
+	minRTO               = 120 * time.Millisecond
+	maxRTO               = 3 * time.Second
+	arqStallTimeout      = 10 * time.Second
+	maxARQRetries        = 20
+	retransmitTick       = 10 * time.Millisecond
+	maxRetransmitPerTick = 64
+	fastDupFloor         = 20 * time.Millisecond
 )
 
 type sendSlot struct {
-	seq     uint32
-	frame   Frame
-	wire    []byte
-	sentAt  time.Time
-	firstAt time.Time
-	retries int
+	seq      uint32
+	frame    Frame
+	wire     []byte
+	sentAt   time.Time
+	firstAt  time.Time
+	lastFast time.Time
+	retries  int
+	karn     bool
 }
 
 func (m *Mux) handleIncoming(ctx context.Context, f Frame) {
@@ -30,7 +36,7 @@ func (m *Mux) handleIncoming(ctx context.Context, f Frame) {
 	}
 	switch {
 	case f.Type == TypeAck:
-		m.handleAck(f)
+		m.handleAck(ctx, f)
 	case isReliable(f.Type):
 		m.recvReliable(ctx, f)
 	default:
@@ -212,10 +218,10 @@ func (m *Mux) sendAck(ctx context.Context) {
 	}
 	m.mu.Lock()
 	cum := m.recvNext
-	var sack uint64
-	for i := uint32(0); i < 64; i++ {
+	var sack sackBitmap
+	for i := uint32(0); i < uint32(sackWords)*64; i++ {
 		if _, ok := m.recvBuf[cum+1+i]; ok {
-			sack |= uint64(1) << i
+			sack.set(i)
 		}
 	}
 	wnd := ARQWindow - len(m.recvBuf)
@@ -230,12 +236,12 @@ func (m *Mux) sendAck(ctx context.Context) {
 	_ = m.sendUnsequenced(ctx, Frame{
 		Type:    TypeAck,
 		Epoch:   epoch,
-		Payload: packAckPayload(cum, sack, uint16(wnd)),
+		Payload: packAckBitmap(cum, sack, uint16(wnd)),
 	})
 }
 
-func (m *Mux) handleAck(f Frame) {
-	cum, sack, wnd, ok := unpackAckPayload(f.Payload)
+func (m *Mux) handleAck(ctx context.Context, f Frame) {
+	cum, sack, wnd, ok := unpackAckBitmap(f.Payload)
 	if !ok {
 		return
 	}
@@ -243,21 +249,21 @@ func (m *Mux) handleAck(f Frame) {
 	m.mu.Lock()
 	m.peerRecvWnd = clampPeerWnd(wnd)
 	m.gotPeerWnd = true
-	advanced := false
+	newly := 0
 	if cum > m.sendUnacked && cum <= m.sendNext {
 		for seq := m.sendUnacked; seq < cum; seq++ {
 			if slot, ok := m.sendBuf[seq]; ok {
-				if slot.retries == 0 {
+				if !slot.karn && slot.retries == 0 {
 					m.updateRTOLocked(now.Sub(slot.sentAt))
 				}
 				delete(m.sendBuf, seq)
+				newly++
 			}
 		}
 		m.sendUnacked = cum
-		advanced = true
 	}
-	for i := uint32(0); i < 64; i++ {
-		if sack&(uint64(1)<<i) == 0 {
+	for i := uint32(0); i < uint32(sackWords)*64; i++ {
+		if !sack.has(i) {
 			continue
 		}
 		seq := cum + 1 + i
@@ -265,17 +271,72 @@ func (m *Mux) handleAck(f Frame) {
 		if !ok {
 			continue
 		}
-		if slot.retries == 0 {
+		if !slot.karn && slot.retries == 0 {
 			m.updateRTOLocked(now.Sub(slot.sentAt))
 		}
 		delete(m.sendBuf, seq)
-		advanced = true
+		newly++
 	}
-	if advanced {
+	if newly > 0 {
 		m.lastProgress = now
+		m.inRecovery = false
+		m.cwnd += newly
+		if m.cwnd > ARQWindow {
+			m.cwnd = ARQWindow
+		}
 	}
+	fast := m.collectFastRetransmitLocked(now, cum, sack)
 	m.mu.Unlock()
+	for _, slot := range fast {
+		if m.closed.Load() || ctx.Err() != nil {
+			break
+		}
+		_ = m.carrier.Send(ctx, slot.wire)
+	}
 	m.wakeSend()
+}
+
+func (m *Mux) collectFastRetransmitLocked(now time.Time, cum uint32, sack sackBitmap) []*sendSlot {
+	highest := -1
+	for i := int(sackWords)*64 - 1; i >= 0; i-- {
+		if sack.has(uint32(i)) {
+			highest = i
+			break
+		}
+	}
+	if highest < 0 {
+		return nil
+	}
+	highestSeq := cum + 1 + uint32(highest)
+	gap := fastDupFloor
+	type cand struct {
+		seq  uint32
+		slot *sendSlot
+	}
+	var holes []cand
+	for seq, slot := range m.sendBuf {
+		if seq > highestSeq {
+			continue
+		}
+		if len(slot.wire) == 0 {
+			continue
+		}
+		if !slot.lastFast.IsZero() && now.Sub(slot.lastFast) < gap {
+			continue
+		}
+		holes = append(holes, cand{seq: seq, slot: slot})
+	}
+	sort.Slice(holes, func(i, j int) bool { return holes[i].seq < holes[j].seq })
+	if len(holes) > maxRetransmitPerTick {
+		holes = holes[:maxRetransmitPerTick]
+	}
+	out := make([]*sendSlot, 0, len(holes))
+	for _, h := range holes {
+		h.slot.lastFast = now
+		h.slot.karn = true
+		out = append(out, h.slot)
+	}
+	return out
 }
 
 func (m *Mux) updateRTOLocked(sample time.Duration) {
@@ -325,19 +386,33 @@ func clampPeerWnd(wnd uint16) uint16 {
 	return wnd
 }
 
+func (m *Mux) sendLimitLocked() int {
+	if !m.gotPeerWnd {
+		return initialFlight
+	}
+	limit := m.cwnd
+	if limit < 1 {
+		limit = 1
+	}
+	w := int(clampPeerWnd(m.peerRecvWnd))
+	if w < limit {
+		limit = w
+	}
+	if limit > ARQWindow {
+		limit = ARQWindow
+	}
+	return limit
+}
+
 func (m *Mux) sendWindowFullLocked() bool {
 	inflight := int(m.sendNext - m.sendUnacked)
-	limit := ARQWindow
-	if m.gotPeerWnd {
-		w := int(clampPeerWnd(m.peerRecvWnd))
-		if w < limit {
-			limit = w
-		}
-	}
-	return inflight >= limit || len(m.sendBuf) >= ARQWindow
+	return inflight >= m.sendLimitLocked() || len(m.sendBuf) >= ARQWindow
 }
 
 func (m *Mux) sendUnsequenced(ctx context.Context, f Frame) error {
+	if m.initErr != nil {
+		return m.initErr
+	}
 	if m.closed.Load() {
 		return errMuxClosed
 	}
@@ -348,7 +423,7 @@ func (m *Mux) sendUnsequenced(ctx context.Context, f Frame) error {
 	f.Dest = m.remote
 	f.Epoch = m.epoch
 	f.Seq = 0
-	wire, err := Pack(m.key, f)
+	wire, err := m.packFrame(f)
 	if err != nil {
 		return err
 	}
@@ -357,6 +432,9 @@ func (m *Mux) sendUnsequenced(ctx context.Context, f Frame) error {
 
 func (m *Mux) sendReliable(ctx context.Context, f Frame) error {
 	for {
+		if m.initErr != nil {
+			return m.initErr
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -387,22 +465,42 @@ func (m *Mux) sendReliable(ctx context.Context, f Frame) error {
 		}
 		seq := m.sendNext
 		m.sendNext++
-		f.Src = m.local
-		f.Dest = m.remote
-		f.Epoch = m.epoch
+		src, dest, epoch := m.local, m.remote, m.epoch
+		now := time.Now()
+		slot := &sendSlot{seq: seq, frame: f, sentAt: now, firstAt: now}
+		m.sendBuf[seq] = slot
+		m.mu.Unlock()
+		f.Src = src
+		f.Dest = dest
+		f.Epoch = epoch
 		f.Seq = seq
 		dataLen := 0
 		if f.Type == TypeData {
 			dataLen = len(f.Payload)
 		}
-		wire, err := Pack(m.key, f)
+		wire, err := m.packFrame(f)
 		if err != nil {
-			m.sendNext = seq
+			m.mu.Lock()
+			if cur, ok := m.sendBuf[seq]; ok && cur == slot {
+				delete(m.sendBuf, seq)
+			}
+			rewind := m.sendNext == seq+1
+			if rewind {
+				m.sendNext = seq
+			}
 			m.mu.Unlock()
+			if !rewind {
+				m.Close()
+				return fmt.Errorf("wb1: pack failed, seq hole: %w", err)
+			}
+			m.wakeSend()
 			return err
 		}
-		now := time.Now()
-		m.sendBuf[seq] = &sendSlot{seq: seq, frame: f, wire: wire, sentAt: now, firstAt: now}
+		m.mu.Lock()
+		if cur, ok := m.sendBuf[seq]; ok && cur == slot {
+			slot.wire = wire
+			slot.frame = f
+		}
 		m.mu.Unlock()
 		if dataLen > 0 {
 			m.addTraffic(int64(dataLen), 0)
@@ -447,31 +545,63 @@ func (m *Mux) retransmitDue(ctx context.Context) bool {
 	if rto > maxRTO {
 		rto = maxRTO
 	}
-	var due []*sendSlot
-	for _, slot := range m.sendBuf {
+	type cand struct {
+		seq  uint32
+		slot *sendSlot
+	}
+	var due []cand
+	for seq, slot := range m.sendBuf {
+		if len(slot.wire) == 0 {
+			continue
+		}
 		if now.Sub(slot.firstAt) > arqStallTimeout || slot.retries >= maxARQRetries {
 			m.mu.Unlock()
 			return false
 		}
-		if now.Sub(slot.sentAt) >= rto {
-			due = append(due, slot)
+		backoff := rto
+		if slot.retries > 0 {
+			shift := slot.retries
+			if shift > 4 {
+				shift = 4
+			}
+			backoff = rto << uint(shift)
+			if backoff > maxRTO {
+				backoff = maxRTO
+			}
+		}
+		if now.Sub(slot.sentAt) >= backoff {
+			due = append(due, cand{seq: seq, slot: slot})
+		}
+	}
+	if len(due) == 0 {
+		m.mu.Unlock()
+		return true
+	}
+	sort.Slice(due, func(i, j int) bool { return due[i].seq < due[j].seq })
+	if len(due) > maxRetransmitPerTick {
+		due = due[:maxRetransmitPerTick]
+	}
+	if now.Sub(m.lastProgress) >= rto && !m.inRecovery {
+		m.cwnd /= 2
+		if m.cwnd < initialFlight {
+			m.cwnd = initialFlight
+		}
+		m.inRecovery = true
+	}
+	wires := make([][]byte, 0, len(due))
+	for _, d := range due {
+		d.slot.retries++
+		d.slot.sentAt = now
+		d.slot.karn = true
+		if len(d.slot.wire) > 0 {
+			wires = append(wires, d.slot.wire)
 		}
 	}
 	m.mu.Unlock()
-	for _, slot := range due {
+	for _, wire := range wires {
 		if m.closed.Load() || ctx.Err() != nil {
 			return true
 		}
-		m.mu.Lock()
-		cur, ok := m.sendBuf[slot.seq]
-		if !ok || cur != slot {
-			m.mu.Unlock()
-			continue
-		}
-		slot.retries++
-		slot.sentAt = time.Now()
-		wire := slot.wire
-		m.mu.Unlock()
 		_ = m.carrier.Send(ctx, wire)
 	}
 	return true

@@ -15,6 +15,7 @@ func newTestSession(local SessionID) *RoomSession {
 		joiners:  make(map[SessionID]*sidPipe),
 		incoming: newPacketQueue(16, 8),
 		done:     make(chan struct{}),
+		pacer:    newBytePacer(float64(pacerWrappedRateBits)/8, pacerBurstBytes),
 	}
 }
 

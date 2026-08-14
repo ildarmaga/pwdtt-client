@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -174,6 +176,40 @@ func TestMuxPing(t *testing.T) {
 	cancel()
 	left.Close()
 	right.Close()
+}
+
+func TestNewMuxInvalidKeyFailsClosed(t *testing.T) {
+	var n atomic.Int32
+	c := &countCarrier{send: func([]byte) error {
+		n.Add(1)
+		return nil
+	}}
+	m := NewMux([]byte("short"), c)
+	m.SetRoute(testSID(1), testSID(2))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := m.send(ctx, Frame{Type: TypePing, Payload: []byte("x")}); err == nil {
+		t.Fatal("send must fail closed on invalid key")
+	}
+	if _, err := m.Ping(ctx); err == nil {
+		t.Fatal("Ping must fail closed on invalid key")
+	}
+	if _, err := m.Dial(ctx, "example:443"); err == nil {
+		t.Fatal("Dial must fail closed on invalid key")
+	}
+	runErr := m.Run(ctx)
+	if runErr == nil {
+		t.Fatal("Run must fail closed on invalid key")
+	}
+	if n.Load() != 0 {
+		t.Fatalf("emitted %d encrypted packets, want 0", n.Load())
+	}
+	if !strings.Contains(strings.ToLower(runErr.Error()), "invalid") &&
+		!strings.Contains(strings.ToLower(runErr.Error()), "key") &&
+		!strings.Contains(strings.ToLower(runErr.Error()), "aead") {
+		t.Fatalf("error %q should mention invalid key/AEAD", runErr)
+	}
 }
 
 func TestMuxRejectsOversizedPayload(t *testing.T) {
