@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.301] — 2026-08-14
+
+### Fix — WB download 0 B
+- TypeData по VP8, не только LiveKit data.
+- WaitCreator ждёт маяк, не цепляется к leftover `e8214196` с именем WDTT.
+- Нужна панель ≥1.5.29.
+
 ## [0.3.300] — 2026-08-14
 
 ### Fix — WB download 0 B

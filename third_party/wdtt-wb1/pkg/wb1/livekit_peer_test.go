@@ -2,13 +2,48 @@ package wb1
 
 import "testing"
 
-func TestCreatorPeerPrefersNamed(t *testing.T) {
-	ghost := &Peer{Identity: "ghost"}
-	real := &Peer{Identity: "real", Name: "WDTT"}
-	s := &RoomSession{peers: map[string]*Peer{"ghost": ghost, "real": real}}
-	p := s.creatorPeer()
-	if p == nil || p.Identity != "real" {
-		t.Fatalf("got %#v", p)
+func TestCreatorPeerIgnoresNamedLeftoverWithoutBeacon(t *testing.T) {
+	ghost := &Peer{Identity: "e8214196-92a9-4fa9-a95c-3cd1cdbef491", Name: "WDTT", Meta: "wdtt-wb1-creator"}
+	s := &RoomSession{peers: map[string]*Peer{ghost.Identity: ghost}}
+	if p := s.creatorPeer(); p != nil {
+		t.Fatalf("leftover named WDTT must not be creator before beacon: %s", p.Identity)
+	}
+}
+
+func TestLeftoverCreatorPeer(t *testing.T) {
+	if !IsLeftoverCreator(&Peer{Identity: "e8214196", Name: "WDTT"}) {
+		t.Fatal("named WDTT leftover")
+	}
+	if !IsLeftoverCreator(&Peer{Identity: "x", Meta: "wdtt-wb1-creator"}) {
+		t.Fatal("metadata leftover")
+	}
+	if IsLeftoverCreator(&Peer{Identity: "70cc629c", Name: ""}) {
+		t.Fatal("real joiner with empty name")
+	}
+}
+
+func TestDispatchReroutesLeftoverSenderToJoiner(t *testing.T) {
+	s := &RoomSession{peers: map[string]*Peer{}, incoming: make(chan []byte, 4)}
+	s.isCreator.Store(1)
+	ghost := &Peer{
+		Identity: "e8214196", Name: "WDTT", Meta: "wdtt-wb1-creator",
+		recv: make(chan []byte, 4), sess: s,
+	}
+	joiner := &Peer{
+		Identity: "70cc629c", Name: "",
+		recv: make(chan []byte, 4), sess: s,
+	}
+	s.peers[ghost.Identity] = ghost
+	s.peers[joiner.Identity] = joiner
+
+	s.dispatch("e8214196", []byte("open-from-joiner"))
+	select {
+	case b := <-joiner.recv:
+		if string(b) != "open-from-joiner" {
+			t.Fatalf("got %q", b)
+		}
+	default:
+		t.Fatal("joiner mux must get leftover-stamped frames")
 	}
 }
 

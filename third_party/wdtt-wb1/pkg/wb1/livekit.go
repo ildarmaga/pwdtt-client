@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	DataTopic             = "wdtt-wb1"
-	CreatorName           = "WDTT"
-	CreatorBeaconPayload  = "wdtt-wb1-creator"
-	vp8Keepalive          = 33 * time.Millisecond
-	vp8SampleDur          = 33 * time.Millisecond
-	vp8VideoWidth         = 640
-	vp8VideoHeight        = 360
+	DataTopic            = "wdtt-wb1"
+	CreatorName          = "WDTT"
+	CreatorBeaconPayload = "wdtt-wb1-creator"
+	vp8Keepalive         = 33 * time.Millisecond
+	vp8SampleDur         = 33 * time.Millisecond
+	vp8VideoWidth        = 640
+	vp8VideoHeight       = 360
 )
 
 // 16×16 VP8 keyframe — keeps the WB call alive (platform wants a publisher).
@@ -44,13 +44,14 @@ type RoomSession struct {
 	vp8Stamp atomic.Int64
 	vp8FPS   atomic.Int64
 
-	mu       sync.Mutex
-	peers    map[string]*Peer
-	onPeer   func(*Peer)
-	pending  []*Peer
-	key      []byte
-	beaconID string
-	incoming chan []byte
+	mu        sync.Mutex
+	peers     map[string]*Peer
+	onPeer    func(*Peer)
+	pending   []*Peer
+	key       []byte
+	beaconID  string
+	incoming  chan []byte
+	isCreator atomic.Uint32
 }
 
 // Peer is one remote participant with its own WDTT-WB1 carrier.
@@ -104,9 +105,8 @@ func (p *Peer) Close() {
 }
 
 // Send implements Carrier. Mux frames go on the LiveKit data topic as a
-// room broadcast: WB's SFU drops WithDataPublishDestination, so a unicast
-// ping never reached the creator (WaitCreator then latched a leftover joiner).
-// VP8 carries only control frames (not SOCKS TypeData) so download stays fast.
+// room broadcast and on VP8: WB's SFU delivers video bidirectionally but
+// often drops creator→joiner data (upload trickles, download stays 0 B).
 func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -121,13 +121,10 @@ func (p *Peer) Send(ctx context.Context, payload []byte) error {
 		lksdk.WithDataPublishReliable(true),
 		lksdk.WithDataPublishTopic(DataTopic),
 	)
-	if isControlFrame(payload) {
-		_ = p.sess.writeVP8(p.hash, payload)
+	if vp8Err := p.sess.writeVP8(p.hash, payload); vp8Err != nil && err != nil {
+		return vp8Err
 	}
-	if err != nil {
-		return p.sess.writeVP8(p.hash, payload)
-	}
-	return nil
+	return err
 }
 
 // Recv implements Carrier.
@@ -190,13 +187,10 @@ func (c *joinerCarrier) Send(ctx context.Context, payload []byte) error {
 	if p := c.s.creatorPeer(); p != nil {
 		dest = p.hash
 	}
-	if isControlFrame(payload) {
-		_ = c.s.writeVP8(dest, payload)
+	if vp8Err := c.s.writeVP8(dest, payload); vp8Err != nil && err != nil {
+		return vp8Err
 	}
-	if err != nil {
-		return c.s.writeVP8(dest, payload)
-	}
-	return nil
+	return err
 }
 
 func (c *joinerCarrier) Recv(ctx context.Context) ([]byte, error) {
@@ -401,9 +395,16 @@ func (s *RoomSession) dispatch(from string, payload []byte) {
 		return
 	}
 	p := s.ensurePeer(from, "", "")
-	if p != nil {
-		p.push(payload)
+	if p == nil {
+		return
 	}
+	if s.isCreator.Load() != 0 && IsLeftoverCreator(p) {
+		for _, j := range s.liveJoiners() {
+			j.push(payload)
+		}
+		return
+	}
+	p.push(payload)
 }
 
 func (s *RoomSession) ensurePeer(identity, name, meta string) *Peer {
@@ -450,6 +451,7 @@ func (s *RoomSession) AnnounceCreator() {
 	if s.room == nil {
 		return
 	}
+	s.isCreator.Store(1)
 	s.room.LocalParticipant.SetName(CreatorName)
 	s.room.LocalParticipant.SetMetadata("wdtt-wb1-creator")
 }
@@ -563,17 +565,38 @@ func (s *RoomSession) creatorPeer() *Peer {
 		if p == nil {
 			continue
 		}
-		n := strings.ToUpper(strings.TrimSpace(p.Name))
-		if n == CreatorName || strings.HasPrefix(n, CreatorName) || strings.Contains(p.Meta, "wdtt-wb1-creator") {
-			s.mu.Unlock()
-			return p
-		}
 		if p.beacon.Load() != 0 {
 			beacon = p
 		}
 	}
 	s.mu.Unlock()
 	return beacon
+}
+
+// IsLeftoverCreator reports a stale LiveKit participant that still looks like
+// the panel creator (name WDTT / metadata) after the real creator reconnected.
+func IsLeftoverCreator(p *Peer) bool {
+	if p == nil {
+		return false
+	}
+	if strings.Contains(p.Meta, "wdtt-wb1-creator") {
+		return true
+	}
+	n := strings.ToUpper(strings.TrimSpace(p.Name))
+	return n == CreatorName || strings.HasPrefix(n, CreatorName)
+}
+
+func (s *RoomSession) liveJoiners() []*Peer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Peer, 0, len(s.peers))
+	for _, p := range s.peers {
+		if p == nil || IsLeftoverCreator(p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (s *RoomSession) noteBeaconCreator(id string) {
@@ -613,16 +636,6 @@ func creatorIDFromBeacon(key, wire []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(p[len(prefix):])
-}
-
-func isControlFrame(wire []byte) bool {
-	if len(wire) < MagicSize+1 {
-		return false
-	}
-	if !bytesEqual(wire[:MagicSize], Magic[:]) {
-		return false
-	}
-	return wire[MagicSize] != TypeData
 }
 
 // SetCryptoKey lets WaitCreator recognize the panel beacon among leftover joiners.
