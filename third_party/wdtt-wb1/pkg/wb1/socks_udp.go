@@ -146,12 +146,12 @@ func (r *udpRelay) flow(c *net.UDPConn, dest string, header []byte, from *net.UD
 		return nil, err
 	}
 	f := &udpFlow{
-		key:    dest,
-		dest:   dest,
-		header: header,
-		stream: stream,
+		key:     dest,
+		dest:    dest,
+		header:  header,
+		stream:  stream,
 		replyTo: from,
-		last:   time.Now(),
+		last:    time.Now(),
 	}
 	r.mu.Lock()
 	r.flows[dest] = f

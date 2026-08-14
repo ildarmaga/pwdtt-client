@@ -54,7 +54,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 		return err
 	}
 
-	m.emitLog("INFO", "[WB] LiveKit "+serverURL)
+	m.emitLog("INFO", "[WB] LiveKit "+serverURL+" (WB1 v3 reliable VP8)")
 	sess, err := wb1.ConnectRoom(ctx, serverURL, roomToken)
 	if err != nil {
 		return fmt.Errorf("livekit: %w", err)

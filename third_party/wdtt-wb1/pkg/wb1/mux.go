@@ -2,11 +2,13 @@ package wb1
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,7 +20,18 @@ type Carrier interface {
 	Recv(ctx context.Context) ([]byte, error)
 }
 
-var errMuxClosed = errors.New("wb1: mux closed")
+var (
+	errMuxClosed   = errors.New("wb1: mux closed")
+	errSendTimeout = errors.New("wb1: send window timeout")
+)
+
+type pushStatus int
+
+const (
+	pushAdmitted pushStatus = iota
+	pushFull
+	pushClosed
+)
 
 // Mux multiplexes TCP-like streams over WDTT-WB1 frames.
 type Mux struct {
@@ -39,6 +52,26 @@ type Mux struct {
 
 	onTraffic func(up, down int64)
 	onPeer    func()
+
+	epoch        uint32
+	epochSet     bool
+	remoteEpoch  uint32
+	sendNext     uint32
+	sendUnacked  uint32
+	sendBuf      map[uint32]*sendSlot
+	recvNext     uint32
+	recvBuf      map[uint32]Frame
+	peerRecvWnd  uint16
+	gotPeerWnd   bool
+	rto          time.Duration
+	srtt         time.Duration
+	rttvar       time.Duration
+	lastProgress time.Time
+	delayAck     *time.Timer
+	closeCh      chan struct{}
+	sendWait     chan struct{}
+	drainCh      chan struct{}
+	drainMu      sync.Mutex
 }
 
 type acceptReq struct {
@@ -48,12 +81,32 @@ type acceptReq struct {
 
 // NewMux builds a mux. Call Run in a goroutine.
 func NewMux(key []byte, c Carrier) *Mux {
+	var eb [4]byte
+	if _, err := rand.Read(eb[:]); err != nil {
+		eb[0] = 1
+	}
+	epoch := binary.BigEndian.Uint32(eb[:])
+	if epoch == 0 {
+		epoch = 1
+	}
 	m := &Mux{
-		key:      append([]byte(nil), key...),
-		carrier:  c,
-		streams:  make(map[uint32]*streamConn),
-		pending:  make(map[uint32]chan error),
-		acceptCh: make(chan acceptReq, 16),
+		key:          append([]byte(nil), key...),
+		carrier:      c,
+		streams:      make(map[uint32]*streamConn),
+		pending:      make(map[uint32]chan error),
+		acceptCh:     make(chan acceptReq, 16),
+		epoch:        epoch,
+		sendNext:     1,
+		sendUnacked:  1,
+		recvNext:     1,
+		sendBuf:      make(map[uint32]*sendSlot),
+		recvBuf:      make(map[uint32]Frame),
+		peerRecvWnd:  uint16(ARQWindow),
+		rto:          initialRTO,
+		lastProgress: time.Now(),
+		closeCh:      make(chan struct{}),
+		sendWait:     make(chan struct{}, 1),
+		drainCh:      make(chan struct{}, 1),
 	}
 	m.nextID.Store(1)
 	return m
@@ -91,6 +144,8 @@ func (m *Mux) addTraffic(up, down int64) {
 // Run reads frames until ctx is done.
 func (m *Mux) Run(ctx context.Context) error {
 	defer m.Close()
+	go m.retransmitLoop(ctx)
+	go m.drainLoop(ctx)
 	if !m.local.IsZero() && !m.remote.IsZero() {
 		_ = m.send(ctx, Frame{Type: TypeHello, StreamID: 0})
 	}
@@ -109,7 +164,7 @@ func (m *Mux) Run(ctx context.Context) error {
 		if !m.routeOK(f) {
 			continue
 		}
-		m.dispatch(ctx, f)
+		m.handleIncoming(ctx, f)
 	}
 }
 
@@ -179,8 +234,9 @@ func (m *Mux) handleData(f Frame) {
 	if sc == nil {
 		return
 	}
-	m.addTraffic(0, int64(len(f.Payload)))
-	sc.push(f.Payload)
+	if sc.push(f.Payload) == pushAdmitted {
+		m.addTraffic(0, int64(len(f.Payload)))
+	}
 }
 
 func (m *Mux) handleFin(f Frame) {
@@ -250,29 +306,31 @@ func (m *Mux) Ping(ctx context.Context) (time.Duration, error) {
 		m.pings.Delete(id)
 		return 0, err
 	}
-	select {
-	case <-ctx.Done():
-		m.pings.Delete(id)
-		return 0, ctx.Err()
-	case <-ch:
-		return time.Since(start), nil
+	retry := time.NewTimer(minRTO)
+	defer retry.Stop()
+	retried := false
+	for {
+		select {
+		case <-ctx.Done():
+			m.pings.Delete(id)
+			return 0, ctx.Err()
+		case <-ch:
+			return time.Since(start), nil
+		case <-retry.C:
+			if retried {
+				continue
+			}
+			retried = true
+			_ = m.send(ctx, Frame{Type: TypePing, StreamID: 0, Payload: payload})
+		}
 	}
 }
 
 func (m *Mux) send(ctx context.Context, f Frame) error {
-	if m.closed.Load() {
-		return errMuxClosed
+	if isReliable(f.Type) {
+		return m.sendReliable(ctx, f)
 	}
-	f.Src = m.local
-	f.Dest = m.remote
-	wire, err := Pack(m.key, f)
-	if err != nil {
-		return err
-	}
-	if f.Type == TypeData {
-		m.addTraffic(int64(len(f.Payload)), 0)
-	}
-	return m.carrier.Send(ctx, wire)
+	return m.sendUnsequenced(ctx, f)
 }
 
 func (m *Mux) drop(id uint32) {
@@ -291,6 +349,9 @@ func (m *Mux) Close() {
 	if !m.closed.CompareAndSwap(false, true) {
 		return
 	}
+	close(m.closeCh)
+	m.stopDelayAck()
+	m.wakeSend()
 	m.mu.Lock()
 	streams := m.streams
 	m.streams = map[uint32]*streamConn{}
@@ -306,11 +367,13 @@ type streamConn struct {
 	local  net.Addr
 	remote net.Addr
 
-	mu     sync.Mutex
-	buf    []byte
-	wait   chan struct{}
-	closed bool
-	rerr   error
+	mu        sync.Mutex
+	buf       []byte
+	wait      chan struct{}
+	closed    bool
+	rerr      error
+	rdeadline time.Time
+	wdeadline time.Time
 }
 
 func newStream(m *Mux, id uint32) *streamConn {
@@ -323,18 +386,31 @@ func newStream(m *Mux, id uint32) *streamConn {
 	}
 }
 
-func (s *streamConn) push(p []byte) {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return
-	}
-	s.buf = append(s.buf, p...)
+func (s *streamConn) wakeWait() {
 	select {
 	case s.wait <- struct{}{}:
 	default:
 	}
-	s.mu.Unlock()
+}
+
+func (s *streamConn) push(p []byte) pushStatus {
+	if len(p) == 0 {
+		return pushAdmitted
+	}
+	if s.mux.closed.Load() {
+		return pushClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return pushClosed
+	}
+	if len(s.buf)+len(p) > StreamRecvCap {
+		return pushFull
+	}
+	s.buf = append(s.buf, p...)
+	s.wakeWait()
+	return pushAdmitted
 }
 
 func (s *streamConn) remoteClose() {
@@ -345,24 +421,31 @@ func (s *streamConn) remoteClose() {
 	}
 	s.closed = true
 	s.rerr = io.EOF
-	select {
-	case s.wait <- struct{}{}:
-	default:
-	}
+	s.wakeWait()
 	s.mu.Unlock()
 }
 
 func (s *streamConn) Read(p []byte) (int, error) {
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
 		s.mu.Lock()
 		if len(s.buf) > 0 {
 			n := copy(p, s.buf)
 			s.buf = s.buf[n:]
 			s.mu.Unlock()
+			if n > 0 {
+				s.mux.wakeDrain()
+			}
 			return n, nil
 		}
 		err := s.rerr
 		closed := s.closed
+		dl := s.rdeadline
 		s.mu.Unlock()
 		if closed {
 			if err == nil {
@@ -370,11 +453,41 @@ func (s *streamConn) Read(p []byte) (int, error) {
 			}
 			return 0, err
 		}
+		if !dl.IsZero() && !time.Now().Before(dl) {
+			return 0, os.ErrDeadlineExceeded
+		}
+		wait := 30 * time.Second
+		if !dl.IsZero() {
+			wait = time.Until(dl)
+			if wait <= 0 {
+				return 0, os.ErrDeadlineExceeded
+			}
+		}
+		if timer == nil {
+			timer = time.NewTimer(wait)
+		} else {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(wait)
+		}
 		select {
 		case <-s.wait:
-		case <-time.After(30 * time.Second):
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 			if s.mux.closed.Load() {
 				return 0, errMuxClosed
+			}
+			if !dl.IsZero() && !time.Now().Before(dl) {
+				return 0, os.ErrDeadlineExceeded
 			}
 		}
 	}
@@ -386,12 +499,18 @@ func (s *streamConn) Write(p []byte) (int, error) {
 	}
 	s.mu.Lock()
 	closed := s.closed
+	dl := s.wdeadline
 	s.mu.Unlock()
 	if closed {
 		return 0, net.ErrClosed
 	}
-	sent := 0
 	ctx := context.Background()
+	if !dl.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(context.Background(), dl)
+		defer cancel()
+	}
+	sent := 0
 	for sent < len(p) {
 		end := sent + MaxPayload
 		if end > len(p) {
@@ -399,6 +518,9 @@ func (s *streamConn) Write(p []byte) (int, error) {
 		}
 		chunk := p[sent:end]
 		if err := s.mux.send(ctx, Frame{Type: TypeData, StreamID: s.id, Payload: chunk}); err != nil {
+			if ctx.Err() != nil && !dl.IsZero() {
+				return sent, os.ErrDeadlineExceeded
+			}
 			return sent, err
 		}
 		sent = end
@@ -414,23 +536,39 @@ func (s *streamConn) Close() error {
 	}
 	s.closed = true
 	s.rerr = net.ErrClosed
-	select {
-	case s.wait <- struct{}{}:
-	default:
-	}
+	s.wakeWait()
 	s.mu.Unlock()
-	_ = s.mux.send(context.Background(), Frame{Type: TypeFin, StreamID: s.id})
 	s.mux.mu.Lock()
 	delete(s.mux.streams, s.id)
 	s.mux.mu.Unlock()
+	finCtx, cancel := context.WithTimeout(context.Background(), arqStallTimeout)
+	defer cancel()
+	_ = s.mux.send(finCtx, Frame{Type: TypeFin, StreamID: s.id})
 	return nil
 }
 
-func (s *streamConn) LocalAddr() net.Addr              { return s.local }
-func (s *streamConn) RemoteAddr() net.Addr             { return s.remote }
-func (s *streamConn) SetDeadline(time.Time) error      { return nil }
-func (s *streamConn) SetReadDeadline(time.Time) error  { return nil }
-func (s *streamConn) SetWriteDeadline(time.Time) error { return nil }
+func (s *streamConn) LocalAddr() net.Addr  { return s.local }
+func (s *streamConn) RemoteAddr() net.Addr { return s.remote }
+
+func (s *streamConn) SetDeadline(t time.Time) error {
+	_ = s.SetReadDeadline(t)
+	return s.SetWriteDeadline(t)
+}
+
+func (s *streamConn) SetReadDeadline(t time.Time) error {
+	s.mu.Lock()
+	s.rdeadline = t
+	s.mu.Unlock()
+	s.wakeWait()
+	return nil
+}
+
+func (s *streamConn) SetWriteDeadline(t time.Time) error {
+	s.mu.Lock()
+	s.wdeadline = t
+	s.mu.Unlock()
+	return nil
+}
 
 type dummyAddr string
 

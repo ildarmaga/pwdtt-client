@@ -16,19 +16,25 @@ import (
 )
 
 const (
-	MagicSize  = 4
-	SIDSize    = 8
-	NonceSize  = chacha20poly1305.NonceSize
-	KeySize    = chacha20poly1305.KeySize
-	MaxPayload = 8192 // LiveKit data packets ~15KiB; 1KB chunks + blocking VP8 capped SOCKS at ~1 MB/s
-	headerLen  = MagicSize + 1 + 2 + SIDSize + SIDSize
+	MagicSize     = 4
+	SIDSize       = 8
+	NonceSize     = chacha20poly1305.NonceSize
+	KeySize       = chacha20poly1305.KeySize
+	MaxPayload    = 1024 // WrapVP8(Pack(max)) must fit one Pion VP8 RTP payload (<=1199)
+	VP8MaxSample  = 1199 // Pion VP8Payloader outboundMTU=1200 minus 1-byte descriptor
+	ARQWindow     = 32
+	StreamRecvCap = 64 * 1024 // per-stream app recv cap; Data is not ACKed until admitted here
+	headerLen     = MagicSize + 1 + 2 + SIDSize + SIDSize
+	relHdrLen     = 4 + 4 + 4 // epoch + seq + stream_id
+	ackBodyLen    = 4 + 8 + 2 // cumAck + sack + recvWnd
 )
 
 // SessionID is a random 8-byte endpoint id for one RoomSession (not LiveKit identity).
 type SessionID [SIDSize]byte
 
 var (
-	Magic   = [MagicSize]byte{'W', 'B', '1', 0x02}
+	Magic   = [MagicSize]byte{'W', 'B', '1', 0x03}
+	MagicV2 = [MagicSize]byte{'W', 'B', '1', 0x02}
 	MagicV1 = [MagicSize]byte{'W', 'B', '1', 0x01}
 )
 
@@ -40,6 +46,7 @@ const (
 	TypeFin   byte = 5
 	TypeErr   byte = 6
 	TypeHello byte = 7
+	TypeAck   byte = 8
 )
 
 const (
@@ -52,7 +59,8 @@ var (
 	errEmptyRoom     = errors.New("wb1: empty room id")
 	errShortFrame    = errors.New("wb1: frame too short")
 	errBadMagic      = errors.New("wb1: bad magic")
-	errV1Frame       = errors.New("wb1: v1 frame rejected (need v2 panel+client)")
+	errV1Frame       = errors.New("wb1: v1 frame rejected (need v3 panel+client)")
+	errV2Frame       = errors.New("wb1: v2 frame rejected (need v3 panel+client)")
 	errBadLength     = errors.New("wb1: length mismatch")
 	errPayloadTooBig = errors.New("wb1: payload too large")
 	errZeroDest      = errors.New("wb1: zero dest")
@@ -66,6 +74,8 @@ type Frame struct {
 	StreamID uint32
 	Dest     SessionID
 	Src      SessionID
+	Epoch    uint32
+	Seq      uint32
 	Payload  []byte
 }
 
@@ -125,7 +135,7 @@ func aead(key []byte) (cipher.AEAD, error) {
 	return chacha20poly1305.New(key)
 }
 
-func aadV2(typ byte, dest, src SessionID) []byte {
+func aadWire(typ byte, dest, src SessionID) []byte {
 	aad := make([]byte, MagicSize+1+SIDSize+SIDSize)
 	copy(aad[:MagicSize], Magic[:])
 	aad[MagicSize] = typ
@@ -143,7 +153,7 @@ func isBeaconPlain(p []byte) bool {
 	return s == CreatorBeaconPayload || strings.HasPrefix(s, CreatorBeaconPayload+"|")
 }
 
-// PeekRoute reads cleartext v2 type/dest/src without decrypting.
+// PeekRoute reads cleartext v3 type/dest/src without decrypting.
 func PeekRoute(wire []byte) (typ byte, dest, src SessionID, ok bool) {
 	if len(wire) < headerLen {
 		return 0, dest, src, false
@@ -157,7 +167,8 @@ func PeekRoute(wire []byte) (typ byte, dest, src SessionID, ok bool) {
 	return typ, dest, src, true
 }
 
-// Pack seals a v2 frame. Dest/src are in the clear and in AEAD AAD.
+// Pack seals a v3 frame. Dest/src are in the clear and in AEAD AAD.
+// Plaintext is epoch || seq || stream_id || payload.
 func Pack(key []byte, f Frame) ([]byte, error) {
 	if len(f.Payload) > MaxPayload {
 		return nil, errPayloadTooBig
@@ -172,15 +183,17 @@ func Pack(key []byte, f Frame) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	plain := make([]byte, 4+len(f.Payload))
-	binary.BigEndian.PutUint32(plain[:4], f.StreamID)
-	copy(plain[4:], f.Payload)
+	plain := make([]byte, relHdrLen+len(f.Payload))
+	binary.BigEndian.PutUint32(plain[0:4], f.Epoch)
+	binary.BigEndian.PutUint32(plain[4:8], f.Seq)
+	binary.BigEndian.PutUint32(plain[8:12], f.StreamID)
+	copy(plain[relHdrLen:], f.Payload)
 
 	nonce := make([]byte, NonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	ct := a.Seal(nil, nonce, plain, aadV2(f.Type, f.Dest, f.Src))
+	ct := a.Seal(nil, nonce, plain, aadWire(f.Type, f.Dest, f.Src))
 	nct := len(nonce) + len(ct)
 	if nct > 0xffff {
 		return nil, fmt.Errorf("wb1: sealed frame too large")
@@ -196,7 +209,7 @@ func Pack(key []byte, f Frame) ([]byte, error) {
 	return out, nil
 }
 
-// Unpack opens a sealed v2 frame. v1 magic is an explicit error.
+// Unpack opens a sealed v3 frame. v1 and v2 magic are explicit errors.
 func Unpack(key []byte, wire []byte) (Frame, error) {
 	var z Frame
 	if len(wire) < headerLen+NonceSize+16 {
@@ -204,6 +217,9 @@ func Unpack(key []byte, wire []byte) (Frame, error) {
 	}
 	if bytesEqual(wire[:MagicSize], MagicV1[:]) {
 		return z, errV1Frame
+	}
+	if bytesEqual(wire[:MagicSize], MagicV2[:]) {
+		return z, errV2Frame
 	}
 	if !bytesEqual(wire[:MagicSize], Magic[:]) {
 		return z, errBadMagic
@@ -224,19 +240,45 @@ func Unpack(key []byte, wire []byte) (Frame, error) {
 	if err != nil {
 		return z, err
 	}
-	plain, err := a.Open(nil, nonce, ct, aadV2(typ, z.Dest, z.Src))
+	plain, err := a.Open(nil, nonce, ct, aadWire(typ, z.Dest, z.Src))
 	if err != nil {
 		return z, err
 	}
-	if len(plain) < 4 {
+	if len(plain) < relHdrLen {
 		return z, errShortFrame
 	}
 	z.Type = typ
-	z.StreamID = binary.BigEndian.Uint32(plain[:4])
-	if len(plain) > 4 {
-		z.Payload = append([]byte(nil), plain[4:]...)
+	z.Epoch = binary.BigEndian.Uint32(plain[0:4])
+	z.Seq = binary.BigEndian.Uint32(plain[4:8])
+	z.StreamID = binary.BigEndian.Uint32(plain[8:12])
+	if len(plain) > relHdrLen {
+		z.Payload = append([]byte(nil), plain[relHdrLen:]...)
 	}
 	return z, nil
+}
+
+func isReliable(typ byte) bool {
+	switch typ {
+	case TypeHello, TypeOpen, TypeData, TypeFin, TypeErr:
+		return true
+	default:
+		return false
+	}
+}
+
+func packAckPayload(cum uint32, sack uint64, wnd uint16) []byte {
+	p := make([]byte, ackBodyLen)
+	binary.BigEndian.PutUint32(p[0:4], cum)
+	binary.BigEndian.PutUint64(p[4:12], sack)
+	binary.BigEndian.PutUint16(p[12:14], wnd)
+	return p
+}
+
+func unpackAckPayload(p []byte) (cum uint32, sack uint64, wnd uint16, ok bool) {
+	if len(p) < ackBodyLen {
+		return 0, 0, 0, false
+	}
+	return binary.BigEndian.Uint32(p[0:4]), binary.BigEndian.Uint64(p[4:12]), binary.BigEndian.Uint16(p[12:14]), true
 }
 
 func bytesEqual(a, b []byte) bool {

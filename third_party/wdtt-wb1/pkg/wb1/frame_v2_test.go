@@ -21,9 +21,12 @@ func testSID(b byte) SessionID {
 	return id
 }
 
-func TestV2Magic(t *testing.T) {
-	if Magic != [MagicSize]byte{'W', 'B', '1', 0x02} {
-		t.Fatalf("Magic=%x, want WB1\\x02", Magic)
+func TestV3Magic(t *testing.T) {
+	if Magic != [MagicSize]byte{'W', 'B', '1', 0x03} {
+		t.Fatalf("Magic=%x, want WB1\\x03", Magic)
+	}
+	if MagicV2 != [MagicSize]byte{'W', 'B', '1', 0x02} {
+		t.Fatalf("MagicV2=%x", MagicV2)
 	}
 	if MagicV1 != [MagicSize]byte{'W', 'B', '1', 0x01} {
 		t.Fatalf("MagicV1=%x", MagicV1)
@@ -129,7 +132,16 @@ func TestPeekRouteRejectsV1(t *testing.T) {
 	copy(v1[:4], MagicV1[:])
 	v1[4] = TypeData
 	if _, _, _, ok := PeekRoute(v1); ok {
-		t.Fatal("v1 must not peek as v2")
+		t.Fatal("v1 must not peek as v3")
+	}
+}
+
+func TestPeekRouteRejectsV2(t *testing.T) {
+	v2 := make([]byte, 32)
+	copy(v2[:4], MagicV2[:])
+	v2[4] = TypeData
+	if _, _, _, ok := PeekRoute(v2); ok {
+		t.Fatal("v2 must not peek as v3")
 	}
 }
 
@@ -144,6 +156,53 @@ func TestUnpackRejectsV1Magic(t *testing.T) {
 	}
 	if err != errV1Frame {
 		t.Fatalf("err=%v want errV1Frame", err)
+	}
+}
+
+func TestUnpackRejectsV2Magic(t *testing.T) {
+	key := testKey(t)
+	v2 := make([]byte, 64)
+	copy(v2[:4], MagicV2[:])
+	v2[4] = TypeData
+	_, err := Unpack(key, v2)
+	if err == nil {
+		t.Fatal("v2 must be rejected as explicit version error")
+	}
+	if err != errV2Frame {
+		t.Fatalf("err=%v want errV2Frame", err)
+	}
+}
+
+func TestReliabilityFieldsPackUnpack(t *testing.T) {
+	key := testKey(t)
+	plain := Frame{
+		Type:     TypeData,
+		StreamID: 7,
+		Dest:     testSID(1),
+		Src:      testSID(2),
+		Epoch:    0xA1B2C3D4,
+		Seq:      99,
+		Payload:  []byte("rel"),
+	}
+	wire, err := Pack(key, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Unpack(key, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Epoch != plain.Epoch || got.Seq != plain.Seq {
+		t.Fatalf("epoch/seq got %d/%d want %d/%d", got.Epoch, got.Seq, plain.Epoch, plain.Seq)
+	}
+	if !bytes.Equal(got.Payload, plain.Payload) {
+		t.Fatalf("payload %q", got.Payload)
+	}
+}
+
+func TestAckTypeDefined(t *testing.T) {
+	if TypeAck == 0 || TypeAck == TypeHello || TypeAck == TypeData || TypeAck == TypePing {
+		t.Fatalf("TypeAck=%d", TypeAck)
 	}
 }
 

@@ -13,7 +13,7 @@ func newTestSession(local SessionID) *RoomSession {
 		localSID: local,
 		peers:    make(map[string]*Peer),
 		joiners:  make(map[SessionID]*sidPipe),
-		incoming: make(chan []byte, 16),
+		incoming: newPacketQueue(16, 8),
 		done:     make(chan struct{}),
 	}
 }
@@ -142,10 +142,8 @@ func TestJoinerIngestIgnoresOtherDest(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ingest(foreign)
-	select {
-	case b := <-s.incoming:
+	if b, ok := s.incoming.Pop(); ok {
 		t.Fatalf("joiner took foreign dest payload %q", b)
-	default:
 	}
 
 	mine, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: me, Src: creator, Payload: []byte("mine")})
@@ -153,17 +151,16 @@ func TestJoinerIngestIgnoresOtherDest(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ingest(mine)
-	select {
-	case b := <-s.incoming:
-		f, err := Unpack(key, b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(f.Payload) != "mine" {
-			t.Fatalf("got %q", f.Payload)
-		}
-	case <-time.After(time.Second):
+	b, ok := s.incoming.Pop()
+	if !ok {
 		t.Fatal("missing own frame")
+	}
+	f, err := Unpack(key, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(f.Payload) != "mine" {
+		t.Fatalf("got %q", f.Payload)
 	}
 }
 
@@ -264,6 +261,218 @@ func TestCreatorRejectsUnauthenticatedRouteBeforeAllocatingMux(t *testing.T) {
 
 	if len(s.joiners) != 0 {
 		t.Fatalf("unauthenticated route allocated %d mux(es)", len(s.joiners))
+	}
+}
+
+func TestCreatorDoesNotAllocateMuxForUnknownAck(t *testing.T) {
+	key := testKey(t)
+	creatorSID, joinerSID := testSID(1), testSID(2)
+	s := newTestSession(creatorSID)
+	s.isCreator.Store(1)
+	s.SetCryptoKey(key)
+
+	wire, err := Pack(key, Frame{Type: TypeAck, Dest: creatorSID, Src: joinerSID, Payload: packAckPayload(1, 0, ARQWindow)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(wire)
+	if len(s.joiners) != 0 {
+		t.Fatalf("unknown ACK allocated %d mux(es)", len(s.joiners))
+	}
+
+	hello, err := Pack(key, Frame{Type: TypeHello, Dest: creatorSID, Src: joinerSID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(hello)
+	if len(s.joiners) != 1 {
+		t.Fatalf("valid Hello allocated %d mux(es), want 1", len(s.joiners))
+	}
+}
+
+func TestKnownSIDAckTouchesIdleReap(t *testing.T) {
+	key := testKey(t)
+	creatorSID, joinerSID := testSID(1), testSID(2)
+	s := newTestSession(creatorSID)
+	s.isCreator.Store(1)
+	s.SetCryptoKey(key)
+	p := newSIDPipe(s, joinerSID)
+	old := time.Now().Add(-time.Minute).UnixNano()
+	p.lastSeen.Store(old)
+	s.joiners[joinerSID] = p
+
+	wire, err := Pack(key, Frame{Type: TypeAck, Dest: creatorSID, Src: joinerSID, Payload: packAckPayload(1, 0, ARQWindow)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(wire)
+	if p.lastSeen.Load() <= old {
+		t.Fatal("ACK on known SID must touch idle timestamp")
+	}
+}
+
+func TestIncomingQueueDoesNotDropOldest(t *testing.T) {
+	key := testKey(t)
+	me, creator := testSID(10), testSID(1)
+	s := newTestSession(me)
+	s.creatorSID = creator
+	s.SetCryptoKey(key)
+
+	n := s.incoming.dataCap
+	if n < 2 {
+		t.Fatalf("incoming cap %d", n)
+	}
+	for i := 0; i < n; i++ {
+		wire, err := Pack(key, Frame{
+			Type: TypeData, StreamID: 1, Dest: me, Src: creator,
+			Payload: []byte{byte(i)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.ingest(wire)
+	}
+	overflow, err := Pack(key, Frame{
+		Type: TypeData, StreamID: 1, Dest: me, Src: creator,
+		Payload: []byte{0xff},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(overflow)
+
+	raw, ok := s.incoming.Pop()
+	if !ok {
+		t.Fatal("empty incoming")
+	}
+	first, err := Unpack(key, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Payload) != 1 || first.Payload[0] != 0 {
+		t.Fatalf("oldest reliable packet dropped, first=%v", first.Payload)
+	}
+	sawOverflow := false
+	for i := 0; i < n-1; i++ {
+		b, ok := s.incoming.Pop()
+		if !ok {
+			break
+		}
+		f, err := Unpack(key, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Payload) == 1 && f.Payload[0] == 0xff {
+			sawOverflow = true
+		}
+	}
+	if sawOverflow {
+		t.Fatal("newest overflow should be dropped, not oldest")
+	}
+}
+
+func TestSIDPipeDoesNotDropOldest(t *testing.T) {
+	s := newTestSession(testSID(1))
+	p := &sidPipe{sess: s, remote: testSID(2), q: newPacketQueue(2, 2), closed: make(chan struct{})}
+	p.push([]byte("oldest"))
+	p.push([]byte("second"))
+	p.push([]byte("newest"))
+	a, ok1 := p.q.Pop()
+	b, ok2 := p.q.Pop()
+	if !ok1 || !ok2 || string(a) != "oldest" || string(b) != "second" {
+		t.Fatalf("drop-oldest still in effect: %q %q", a, b)
+	}
+	if x, ok := p.q.Pop(); ok {
+		t.Fatalf("unexpected third packet %q", x)
+	}
+}
+
+func TestSIDPipeAckBypassesFullDataQueue(t *testing.T) {
+	key := testKey(t)
+	creatorSID, joinerSID := testSID(1), testSID(2)
+	s := newTestSession(creatorSID)
+	s.isCreator.Store(1)
+	s.SetCryptoKey(key)
+	p := &sidPipe{sess: s, remote: joinerSID, q: newPacketQueue(2, 2), closed: make(chan struct{})}
+	s.joiners[joinerSID] = p
+	for i := 0; i < 2; i++ {
+		wire, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: creatorSID, Src: joinerSID, Payload: []byte{byte(i)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.push(wire)
+	}
+	ack, err := Pack(key, Frame{Type: TypeAck, Dest: creatorSID, Src: joinerSID, Payload: packAckPayload(1, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.push(ack)
+	got, ok := p.q.Pop()
+	if !ok {
+		t.Fatal("queue empty after ACK inject")
+	}
+	typ, _, _, ok := PeekRoute(got)
+	if !ok || typ != TypeAck {
+		t.Fatalf("ACK dropped behind full data queue, typ=%d ok=%v", typ, ok)
+	}
+	d0, ok0 := p.q.Pop()
+	d1, ok1 := p.q.Pop()
+	if !ok0 || !ok1 {
+		t.Fatal("queued data lost after ACK bypass")
+	}
+	f0, err := Unpack(key, d0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f1, err := Unpack(key, d1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f0.Type != TypeData || f1.Type != TypeData || f0.Payload[0] != 0 || f1.Payload[0] != 1 {
+		t.Fatalf("data order after ACK: %v %v", f0.Payload, f1.Payload)
+	}
+}
+
+func TestIncomingAckBypassesFullDataQueue(t *testing.T) {
+	key := testKey(t)
+	me, creator := testSID(10), testSID(1)
+	s := newTestSession(me)
+	s.creatorSID = creator
+	s.SetCryptoKey(key)
+	n := s.incoming.dataCap
+	for i := 0; i < n; i++ {
+		wire, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: me, Src: creator, Payload: []byte{byte(i)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.ingest(wire)
+	}
+	ack, err := Pack(key, Frame{Type: TypeAck, Dest: me, Src: creator, Payload: packAckPayload(3, 0, 8)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(ack)
+	got, ok := s.incoming.Pop()
+	if !ok {
+		t.Fatal("incoming empty")
+	}
+	typ, _, _, ok := PeekRoute(got)
+	if !ok || typ != TypeAck {
+		t.Fatalf("joiner incoming dropped ACK on full data queue typ=%d", typ)
+	}
+}
+
+func TestIngestDropsV2(t *testing.T) {
+	s := newTestSession(testSID(1))
+	s.isCreator.Store(1)
+	started := false
+	s.SetOnJoiner(func(sid SessionID, c Carrier) { started = true })
+	v2 := make([]byte, 64)
+	copy(v2[:4], MagicV2[:])
+	v2[4] = TypeHello
+	s.ingest(v2)
+	if started {
+		t.Fatal("v2 must not start a mux")
 	}
 }
 

@@ -71,27 +71,24 @@ func TestFanInSkipsOtherJoiners(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ingest(other)
-	select {
-	case <-s.incoming:
+	if _, ok := s.incoming.Pop(); ok {
 		t.Fatal("other joiner dest must not fan-in")
-	default:
 	}
 	mine, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: me, Src: creator, Payload: []byte("creator-data")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.ingest(mine)
-	select {
-	case b := <-s.incoming:
-		f, err := Unpack(key, b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(f.Payload) != "creator-data" {
-			t.Fatalf("got %q", f.Payload)
-		}
-	default:
+	b, ok := s.incoming.Pop()
+	if !ok {
 		t.Fatal("own dest frames must be accepted")
+	}
+	f, err := Unpack(key, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(f.Payload) != "creator-data" {
+		t.Fatalf("got %q", f.Payload)
 	}
 }
 
@@ -181,7 +178,7 @@ func TestCreatorBeaconWithIdentity(t *testing.T) {
 	if got := creatorIDFromBeacon(key, wire); got != "panel-id-1" {
 		t.Fatalf("id %q", got)
 	}
-	s := &RoomSession{key: key, peers: map[string]*Peer{}, joiners: map[SessionID]*sidPipe{}, incoming: make(chan []byte, 4), localSID: testSID(9)}
+	s := &RoomSession{key: key, peers: map[string]*Peer{}, joiners: map[SessionID]*sidPipe{}, incoming: newPacketQueue(4, 2), localSID: testSID(9)}
 	ghost := &Peer{Identity: "ghost", recv: make(chan []byte, 2), sess: s}
 	s.peers["ghost"] = ghost
 	ghost.push(wire)

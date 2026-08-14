@@ -25,7 +25,7 @@ func WrapVP8(dest SessionID, frame []byte) []byte {
 	return out
 }
 
-// UnwrapVP8 finds a WDTT-WB1 v2 frame inside an RTP/VP8 payload.
+// UnwrapVP8 finds a WDTT-WB1 v3 frame inside an RTP/VP8 payload.
 func UnwrapVP8(payload []byte) (dest SessionID, frame []byte, ok bool) {
 	idx := bytes.Index(payload, Magic[:])
 	if idx < SIDSize || idx+headerLen > len(payload) {

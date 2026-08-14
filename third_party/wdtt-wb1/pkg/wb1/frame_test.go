@@ -156,8 +156,8 @@ func TestPackEmptyPayload(t *testing.T) {
 }
 
 func TestPackMaxPayloadRoundTrip(t *testing.T) {
-	if MaxPayload < 8000 {
-		t.Fatalf("MaxPayload=%d; SOCKS over WB needs >=8000 or each Send is ~1KB and VP8 pacing caps ~1 MB/s", MaxPayload)
+	if MaxPayload != 1024 {
+		t.Fatalf("MaxPayload=%d want 1024 so WrapVP8 fits one Pion RTP", MaxPayload)
 	}
 	key, err := DeriveKey("secret", "room-1")
 	if err != nil {

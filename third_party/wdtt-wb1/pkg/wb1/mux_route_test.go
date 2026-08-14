@@ -231,7 +231,7 @@ func TestJoinerIgnoresFrameForOtherSID(t *testing.T) {
 	if err := right.Send(ctx, foreign); err != nil {
 		t.Fatal(err)
 	}
-	mine, err := Pack(key, Frame{Type: TypeOpen, StreamID: 2, Dest: me, Src: creator, Payload: []byte("ok:1")})
+	mine, err := Pack(key, Frame{Type: TypeOpen, StreamID: 2, Dest: me, Src: creator, Seq: 1, Payload: []byte("ok:1")})
 	if err != nil {
 		t.Fatal(err)
 	}

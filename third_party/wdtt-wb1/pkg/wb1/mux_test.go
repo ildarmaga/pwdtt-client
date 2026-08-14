@@ -15,6 +15,7 @@ type memCarrier struct {
 	q    [][]byte
 	wait chan struct{}
 	dead bool
+	maxQ int
 }
 
 func newCarrierPair() (*memCarrier, *memCarrier) {
@@ -33,6 +34,9 @@ func (c *memCarrier) Send(_ context.Context, payload []byte) error {
 		return io.ErrClosedPipe
 	}
 	c.peer.q = append(c.peer.q, cp)
+	if c.peer.maxQ > 0 && len(c.peer.q) > c.peer.maxQ {
+		c.peer.q = c.peer.q[len(c.peer.q)-c.peer.maxQ:]
+	}
 	select {
 	case c.peer.wait <- struct{}{}:
 	default:

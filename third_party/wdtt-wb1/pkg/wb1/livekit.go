@@ -64,9 +64,10 @@ type RoomSession struct {
 	key            []byte
 	beaconID       string
 	creatorSID     SessionID
-	incoming       chan []byte
+	incoming       *packetQueue
 	isCreator      atomic.Uint32
 	loggedV1       atomic.Uint32
+	loggedV2       atomic.Uint32
 }
 
 // Peer is one remote LiveKit participant (presence/logging only).
@@ -143,7 +144,7 @@ func (p *Peer) Recv(ctx context.Context) ([]byte, error) {
 type sidPipe struct {
 	sess     *RoomSession
 	remote   SessionID
-	recv     chan []byte
+	q        *packetQueue
 	closed   chan struct{}
 	once     sync.Once
 	lastSeen atomic.Int64
@@ -153,7 +154,7 @@ func newSIDPipe(s *RoomSession, remote SessionID) *sidPipe {
 	p := &sidPipe{
 		sess:   s,
 		remote: remote,
-		recv:   make(chan []byte, 1024),
+		q:      newPacketQueue(carrierDataCap, carrierCtrlCap),
 		closed: make(chan struct{}),
 	}
 	p.touch()
@@ -179,15 +180,19 @@ func (p *sidPipe) Send(ctx context.Context, payload []byte) error {
 }
 
 func (p *sidPipe) Recv(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-p.closed:
-		return nil, context.Canceled
-	case <-p.sess.done:
-		return nil, context.Canceled
-	case b := <-p.recv:
-		return b, nil
+	for {
+		if b, ok := p.q.Pop(); ok {
+			return b, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-p.closed:
+			return nil, context.Canceled
+		case <-p.sess.done:
+			return nil, context.Canceled
+		case <-p.q.Wait():
+		}
 	}
 }
 
@@ -195,19 +200,13 @@ func (p *sidPipe) push(b []byte) {
 	if len(b) == 0 {
 		return
 	}
-	p.touch()
-	cp := append([]byte(nil), b...)
-	select {
-	case p.recv <- cp:
-	default:
-		select {
-		case <-p.recv:
-		default:
-		}
-		select {
-		case p.recv <- cp:
-		default:
-		}
+	if p.q.Push(b) {
+		p.touch()
+		return
+	}
+	typ, _, _, ok := PeekRoute(b)
+	if ok && (typ == TypeAck || typ == TypePing || typ == TypePong) {
+		p.touch()
 	}
 }
 
@@ -237,13 +236,17 @@ func (c *joinerCarrier) Send(ctx context.Context, payload []byte) error {
 }
 
 func (c *joinerCarrier) Recv(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-c.s.done:
-		return nil, context.Canceled
-	case b := <-c.s.incoming:
-		return b, nil
+	for {
+		if b, ok := c.s.incoming.Pop(); ok {
+			return b, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.s.done:
+			return nil, context.Canceled
+		case <-c.s.incoming.Wait():
+		}
 	}
 }
 
@@ -261,7 +264,7 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		localSID: sid,
 		peers:    make(map[string]*Peer),
 		joiners:  make(map[SessionID]*sidPipe),
-		incoming: make(chan []byte, 1024),
+		incoming: newPacketQueue(carrierDataCap, carrierCtrlCap),
 	}
 	cb := &lksdk.RoomCallback{
 		OnDisconnected: func() {
@@ -496,7 +499,13 @@ func (s *RoomSession) ingest(wire []byte) {
 	}
 	if len(wire) >= MagicSize && bytesEqual(wire[:MagicSize], MagicV1[:]) {
 		if s.loggedV1.CompareAndSwap(0, 1) {
-			log.Printf("wb1: dropped v1 frame (need matching v2 panel+client)")
+			log.Printf("wb1: dropped v1 frame (need matching v3 panel+client)")
+		}
+		return
+	}
+	if len(wire) >= MagicSize && bytesEqual(wire[:MagicSize], MagicV2[:]) {
+		if s.loggedV2.CompareAndSwap(0, 1) {
+			log.Printf("wb1: dropped v2 frame (need matching v3 panel+client)")
 		}
 		return
 	}
@@ -520,19 +529,7 @@ func (s *RoomSession) ingest(wire []byte) {
 	if want.IsZero() || f.Src != want {
 		return
 	}
-	cp := append([]byte(nil), wire...)
-	select {
-	case s.incoming <- cp:
-	default:
-		select {
-		case <-s.incoming:
-		default:
-		}
-		select {
-		case s.incoming <- cp:
-		default:
-		}
-	}
+	s.incoming.Push(wire)
 }
 
 func (s *RoomSession) deliverToJoiner(src SessionID, typ byte, wire []byte) {
@@ -742,7 +739,7 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 	}()
 }
 
-// WaitCreator blocks until the panel creator SID is known from a v2 beacon.
+// WaitCreator blocks until the panel creator SID is known from a v3 beacon.
 func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
@@ -784,7 +781,7 @@ func (s *RoomSession) LocalSID() SessionID {
 	return s.localSID
 }
 
-// CreatorSID is the panel creator endpoint id parsed from the v2 beacon.
+// CreatorSID is the panel creator endpoint id parsed from the v3 beacon.
 func (s *RoomSession) CreatorSID() SessionID {
 	s.mu.Lock()
 	defer s.mu.Unlock()

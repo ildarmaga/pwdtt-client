@@ -3,6 +3,8 @@ package wb1
 import (
 	"bytes"
 	"testing"
+
+	"github.com/pion/rtp/codecs"
 )
 
 func TestWrapUnwrapVP8(t *testing.T) {
@@ -63,6 +65,60 @@ func TestUnwrapVP8FindsMagicInKeyframe(t *testing.T) {
 	_, got, ok := UnwrapVP8(mixed)
 	if !ok || !bytes.Equal(got, frame) {
 		t.Fatal("did not find framed payload")
+	}
+}
+
+func TestMaxPayloadWrapFitsOnePionVP8RTP(t *testing.T) {
+	key, err := DeriveKey("secret", "room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, src := testSID(1), testSID(2)
+	payload := bytes.Repeat([]byte("x"), MaxPayload)
+	frame, err := Pack(key, Frame{
+		Type: TypeData, StreamID: 9, Dest: dest, Src: src,
+		Epoch: 1, Seq: 1, Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := WrapVP8(dest, frame)
+	if len(wrapped) > VP8MaxSample {
+		t.Fatalf("WrapVP8(Pack(MaxPayload))=%d bytes, want <=%d", len(wrapped), VP8MaxSample)
+	}
+	payloader := codecs.VP8Payloader{}
+	pkts := payloader.Payload(1200, wrapped)
+	if len(pkts) != 1 {
+		t.Fatalf("Pion VP8 MTU 1200 fragmented MaxPayload wrap into %d packets (wrap=%d)", len(pkts), len(wrapped))
+	}
+	_, got, ok := UnwrapVP8(wrapped)
+	if !ok {
+		t.Fatal("unwrap after single RTP failed")
+	}
+	if _, err := Unpack(key, got); err != nil {
+		t.Fatalf("unpack: %v", err)
+	}
+}
+
+func TestUnwrapVP8RejectsTruncatedMaxPayload(t *testing.T) {
+	key, err := DeriveKey("secret", "room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := testSID(3)
+	frame, err := Pack(key, Frame{
+		Type: TypeData, StreamID: 1, Dest: dest, Src: testSID(4),
+		Payload: bytes.Repeat([]byte("y"), MaxPayload),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := WrapVP8(dest, frame)
+	if _, _, ok := UnwrapVP8(wrapped[:len(wrapped)-1]); ok {
+		t.Fatal("truncated wrap must not parse")
+	}
+	if _, _, ok := UnwrapVP8(wrapped[:len(vp8Keyframe)+SIDSize+headerLen]); ok {
+		t.Fatal("header-only RTP must not parse a partial frame")
 	}
 }
 
