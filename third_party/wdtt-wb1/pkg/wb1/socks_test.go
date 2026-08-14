@@ -36,7 +36,9 @@ func TestSOCKS5EchoThroughMux(t *testing.T) {
 	}
 	left, right := newCarrierPair()
 	joiner := NewMux(key, left)
+	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
+	creator.SetRoute(testSID(2), testSID(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	go func() { _ = joiner.Run(ctx) }()
@@ -106,7 +108,9 @@ func TestSOCKS5UDPThroughMux(t *testing.T) {
 	}
 	left, right := newCarrierPair()
 	joiner := NewMux(key, left)
+	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
+	creator.SetRoute(testSID(2), testSID(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	go func() { _ = joiner.Run(ctx) }()

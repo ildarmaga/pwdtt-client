@@ -72,6 +72,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	m.emitLog("INFO", "[WB] creator "+creator.Name+" / "+creator.Identity)
 
 	mux := wb1.NewMux(key, sess.JoinerCarrier())
+	mux.SetRoute(sess.LocalSID(), sess.CreatorSID())
 	var rx, tx atomic.Int64
 	mux.SetTrafficHook(func(up, down int64) {
 		tx.Add(up)

@@ -58,23 +58,40 @@ func TestDispatchLeftoverDoesNotCloneToAllJoiners(t *testing.T) {
 }
 
 func TestFanInSkipsOtherJoiners(t *testing.T) {
-	s := &RoomSession{incoming: make(chan []byte, 4), beaconID: "panel-creator"}
-	other := &Peer{Identity: "other-joiner", recv: make(chan []byte, 2), sess: s}
-	creator := &Peer{Identity: "panel-creator", Name: "WDTT", Meta: "wdtt-wb1-creator", recv: make(chan []byte, 2), sess: s}
-	other.fanIn([]byte("other-socks"))
+	key, err := DeriveKey("pass", "room-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, creator := testSID(10), testSID(1)
+	s := newTestSession(me)
+	s.creatorSID = creator
+	s.SetCryptoKey(key)
+	other, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: testSID(11), Src: creator, Payload: []byte("other-socks")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(other)
 	select {
 	case <-s.incoming:
-		t.Fatal("other joiner must not fan-in")
+		t.Fatal("other joiner dest must not fan-in")
 	default:
 	}
-	creator.fanIn([]byte("creator-data"))
+	mine, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: me, Src: creator, Payload: []byte("creator-data")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest(mine)
 	select {
 	case b := <-s.incoming:
-		if string(b) != "creator-data" {
-			t.Fatalf("got %q", b)
+		f, err := Unpack(key, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(f.Payload) != "creator-data" {
+			t.Fatalf("got %q", f.Payload)
 		}
 	default:
-		t.Fatal("creator frames must fan-in")
+		t.Fatal("own dest frames must be accepted")
 	}
 }
 
@@ -122,16 +139,13 @@ func TestPeerPushBeaconMarksCreator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypePing, Payload: []byte(CreatorBeaconPayload)})
+	wire, err := Pack(key, Frame{Type: TypePing, Dest: SessionID{}, Src: testSID(1), Payload: []byte(CreatorBeaconPayload)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &RoomSession{key: key}
 	p := &Peer{Identity: "creator", recv: make(chan []byte, 2), sess: s}
 	p.push(wire)
-	if p.beacon.Load() == 0 {
-		t.Fatal("creator beacon must mark beacon")
-	}
 	if !isCreatorBeacon(key, wire) {
 		t.Fatal("isCreatorBeacon")
 	}
@@ -156,7 +170,8 @@ func TestCreatorBeaconWithIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypePing, Payload: []byte(CreatorBeaconPayload + "|panel-id-1")})
+	sid := testSID(0x11)
+	wire, err := Pack(key, Frame{Type: TypePing, Dest: SessionID{}, Src: sid, Payload: []byte(FormatBeaconPayload("panel-id-1", sid))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,12 +181,15 @@ func TestCreatorBeaconWithIdentity(t *testing.T) {
 	if got := creatorIDFromBeacon(key, wire); got != "panel-id-1" {
 		t.Fatalf("id %q", got)
 	}
-	s := &RoomSession{key: key, peers: map[string]*Peer{}}
+	s := &RoomSession{key: key, peers: map[string]*Peer{}, joiners: map[SessionID]*sidPipe{}, incoming: make(chan []byte, 4), localSID: testSID(9)}
 	ghost := &Peer{Identity: "ghost", recv: make(chan []byte, 2), sess: s}
 	s.peers["ghost"] = ghost
 	ghost.push(wire)
 	if s.beaconID != "panel-id-1" {
 		t.Fatalf("beaconID %q", s.beaconID)
+	}
+	if s.CreatorSID() != sid {
+		t.Fatalf("creatorSID %x", s.CreatorSID())
 	}
 	p := s.creatorPeer()
 	if p == nil || p.Identity != "panel-id-1" {
@@ -184,7 +202,7 @@ func TestJoinerPingIsNotCreatorBeacon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypePing, Payload: []byte{0, 0, 0, 0, 0, 0, 0, 1}})
+	wire, err := Pack(key, Frame{Type: TypePing, Dest: testSID(1), Src: testSID(2), Payload: []byte{0, 0, 0, 0, 0, 0, 0, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

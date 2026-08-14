@@ -80,7 +80,9 @@ func TestMuxDialAcceptCopyFin(t *testing.T) {
 	}
 	left, right := newCarrierPair()
 	joiner := NewMux(key, left)
+	joiner.SetRoute(testSID(1), testSID(2))
 	creator := NewMux(key, right)
+	creator.SetRoute(testSID(2), testSID(1))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -150,7 +152,9 @@ func TestMuxPing(t *testing.T) {
 	}
 	left, right := newCarrierPair()
 	a := NewMux(key, left)
+	a.SetRoute(testSID(1), testSID(2))
 	b := NewMux(key, right)
+	b.SetRoute(testSID(2), testSID(1))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	go func() { _ = a.Run(ctx) }()
@@ -174,7 +178,7 @@ func TestMuxRejectsOversizedPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	huge := bytes.Repeat([]byte("x"), MaxPayload+1)
-	if _, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Payload: huge}); err == nil {
+	if _, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: testSID(1), Src: testSID(2), Payload: huge}); err == nil {
 		t.Fatal("oversized payload must fail pack")
 	}
 }

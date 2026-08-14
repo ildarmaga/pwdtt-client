@@ -60,6 +60,8 @@ func TestPackUnpackRoundTrip(t *testing.T) {
 	plain := Frame{
 		Type:     TypeData,
 		StreamID: 42,
+		Dest:     testSID(1),
+		Src:      testSID(2),
 		Payload:  []byte("hello wb1"),
 	}
 	wire, err := Pack(key, plain)
@@ -96,7 +98,7 @@ func TestUnpackRejectsWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Payload: []byte("x")})
+	wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Dest: testSID(1), Src: testSID(2), Payload: []byte("x")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func TestUnpackRejectsTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Payload: []byte("abc")})
+	wire, err := Pack(key, Frame{Type: TypeData, StreamID: 1, Dest: testSID(1), Src: testSID(2), Payload: []byte("abc")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func TestUnpackRejectsBadMagic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypePing})
+	wire, err := Pack(key, Frame{Type: TypePing, Dest: testSID(1), Src: testSID(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +142,7 @@ func TestPackEmptyPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Pack(key, Frame{Type: TypeFin, StreamID: 7})
+	wire, err := Pack(key, Frame{Type: TypeFin, StreamID: 7, Dest: testSID(1), Src: testSID(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +164,7 @@ func TestPackMaxPayloadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := bytes.Repeat([]byte("w"), MaxPayload)
-	wire, err := Pack(key, Frame{Type: TypeData, StreamID: 9, Payload: payload})
+	wire, err := Pack(key, Frame{Type: TypeData, StreamID: 9, Dest: testSID(1), Src: testSID(2), Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}

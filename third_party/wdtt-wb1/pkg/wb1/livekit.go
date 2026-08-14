@@ -2,6 +2,7 @@ package wb1
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,9 @@ const (
 	DataTopic            = "wdtt-wb1"
 	CreatorName          = "WDTT"
 	CreatorBeaconPayload = "wdtt-wb1-creator"
+	MaxJoiners           = 32
+	joinerIdleTimeout    = 30 * time.Second
+	joinerReapInterval   = 5 * time.Second
 	vp8Keepalive         = 33 * time.Millisecond
 	vp8SampleDur         = 33 * time.Millisecond
 	vp8VideoWidth        = 640
@@ -30,12 +34,17 @@ var vp8Keyframe = []byte{
 	0x02, 0x00, 0x0c, 0x0d, 0x60, 0x00, 0xfe, 0xfc, 0x5a, 0x00, 0x00,
 }
 
+type pendingJoiner struct {
+	sid SessionID
+	c   Carrier
+}
+
 // RoomSession is a LiveKit room: one call, many joiners (like VK).
 type RoomSession struct {
-	room   *lksdk.Room
-	done   chan struct{}
-	cancel context.CancelFunc
-	me     [8]byte
+	room     *lksdk.Room
+	done     chan struct{}
+	cancel   context.CancelFunc
+	localSID SessionID
 
 	videoMu sync.Mutex
 	video   *lksdk.LocalTrack
@@ -44,22 +53,28 @@ type RoomSession struct {
 	vp8Stamp atomic.Int64
 	vp8FPS   atomic.Int64
 
-	mu        sync.Mutex
-	peers     map[string]*Peer
-	onPeer    func(*Peer)
-	pending   []*Peer
-	key       []byte
-	beaconID  string
-	incoming  chan []byte
-	isCreator atomic.Uint32
+	mu             sync.Mutex
+	peers          map[string]*Peer
+	onPeer         func(*Peer)
+	pending        []*Peer
+	joiners        map[SessionID]*sidPipe
+	onJoiner       func(SessionID, Carrier)
+	onJoinerGone   func(SessionID)
+	pendingJoiners []pendingJoiner
+	key            []byte
+	beaconID       string
+	creatorSID     SessionID
+	incoming       chan []byte
+	isCreator      atomic.Uint32
+	loggedV1       atomic.Uint32
 }
 
-// Peer is one remote participant with its own WDTT-WB1 carrier.
+// Peer is one remote LiveKit participant (presence/logging only).
 type Peer struct {
 	Identity  string
 	Name      string
 	Meta      string
-	hash      [8]byte
+	hash      SessionID
 	recv      chan []byte
 	closed    chan struct{}
 	sess      *RoomSession
@@ -74,17 +89,9 @@ func (p *Peer) push(b []byte) {
 	}
 	p.spoke.Store(1)
 	if p.sess != nil {
-		p.sess.mu.Lock()
-		key := p.sess.key
-		p.sess.mu.Unlock()
-		if isCreatorBeacon(key, b) {
-			p.beacon.Store(1)
-			if id := creatorIDFromBeacon(key, b); id != "" && p.sess != nil {
-				p.sess.noteBeaconCreator(id)
-			}
-		}
+		p.sess.ingest(b)
+		return
 	}
-	p.fanIn(b)
 	cp := append([]byte(nil), b...)
 	select {
 	case p.recv <- cp:
@@ -104,30 +111,22 @@ func (p *Peer) Close() {
 	p.closeOnce.Do(func() { close(p.closed) })
 }
 
-// Send implements Carrier. Mux frames go on the LiveKit data topic as a
-// room broadcast and on VP8: WB's SFU delivers video bidirectionally but
-// often drops creator→joiner data (upload trickles, download stays 0 B).
+// Send is leftover Carrier compat: mux payloads go VP8 only (no data-topic duplicate).
 func (p *Peer) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if p.sess == nil || p.sess.room == nil {
+	if p.sess == nil {
 		return errMuxClosed
 	}
-	pkt := lksdk.UserData(payload)
-	pkt.Topic = DataTopic
-	err := p.sess.room.LocalParticipant.PublishDataPacket(
-		pkt,
-		lksdk.WithDataPublishReliable(true),
-		lksdk.WithDataPublishTopic(DataTopic),
-	)
-	if vp8Err := p.sess.writeVP8(p.hash, payload); vp8Err != nil && err != nil {
-		return vp8Err
+	_, dest, _, ok := PeekRoute(payload)
+	if !ok {
+		dest = p.hash
 	}
-	return err
+	return p.sess.publishWire(dest, payload)
 }
 
-// Recv implements Carrier.
+// Recv implements Carrier for tests that still push onto Peer.recv.
 func (p *Peer) Recv(ctx context.Context) ([]byte, error) {
 	select {
 	case <-ctx.Done():
@@ -141,45 +140,82 @@ func (p *Peer) Recv(ctx context.Context) ([]byte, error) {
 	}
 }
 
-func (p *Peer) fanIn(b []byte) {
-	if p.sess == nil || p.sess.incoming == nil || len(b) == 0 {
+type sidPipe struct {
+	sess     *RoomSession
+	remote   SessionID
+	recv     chan []byte
+	closed   chan struct{}
+	once     sync.Once
+	lastSeen atomic.Int64
+}
+
+func newSIDPipe(s *RoomSession, remote SessionID) *sidPipe {
+	p := &sidPipe{
+		sess:   s,
+		remote: remote,
+		recv:   make(chan []byte, 1024),
+		closed: make(chan struct{}),
+	}
+	p.touch()
+	return p
+}
+
+func (p *sidPipe) touch() {
+	p.lastSeen.Store(time.Now().UnixNano())
+}
+
+func (p *sidPipe) Send(ctx context.Context, payload []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.sess == nil {
+		return errMuxClosed
+	}
+	_, dest, _, ok := PeekRoute(payload)
+	if !ok {
+		dest = p.remote
+	}
+	return p.sess.publishWire(dest, payload)
+}
+
+func (p *sidPipe) Recv(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.closed:
+		return nil, context.Canceled
+	case <-p.sess.done:
+		return nil, context.Canceled
+	case b := <-p.recv:
+		return b, nil
+	}
+}
+
+func (p *sidPipe) push(b []byte) {
+	if len(b) == 0 {
 		return
 	}
-	if p.sess.isCreator.Load() != 0 {
-		return
-	}
-	if !p.sess.joinerShouldTake(p) {
-		return
-	}
+	p.touch()
 	cp := append([]byte(nil), b...)
 	select {
-	case p.sess.incoming <- cp:
+	case p.recv <- cp:
 	default:
 		select {
-		case <-p.sess.incoming:
+		case <-p.recv:
 		default:
 		}
 		select {
-		case p.sess.incoming <- cp:
+		case p.recv <- cp:
 		default:
 		}
 	}
 }
 
-func (s *RoomSession) joinerShouldTake(p *Peer) bool {
-	if p == nil {
-		return false
-	}
-	id := strings.TrimSpace(s.beaconID)
-	if id != "" {
-		return p.Identity == id || IsLeftoverCreator(p)
-	}
-	return IsLeftoverCreator(p) || p.beacon.Load() != 0
+func (p *sidPipe) Close() {
+	p.once.Do(func() { close(p.closed) })
 }
 
-// JoinerCarrier is the joiner mux pipe: send is room broadcast, recv is every
-// WDTT-WB1 packet. WB often stamps SenderIdentity as a leftover joiner
-// (e8214196…), so Recv from that one peer never sees creator download.
+// JoinerCarrier is the joiner mux pipe: VP8 send, SID-filtered recv.
 func (s *RoomSession) JoinerCarrier() Carrier {
 	return &joinerCarrier{s: s}
 }
@@ -190,24 +226,14 @@ func (c *joinerCarrier) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if c.s == nil || c.s.room == nil {
+	if c.s == nil {
 		return errMuxClosed
 	}
-	pkt := lksdk.UserData(payload)
-	pkt.Topic = DataTopic
-	err := c.s.room.LocalParticipant.PublishDataPacket(
-		pkt,
-		lksdk.WithDataPublishReliable(true),
-		lksdk.WithDataPublishTopic(DataTopic),
-	)
-	var dest [8]byte
-	if p := c.s.creatorPeer(); p != nil {
-		dest = p.hash
+	dest := c.s.CreatorSID()
+	if _, envDest, _, ok := PeekRoute(payload); ok && !envDest.IsZero() {
+		dest = envDest
 	}
-	if vp8Err := c.s.writeVP8(dest, payload); vp8Err != nil && err != nil {
-		return vp8Err
-	}
-	return err
+	return c.s.publishWire(dest, payload)
 }
 
 func (c *joinerCarrier) Recv(ctx context.Context) ([]byte, error) {
@@ -224,10 +250,17 @@ func (c *joinerCarrier) Recv(ctx context.Context) ([]byte, error) {
 // ConnectRoom joins LiveKit, publishes VP8, and accepts N remote peers.
 func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSession, error) {
 	ctx, cancel := context.WithCancel(parent)
+	sid, err := NewSessionID()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	s := &RoomSession{
 		done:     make(chan struct{}),
 		cancel:   cancel,
+		localSID: sid,
 		peers:    make(map[string]*Peer),
+		joiners:  make(map[SessionID]*sidPipe),
 		incoming: make(chan []byte, 1024),
 	}
 	cb := &lksdk.RoomCallback{
@@ -288,7 +321,6 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		return nil, err
 	}
 	s.room = room
-	s.me = IdentityHash(room.LocalParticipant.Identity())
 	if err := s.publishDummyVideo(ctx); err != nil {
 		room.Disconnect()
 		cancel()
@@ -302,6 +334,7 @@ func ConnectRoom(parent context.Context, serverURL, roomToken string) (*RoomSess
 		room.Disconnect()
 		close(s.done)
 	}()
+	go s.reapJoiners(ctx)
 	return s, nil
 }
 
@@ -345,7 +378,7 @@ func (s *RoomSession) publishDummyVideo(ctx context.Context) error {
 	return nil
 }
 
-func (s *RoomSession) writeVP8(dest [8]byte, frame []byte) error {
+func (s *RoomSession) writeVP8(dest SessionID, frame []byte) error {
 	s.videoMu.Lock()
 	v := s.video
 	s.videoMu.Unlock()
@@ -357,6 +390,34 @@ func (s *RoomSession) writeVP8(dest [8]byte, frame []byte) error {
 		s.noteVP8()
 	}
 	return err
+}
+
+func (s *RoomSession) publishWire(dest SessionID, wire []byte) error {
+	typ, envDest, _, ok := PeekRoute(wire)
+	if !ok || envDest != dest {
+		return errBadLength
+	}
+	useData, useVP8 := publishPlan(dest, typ)
+	var dataErr error
+	if useData {
+		if s.room == nil {
+			dataErr = errMuxClosed
+		} else {
+			pkt := lksdk.UserData(wire)
+			pkt.Topic = DataTopic
+			dataErr = s.room.LocalParticipant.PublishDataPacket(
+				pkt,
+				lksdk.WithDataPublishReliable(true),
+				lksdk.WithDataPublishTopic(DataTopic),
+			)
+		}
+	}
+	if useVP8 {
+		if err := s.writeVP8(dest, wire); err != nil {
+			return err
+		}
+	}
+	return dataErr
 }
 
 func (s *RoomSession) noteVP8() {
@@ -400,25 +461,147 @@ func (s *RoomSession) readTrack(track *webrtc.TrackRemote, p *Peer) {
 		if !ok {
 			continue
 		}
-		if !DestForMe(s.me, dest) {
+		if !DestForMe(s.localSID, dest) {
 			continue
 		}
-		p.push(frame)
+		if p != nil {
+			p.spoke.Store(1)
+		}
+		s.ingest(frame)
 	}
 }
 
 func (s *RoomSession) dispatch(from string, payload []byte) {
-	if from == "" || len(payload) == 0 {
+	if len(payload) == 0 {
 		return
 	}
-	p := s.ensurePeer(from, "", "")
-	if p == nil {
+	if from != "" {
+		_ = s.ensurePeer(from, "", "")
+	}
+	s.ingest(payload)
+}
+
+func (s *RoomSession) ingest(wire []byte) {
+	if len(wire) == 0 {
 		return
 	}
-	if s.isCreator.Load() != 0 && IsLeftoverCreator(p) {
+	s.mu.Lock()
+	key := s.key
+	s.mu.Unlock()
+	if isCreatorBeacon(key, wire) {
+		if id, sid, ok := creatorFromBeacon(key, wire); ok {
+			s.noteBeaconCreator(id, sid)
+		}
 		return
 	}
-	p.push(payload)
+	if len(wire) >= MagicSize && bytesEqual(wire[:MagicSize], MagicV1[:]) {
+		if s.loggedV1.CompareAndSwap(0, 1) {
+			log.Printf("wb1: dropped v1 frame (need matching v2 panel+client)")
+		}
+		return
+	}
+	f, err := Unpack(key, wire)
+	if err != nil {
+		return
+	}
+	if f.Dest.IsZero() || f.Src.IsZero() {
+		return
+	}
+	if f.Dest != s.localSID {
+		return
+	}
+	if s.isCreator.Load() != 0 {
+		s.deliverToJoiner(f.Src, f.Type, wire)
+		return
+	}
+	s.mu.Lock()
+	want := s.creatorSID
+	s.mu.Unlock()
+	if want.IsZero() || f.Src != want {
+		return
+	}
+	cp := append([]byte(nil), wire...)
+	select {
+	case s.incoming <- cp:
+	default:
+		select {
+		case <-s.incoming:
+		default:
+		}
+		select {
+		case s.incoming <- cp:
+		default:
+		}
+	}
+}
+
+func (s *RoomSession) deliverToJoiner(src SessionID, typ byte, wire []byte) {
+	s.mu.Lock()
+	p, ok := s.joiners[src]
+	if ok {
+		s.mu.Unlock()
+		p.push(wire)
+		return
+	}
+	if typ != TypeHello && typ != TypeOpen && typ != TypeData && typ != TypePing {
+		s.mu.Unlock()
+		return
+	}
+	if len(s.joiners) >= MaxJoiners {
+		s.mu.Unlock()
+		log.Printf("wb1: joiner cap %d, dropping sid=%s", MaxJoiners, src.Hex())
+		return
+	}
+	p = newSIDPipe(s, src)
+	s.joiners[src] = p
+	fn := s.onJoiner
+	if fn == nil {
+		s.pendingJoiners = append(s.pendingJoiners, pendingJoiner{sid: src, c: p})
+	}
+	s.mu.Unlock()
+	p.push(wire)
+	if fn != nil {
+		fn(src, p)
+	}
+}
+
+func (s *RoomSession) reapJoiners(ctx context.Context) {
+	ticker := time.NewTicker(joinerReapInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.reapIdleJoiners(now, joinerIdleTimeout)
+		}
+	}
+}
+
+func (s *RoomSession) reapIdleJoiners(now time.Time, idle time.Duration) {
+	cutoff := now.Add(-idle).UnixNano()
+	var expired []struct {
+		sid SessionID
+		p   *sidPipe
+	}
+	s.mu.Lock()
+	for sid, p := range s.joiners {
+		if p != nil && p.lastSeen.Load() <= cutoff {
+			delete(s.joiners, sid)
+			expired = append(expired, struct {
+				sid SessionID
+				p   *sidPipe
+			}{sid: sid, p: p})
+		}
+	}
+	gone := s.onJoinerGone
+	s.mu.Unlock()
+	for _, item := range expired {
+		item.p.Close()
+		if gone != nil {
+			gone(item.sid)
+		}
+	}
 }
 
 func (s *RoomSession) ensurePeer(identity, name, meta string) *Peer {
@@ -480,7 +663,7 @@ func (s *RoomSession) dropPeer(identity string) {
 	}
 }
 
-// SetOnPeer is called for every remote participant (existing and new).
+// SetOnPeer is called for every remote participant (presence/logging only).
 func (s *RoomSession) SetOnPeer(fn func(*Peer)) {
 	s.mu.Lock()
 	s.onPeer = fn
@@ -507,6 +690,25 @@ func (s *RoomSession) SetOnPeer(fn func(*Peer)) {
 	}
 }
 
+// SetOnJoiner is called once per authenticated joiner SID (lazy mux).
+func (s *RoomSession) SetOnJoiner(fn func(sid SessionID, c Carrier)) {
+	s.mu.Lock()
+	s.onJoiner = fn
+	pending := append([]pendingJoiner(nil), s.pendingJoiners...)
+	s.pendingJoiners = nil
+	s.mu.Unlock()
+	for _, p := range pending {
+		fn(p.sid, p.c)
+	}
+}
+
+// SetOnJoinerGone is called after an inactive SID is removed.
+func (s *RoomSession) SetOnJoinerGone(fn func(SessionID)) {
+	s.mu.Lock()
+	s.onJoinerGone = fn
+	s.mu.Unlock()
+}
+
 // StartCreatorBeacon broadcasts a WDTT-WB1 ping so joiners find us without
 // waiting for LiveKit SetName (WB often leaves remote Name empty).
 func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
@@ -517,23 +719,14 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 			if s.room == nil {
 				return
 			}
-			payload := CreatorBeaconPayload
-			if id := strings.TrimSpace(s.room.LocalParticipant.Identity()); id != "" {
-				payload = CreatorBeaconPayload + "|" + id
-			}
-			wire, err := Pack(key, Frame{Type: TypePing, StreamID: 0, Payload: []byte(payload)})
+			id := strings.TrimSpace(s.room.LocalParticipant.Identity())
+			payload := FormatBeaconPayload(id, s.localSID)
+			wire, err := Pack(key, Frame{Type: TypePing, Dest: SessionID{}, Src: s.localSID, Payload: []byte(payload)})
 			if err != nil {
 				return
 			}
-			pkt := lksdk.UserData(wire)
-			pkt.Topic = DataTopic
-			_ = s.room.LocalParticipant.PublishDataPacket(
-				pkt,
-				lksdk.WithDataPublishReliable(true),
-				lksdk.WithDataPublishTopic(DataTopic),
-			)
-			var zero [8]byte
-			_ = s.writeVP8(zero, wire)
+			var zero SessionID
+			_ = s.publishWire(zero, wire)
 		}
 		send()
 		for {
@@ -549,13 +742,19 @@ func (s *RoomSession) StartCreatorBeacon(ctx context.Context, key []byte) {
 	}()
 }
 
-// WaitCreator blocks until the panel creator is identified (name, metadata, or WB1 traffic).
+// WaitCreator blocks until the panel creator SID is known from a v2 beacon.
 func (s *RoomSession) WaitCreator(ctx context.Context) (*Peer, error) {
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if p := s.creatorPeer(); p != nil {
-			return p, nil
+		if !s.CreatorSID().IsZero() {
+			if p := s.creatorPeer(); p != nil {
+				return p, nil
+			}
+			s.mu.Lock()
+			id := s.beaconID
+			s.mu.Unlock()
+			return &Peer{Identity: id, Name: CreatorName, sess: s}, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -580,6 +779,18 @@ func (s *RoomSession) creatorPeer() *Peer {
 	return nil
 }
 
+// LocalSID is this endpoint's random session id.
+func (s *RoomSession) LocalSID() SessionID {
+	return s.localSID
+}
+
+// CreatorSID is the panel creator endpoint id parsed from the v2 beacon.
+func (s *RoomSession) CreatorSID() SessionID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.creatorSID
+}
+
 // IsLeftoverCreator reports a stale LiveKit participant that still looks like
 // the panel creator (name WDTT / metadata) after the real creator reconnected.
 func IsLeftoverCreator(p *Peer) bool {
@@ -593,15 +804,23 @@ func IsLeftoverCreator(p *Peer) bool {
 	return n == CreatorName || strings.HasPrefix(n, CreatorName)
 }
 
-func (s *RoomSession) noteBeaconCreator(id string) {
+func (s *RoomSession) noteBeaconCreator(id string, sid SessionID) {
 	id = strings.TrimSpace(id)
-	if id == "" {
+	s.mu.Lock()
+	if !s.creatorSID.IsZero() {
+		s.mu.Unlock()
 		return
 	}
-	_ = s.ensurePeer(id, CreatorName, "wdtt-wb1-creator")
-	s.mu.Lock()
-	s.beaconID = id
+	if id != "" {
+		s.beaconID = id
+	}
+	if !sid.IsZero() {
+		s.creatorSID = sid
+	}
 	s.mu.Unlock()
+	if id != "" {
+		_ = s.ensurePeer(id, CreatorName, "wdtt-wb1-creator")
+	}
 }
 
 func isCreatorBeacon(key, wire []byte) bool {
@@ -612,24 +831,49 @@ func isCreatorBeacon(key, wire []byte) bool {
 	if err != nil || f.Type != TypePing {
 		return false
 	}
-	p := string(f.Payload)
-	return p == CreatorBeaconPayload || strings.HasPrefix(p, CreatorBeaconPayload+"|")
+	return isBeaconPlain(f.Payload)
 }
 
-func creatorIDFromBeacon(key, wire []byte) string {
+func creatorFromBeacon(key, wire []byte) (string, SessionID, bool) {
 	if len(key) == 0 || len(wire) == 0 {
-		return ""
+		return "", SessionID{}, false
 	}
 	f, err := Unpack(key, wire)
 	if err != nil || f.Type != TypePing {
+		return "", SessionID{}, false
+	}
+	return ParseBeaconPayload(string(f.Payload))
+}
+
+func creatorIDFromBeacon(key, wire []byte) string {
+	id, _, ok := creatorFromBeacon(key, wire)
+	if !ok {
 		return ""
 	}
-	p := string(f.Payload)
+	return id
+}
+
+// FormatBeaconPayload is wdtt-wb1-creator|<livekit-id>|<hex creatorSID>.
+func FormatBeaconPayload(livekitID string, sid SessionID) string {
+	return CreatorBeaconPayload + "|" + strings.TrimSpace(livekitID) + "|" + sid.Hex()
+}
+
+// ParseBeaconPayload reads a v2 creator beacon. Two-part v1 beacons return ok=false.
+func ParseBeaconPayload(p string) (livekitID string, sid SessionID, ok bool) {
 	prefix := CreatorBeaconPayload + "|"
 	if !strings.HasPrefix(p, prefix) {
-		return ""
+		return "", sid, false
 	}
-	return strings.TrimSpace(p[len(prefix):])
+	rest := p[len(prefix):]
+	id, hexSID, found := strings.Cut(rest, "|")
+	if !found {
+		return "", sid, false
+	}
+	sid, err := ParseSessionIDHex(hexSID)
+	if err != nil || sid.IsZero() {
+		return "", sid, false
+	}
+	return strings.TrimSpace(id), sid, true
 }
 
 // SetCryptoKey lets WaitCreator recognize the panel beacon among leftover joiners.

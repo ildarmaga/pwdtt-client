@@ -3,44 +3,57 @@ package wb1
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 )
 
-// IdentityHash is a stable 8-byte routing id for a LiveKit identity.
-func IdentityHash(identity string) [8]byte {
+// IdentityHash is a stable 8-byte id derived from a LiveKit identity.
+// Production routing uses SessionID, not this hash.
+func IdentityHash(identity string) SessionID {
 	sum := sha256.Sum256([]byte(identity))
-	var h [8]byte
+	var h SessionID
 	copy(h[:], sum[:8])
 	return h
 }
 
-// WrapVP8 appends dest hash + WDTT-WB1 frame after a real 16×16 VP8 keyframe
+// WrapVP8 appends dest SID + WDTT-WB1 frame after a real 16×16 VP8 keyframe
 // so the SFU still sees a valid video payload (extra bytes ride along).
-func WrapVP8(dest [8]byte, frame []byte) []byte {
-	out := make([]byte, len(vp8Keyframe)+8+len(frame))
+func WrapVP8(dest SessionID, frame []byte) []byte {
+	out := make([]byte, len(vp8Keyframe)+SIDSize+len(frame))
 	copy(out, vp8Keyframe)
 	copy(out[len(vp8Keyframe):], dest[:])
-	copy(out[len(vp8Keyframe)+8:], frame)
+	copy(out[len(vp8Keyframe)+SIDSize:], frame)
 	return out
 }
 
-// UnwrapVP8 finds a WDTT-WB1 frame inside an RTP/VP8 payload.
-func UnwrapVP8(payload []byte) (dest [8]byte, frame []byte, ok bool) {
+// UnwrapVP8 finds a WDTT-WB1 v2 frame inside an RTP/VP8 payload.
+func UnwrapVP8(payload []byte) (dest SessionID, frame []byte, ok bool) {
 	idx := bytes.Index(payload, Magic[:])
-	if idx < 0 {
+	if idx < SIDSize || idx+headerLen > len(payload) {
 		return dest, nil, false
 	}
-	if idx >= 8 {
-		copy(dest[:], payload[idx-8:idx])
+	nct := int(binary.BigEndian.Uint16(payload[idx+MagicSize+1 : idx+MagicSize+3]))
+	end := idx + headerLen + nct
+	if nct < NonceSize+16 || end > len(payload) {
+		return dest, nil, false
 	}
-	return dest, payload[idx:], true
+	copy(dest[:], payload[idx-SIDSize:idx])
+	return dest, payload[idx:end], true
 }
 
-// DestForMe reports whether a VP8 dest stamp is for this identity.
-// Zero dest means "this track is already unicast".
-func DestForMe(me, dest [8]byte) bool {
-	var zero [8]byte
-	if dest == zero {
+// DestForMe reports whether a VP8 dest stamp is for this endpoint.
+// Zero dest means broadcast (creator beacon).
+func DestForMe(me, dest SessionID) bool {
+	if dest.IsZero() {
 		return true
 	}
 	return dest == me
+}
+
+// publishPlan is the production send policy: mux payloads go VP8 only;
+// creator beacon (zero dest) also rides the LiveKit data topic for discovery.
+func publishPlan(dest SessionID, typ byte) (dataTopic, vp8 bool) {
+	if dest.IsZero() {
+		return true, true
+	}
+	return false, true
 }
