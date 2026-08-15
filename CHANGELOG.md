@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.309] — 2026-08-15
+
+### Fix — RAW скорость + пинги игр
+- Мелкий UDP/ICMP (пинги Dota) остаётся sticky на одном TURN.
+- TCP и крупный UDP (QUIC/спидтест) снова пачками по 12. Sticky на всём UDP сажал спидтест на один TURN.
+
 ## [0.3.308] — 2026-08-15
 
 ### Fix — Dota/CS2 UDP ping при RAW

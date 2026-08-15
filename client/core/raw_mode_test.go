@@ -232,3 +232,20 @@ func TestRawChunkedTCPStillBatches(t *testing.T) {
 		t.Fatalf("TCP must still batch-12: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
 	}
 }
+
+func TestRawChunkedLargeUDPBatches(t *testing.T) {
+	d := &Dispatcher{rawChunked: true, stats: NewStats()}
+	w1 := &WorkerSlot{ID: 1, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 8)}
+	w2 := &WorkerSlot{ID: 2, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 8)}
+	d.workers = []*WorkerSlot{w1, w2}
+	pkt := udpGamePkt(1, 443, 443, 1200)
+	if rawUDPOrICMP(pkt) {
+		t.Fatal("QUIC-sized UDP must not take the game-sticky path")
+	}
+	for i := 0; i < 13; i++ {
+		d.dispatchChunked(append([]byte(nil), pkt...))
+	}
+	if len(w1.SendCh) != 12 || len(w2.SendCh) != 1 {
+		t.Fatalf("large UDP must batch-12: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
+	}
+}

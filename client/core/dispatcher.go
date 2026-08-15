@@ -43,7 +43,8 @@ const (
 	rawChunkWorkerSendBuf = 128
 	rawPrioBuf            = 32
 	rawPrioThreshold      = 128
-	rawBatchSize          = 12 // packets per worker, then next
+	rawBatchSize          = 12  // packets per worker, then next
+	rawGameUDPMax         = 256 // Dota/STUN pings; larger UDP (QUIC) stays in batches
 	flowAffTTL            = 3 * time.Minute
 	flowAffMax            = 8192
 )
@@ -115,7 +116,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] RAW пачки по 12, UDP sticky")
+		log.Printf("[ДИСП] RAW пачки по 12, мелкий UDP sticky")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -331,8 +332,10 @@ func rawIPv4Proto(pkt []byte) byte {
 
 func rawUDPOrICMP(pkt []byte) bool {
 	switch rawIPv4Proto(pkt) {
-	case 1, 17:
+	case 1:
 		return true
+	case 17:
+		return len(pkt) <= rawGameUDPMax
 	default:
 		return false
 	}
