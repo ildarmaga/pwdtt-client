@@ -249,3 +249,31 @@ func TestRawChunkedLargeUDPBatches(t *testing.T) {
 		t.Fatalf("large UDP must batch-12: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
 	}
 }
+
+func TestRawQUICAckIsNotGameSticky(t *testing.T) {
+	pkt := udpGamePkt(1, 50000, 443, 80)
+	if rawUDPOrICMP(pkt) {
+		t.Fatal("QUIC ACK on :443 must stay in batches, not sticky")
+	}
+}
+
+func TestRawLargeGameUDPIsSticky(t *testing.T) {
+	pkt := udpGamePkt(1, 50000, 27015, 1200)
+	if !rawUDPOrICMP(pkt) {
+		t.Fatal("Dota gameplay UDP must stay sticky even when large")
+	}
+}
+
+func TestRawSTUNIsSticky(t *testing.T) {
+	pkt := udpGamePkt(1, 50000, 3478, 80)
+	if !rawUDPOrICMP(pkt) {
+		t.Fatal("STUN 3478 must stay sticky")
+	}
+}
+
+func TestRawNonSteamGameUDPIsSticky(t *testing.T) {
+	pkt := udpGamePkt(1, 50000, 7777, 1200)
+	if !rawUDPOrICMP(pkt) {
+		t.Fatal("non-Steam game UDP must stay sticky on any port except 443")
+	}
+}

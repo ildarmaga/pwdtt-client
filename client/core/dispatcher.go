@@ -44,7 +44,7 @@ const (
 	rawPrioBuf            = 32
 	rawPrioThreshold      = 128
 	rawBatchSize          = 12  // packets per worker, then next
-	rawGameUDPMax         = 256 // Dota/STUN pings; larger UDP (QUIC) stays in batches
+	rawQUICUDPPort        = 443 // HTTP/3; ACKs+STREAM stay in the same batches
 	flowAffTTL            = 3 * time.Minute
 	flowAffMax            = 8192
 )
@@ -116,7 +116,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] RAW пачки по 12, мелкий UDP sticky")
+		log.Printf("[ДИСП] RAW пачки по 12, UDP кроме :443 sticky")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -330,12 +330,26 @@ func rawIPv4Proto(pkt []byte) byte {
 	return pkt[9]
 }
 
+func rawUDPPorts(pkt []byte) (src, dst uint16, ok bool) {
+	if rawIPv4Proto(pkt) != 17 || len(pkt) < 28 {
+		return 0, 0, false
+	}
+	ihl := int(pkt[0]&0x0f) * 4
+	if ihl < 20 || len(pkt) < ihl+4 {
+		return 0, 0, false
+	}
+	src = binary.BigEndian.Uint16(pkt[ihl : ihl+2])
+	dst = binary.BigEndian.Uint16(pkt[ihl+2 : ihl+4])
+	return src, dst, true
+}
+
 func rawUDPOrICMP(pkt []byte) bool {
 	switch rawIPv4Proto(pkt) {
 	case 1:
 		return true
 	case 17:
-		return len(pkt) <= rawGameUDPMax
+		_, dst, ok := rawUDPPorts(pkt)
+		return ok && dst != rawQUICUDPPort
 	default:
 		return false
 	}
