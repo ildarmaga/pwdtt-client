@@ -467,6 +467,9 @@ func (m *Mux) sendReliable(ctx context.Context, f Frame) error {
 		m.sendNext++
 		src, dest, epoch := m.local, m.remote, m.epoch
 		now := time.Now()
+		if len(m.sendBuf) == 0 {
+			m.lastProgress = now
+		}
 		slot := &sendSlot{seq: seq, frame: f, sentAt: now, firstAt: now}
 		m.sendBuf[seq] = slot
 		m.mu.Unlock()
@@ -545,6 +548,19 @@ func (m *Mux) retransmitDue(ctx context.Context) bool {
 	if rto > maxRTO {
 		rto = maxRTO
 	}
+	if len(m.sendBuf) > 0 && now.Sub(m.lastProgress) >= arqStallTimeout {
+		staleFlight := false
+		for _, slot := range m.sendBuf {
+			if len(slot.wire) != 0 && now.Sub(slot.firstAt) >= arqStallTimeout {
+				staleFlight = true
+				break
+			}
+		}
+		if staleFlight {
+			m.mu.Unlock()
+			return false
+		}
+	}
 	type cand struct {
 		seq  uint32
 		slot *sendSlot
@@ -553,10 +569,6 @@ func (m *Mux) retransmitDue(ctx context.Context) bool {
 	for seq, slot := range m.sendBuf {
 		if len(slot.wire) == 0 {
 			continue
-		}
-		if now.Sub(slot.firstAt) > arqStallTimeout || slot.retries >= maxARQRetries {
-			m.mu.Unlock()
-			return false
 		}
 		backoff := rto
 		if slot.retries > 0 {

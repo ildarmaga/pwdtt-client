@@ -181,3 +181,50 @@ func TestPackFailureConcurrentSeqHoleFailsClosed(t *testing.T) {
 		t.Fatal("second sender stuck")
 	}
 }
+
+func TestRetransmitDueKeepsMuxIfAcksStillMove(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	m.rto = minRTO
+	now := time.Now()
+	m.lastProgress = now
+	m.sendUnacked = 1
+	m.sendNext = 4
+	old := now.Add(-arqStallTimeout - time.Second)
+	m.sendBuf[1] = &sendSlot{seq: 1, wire: []byte{1}, sentAt: old, firstAt: old, retries: maxARQRetries + 1}
+	m.sendBuf[2] = &sendSlot{seq: 2, wire: []byte{1}, sentAt: now.Add(-time.Second), firstAt: now.Add(-time.Second)}
+	m.sendBuf[3] = &sendSlot{seq: 3, wire: []byte{1}, sentAt: now.Add(-time.Second), firstAt: now.Add(-time.Second)}
+	if !m.retransmitDue(context.Background()) {
+		t.Fatal("one stale segment while ACKs still move must not close mux")
+	}
+}
+
+func TestRetransmitDueClosesWhenNoAckProgress(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	m.rto = minRTO
+	m.lastProgress = time.Now().Add(-arqStallTimeout - time.Second)
+	m.sendUnacked = 1
+	m.sendNext = 2
+	old := time.Now().Add(-arqStallTimeout - time.Second)
+	m.sendBuf[1] = &sendSlot{
+		seq:     1,
+		wire:    []byte{1},
+		sentAt:  old,
+		firstAt: old,
+	}
+	if m.retransmitDue(context.Background()) {
+		t.Fatal("no ACK progress with in-flight data must still close mux")
+	}
+}
+
+func TestRetransmitDueKeepsMuxAfterIdleResume(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	m.rto = minRTO
+	now := time.Now()
+	m.lastProgress = now.Add(-arqStallTimeout - time.Second)
+	m.sendUnacked = 1
+	m.sendNext = 2
+	m.sendBuf[1] = &sendSlot{seq: 1, wire: []byte{1}, sentAt: now, firstAt: now}
+	if !m.retransmitDue(context.Background()) {
+		t.Fatal("first send after idle must not close mux")
+	}
+}
