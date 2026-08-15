@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.307] — 2026-08-15
+
+### Fix — RAW скорость: пачки по 12 + CHUNK1
+- Sticky держал весь TCP на одном TURN (~3 Мбит, ping 400+ мс).
+- Пачки по 12 пакетов на воркере, ACK на том же пути; серверу нужен CHUNK1, чтобы downlink шёл по всем сессиям.
+
 ## [0.3.306] — 2026-08-15
 
 ### Fix — RAW sticky default (Dota 2 / CS2 UDP)

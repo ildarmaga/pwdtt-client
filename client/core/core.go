@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,22 +14,22 @@ import (
 
 // Config — все параметры запуска (профиль + runtime).
 type Config struct {
-	PeerAddr      string   // -peer
-	Password      string   // -password
-	Hashes        []string // -vk (уже распарсенные)
-	Listen        string   // -listen, default "127.0.0.1:9000"
-	TurnHost      string   // -turn
-	TurnPort      string   // -port
-	DeviceID      string   // -device-id
-	Workers       int      // -n
-	CaptchaMode   string   // -captcha-mode
-	MTU           int      // 0 = default 1380
-	ObfsMode      string   // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode    string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
-	TurnTransport string   // tcp|udp — канал клиент↔TURN (default tcp)
-	RawPrimaryIP    string // soft-reconnect: IP сохранённого TUN для rewrite
-	RawDirectPort   int    // 0 = peer DTLS+3; иначе явный UDP порт RAW
-	TunAlreadyReady bool   // soft: TUN/маршруты уже живы — не ждать wg_config
+	PeerAddr        string   // -peer
+	Password        string   // -password
+	Hashes          []string // -vk (уже распарсенные)
+	Listen          string   // -listen, default "127.0.0.1:9000"
+	TurnHost        string   // -turn
+	TurnPort        string   // -port
+	DeviceID        string   // -device-id
+	Workers         int      // -n
+	CaptchaMode     string   // -captcha-mode
+	MTU             int      // 0 = default 1380
+	ObfsMode        string   // audio|video — RTP маскировка (PT 111 / 96)
+	TunnelMode      string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
+	TurnTransport   string   // tcp|udp — канал клиент↔TURN (default tcp)
+	RawPrimaryIP    string   // soft-reconnect: IP сохранённого TUN для rewrite
+	RawDirectPort   int      // 0 = peer DTLS+3; иначе явный UDP порт RAW
+	TunAlreadyReady bool     // soft: TUN/маршруты уже живы — не ждать wg_config
 }
 
 // EventType — тип события от ядра.
@@ -88,15 +87,7 @@ func rawMultipathEnabled(tunnelMode, turnTransport string) bool {
 }
 
 func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
-	if tunnelMode != "raw" {
-		return false
-	}
-	if turnTransport != "udp" && turnTransport != "tcp" {
-		return false
-	}
-	// Experimental: CHUNK1 rotates small packets across TURN workers and
-	// breaks game UDP (Dota 2 / CS2). Default is flow-sticky, no CHUNK1.
-	return strings.TrimSpace(os.Getenv("RAW_CHUNKED")) == "1"
+	return tunnelMode == "raw" && (turnTransport == "udp" || turnTransport == "tcp")
 }
 
 const rawDirectPortOffset = 3
@@ -330,7 +321,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	// RAW: sticky per 5-tuple by default. CHUNK1 only with RAW_CHUNKED=1.
+	// RAW: пачки по 12 + CHUNK1 (сервер спреит downlink по воркерам).
 	rawMode := tunnelMode == "raw"
 	disp := NewDispatcher(
 		ctx,
@@ -346,7 +337,7 @@ func (c *Core) Start() (<-chan Event, error) {
 	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
 	var sharedRawGate *wgConfigGate
 	if tunnelMode == "raw" {
-		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, rawChunkedEnabled(tunnelMode, turnTransport))
+		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true)
 	}
 
 	go func() {

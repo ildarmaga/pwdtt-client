@@ -43,7 +43,7 @@ const (
 	rawChunkWorkerSendBuf = 128
 	rawPrioBuf            = 32
 	rawPrioThreshold      = 128
-	rawChunkMaxDwell      = 15 * time.Millisecond
+	rawBatchSize          = 12 // packets per worker, then next
 	flowAffTTL            = 3 * time.Minute
 	flowAffMax            = 8192
 )
@@ -71,7 +71,7 @@ type Dispatcher struct {
 	SendCh     chan []byte
 	ReturnCh   chan []byte
 	rawSticky  bool // legacy; при rawMP=false
-	rawChunked bool // adaptive chunks + ACK priority, без RA framing
+	rawChunked bool // пачки по 12, ACK на том же воркере
 	rawMP      bool // RAW multipath + RA framing/reorder
 	rawSeq     *rawSeq
 	rawReord   *rawReorder
@@ -79,8 +79,6 @@ type Dispatcher struct {
 	nextPick   uint32 // round-robin для новых sticky flows
 	rrIndex    int
 	rrCount    int
-	lastPktAt  time.Time
-	chunkStart time.Time
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -117,7 +115,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] RAW adaptive chunks + ACK priority")
+		log.Printf("[ДИСП] RAW пачки по 12")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -324,18 +322,16 @@ func (d *Dispatcher) dispatchSticky(pkt []byte) {
 	}
 }
 
-func rawChunkSizeFor(pktSize int) int {
-	switch {
-	case pktSize > 1100:
-		return 64
-	case pktSize >= 701:
-		return 24
-	case pktSize >= 301:
-		return 8
-	case pktSize >= 101:
-		return 3
-	default:
-		return 1
+func rawChunkSizeFor(_ int) int {
+	return rawBatchSize
+}
+
+func (d *Dispatcher) noteBatchSend(idx, n int) {
+	d.rrIndex = idx
+	d.rrCount++
+	if d.rrCount >= rawBatchSize {
+		d.rrIndex = (idx + 1) % n
+		d.rrCount = 0
 	}
 }
 
@@ -347,54 +343,30 @@ func (d *Dispatcher) dispatchChunked(pkt []byte) {
 		putPktBuf(pkt)
 		return
 	}
-	now := time.Now()
-	if !d.lastPktAt.IsZero() && now.Sub(d.lastPktAt) > 10*time.Millisecond {
-		d.rrIndex = (d.rrIndex + 1) % n
-		d.rrCount = 0
-		d.chunkStart = now
-	}
-	d.lastPktAt = now
+	start := d.rrIndex % n
+	small := len(pkt) <= rawPrioThreshold
 
-	if len(pkt) <= rawPrioThreshold {
-		start := d.rrIndex % n
-		for i := 0; i < n; i++ {
-			w := d.workers[(start+i)%n]
-			if w == nil || w.PrioCh == nil {
-				continue
-			}
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		w := d.workers[idx]
+		if w == nil {
+			continue
+		}
+		if small && w.PrioCh != nil {
 			select {
 			case w.PrioCh <- pkt:
+				d.noteBatchSend(idx, n)
 				atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
 				return
 			default:
 			}
 		}
-	}
-
-	if d.chunkStart.IsZero() {
-		d.chunkStart = now
-	} else if now.Sub(d.chunkStart) >= rawChunkMaxDwell {
-		d.rrIndex = (d.rrIndex + 1) % n
-		d.rrCount = 0
-		d.chunkStart = now
-	}
-	chunk := rawChunkSizeFor(len(pkt))
-	start := d.rrIndex % n
-	for i := 0; i < n; i++ {
-		idx := (start + i) % n
-		w := d.workers[idx]
-		if w == nil || w.SendCh == nil {
+		if w.SendCh == nil {
 			continue
 		}
 		select {
 		case w.SendCh <- pkt:
-			d.rrIndex = idx
-			d.rrCount++
-			if d.rrCount >= chunk {
-				d.rrIndex = (idx + 1) % n
-				d.rrCount = 0
-				d.chunkStart = now
-			}
+			d.noteBatchSend(idx, n)
 			atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
 			return
 		default:
