@@ -72,11 +72,12 @@ var (
 	wgGateway          string
 	vkExcludeInstalled bool        // транспорт+веб установлены напрямую (на коннекте)
 	vkWebDirect        bool        // веб-подсети сейчас напрямую (true=VK direct, false=через туннель)
-	vkThroughTunnel    atomic.Bool // true = VK веб/API через туннель (всегда вкл нативно)
+	vkThroughTunnel    atomic.Bool // true = VK веб/API через туннель
 )
 
-// VK-веб через туннель включён нативно и не настраивается из UI.
-func init() { vkThroughTunnel.Store(true) }
+// VK веб/API всегда напрямую (физический NIC). Иначе после подъёма TUN
+// Windows DNS/dial до api.vk.me ломается и фон кредов падает в капчу.
+func init() { vkThroughTunnel.Store(false) }
 
 // rememberWGGateway сохраняет шлюз для переключения маршрутов VK.
 func rememberWGGateway(gw string) {

@@ -2,23 +2,27 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"testing"
 )
 
 func TestRawChunkedModeSelection(t *testing.T) {
+	t.Setenv("RAW_CHUNKED", "")
 	tests := []struct {
 		name      string
 		tunnel    string
 		transport string
 		want      bool
 	}{
-		{name: "raw udp", tunnel: "raw", transport: "udp", want: true},
-		{name: "raw tcp", tunnel: "raw", transport: "tcp", want: true},
+		{name: "raw udp default sticky", tunnel: "raw", transport: "udp", want: false},
+		{name: "raw tcp default sticky", tunnel: "raw", transport: "tcp", want: false},
 		{name: "wg udp unchanged", tunnel: "wg", transport: "udp", want: false},
 		{name: "wg tcp unchanged", tunnel: "wg", transport: "tcp", want: false},
 		{name: "invalid tunnel", tunnel: "other", transport: "udp", want: false},
 		{name: "invalid transport", tunnel: "raw", transport: "other", want: false},
+		{name: "empty tunnel", tunnel: "", transport: "udp", want: false},
+		{name: "empty transport", tunnel: "raw", transport: "", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -26,6 +30,37 @@ func TestRawChunkedModeSelection(t *testing.T) {
 				t.Fatalf("rawChunkedEnabled(%q, %q)=%v want %v", tt.tunnel, tt.transport, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRawChunkedEnabledExperimentalEnv(t *testing.T) {
+	t.Setenv("RAW_CHUNKED", "1")
+	if !rawChunkedEnabled("raw", "udp") || !rawChunkedEnabled("raw", "tcp") {
+		t.Fatal("RAW_CHUNKED=1 must enable experimental CHUNK1 for RAW UDP/TCP")
+	}
+	if rawChunkedEnabled("wg", "udp") {
+		t.Fatal("WG must stay off CHUNK1 even with RAW_CHUNKED=1")
+	}
+	if rawChunkedEnabled("raw", "other") {
+		t.Fatal("invalid RAW transport must stay off CHUNK1")
+	}
+	t.Setenv("RAW_CHUNKED", "0")
+	if rawChunkedEnabled("raw", "udp") {
+		t.Fatal("RAW_CHUNKED=0 must keep default sticky")
+	}
+}
+
+func TestRawDefaultGateDoesNotRequestChunk1(t *testing.T) {
+	t.Setenv("RAW_CHUNKED", "")
+	ch := make(chan string, 1)
+	g := newWGConfigGate(ch, "raw", 1280, "", rawChunkedEnabled("raw", "udp"))
+	if g.requireChunk {
+		t.Fatal("default RAW gate must not request CHUNK1")
+	}
+	t.Setenv("RAW_CHUNKED", "1")
+	g = newWGConfigGate(ch, "raw", 1280, "", rawChunkedEnabled("raw", "udp"))
+	if !g.requireChunk {
+		t.Fatal("experimental RAW_CHUNKED=1 must request CHUNK1")
 	}
 }
 
@@ -69,8 +104,9 @@ func TestNewDispatcherModeContract(t *testing.T) {
 		wantSticky, wantMP, wantChunked   bool
 		wantReturnCap                     int
 	}{
-		{name: "raw udp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawChunkReturnChBuf},
-		{name: "raw tcp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawChunkReturnChBuf},
+		{name: "raw udp default sticky", rawMode: true, wantSticky: true, wantReturnCap: rawReturnChBuf},
+		{name: "raw tcp default sticky", rawMode: true, wantSticky: true, wantReturnCap: rawReturnChBuf},
+		{name: "raw experimental chunked", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawChunkReturnChBuf},
 		{name: "raw legacy sticky", rawMode: true, wantSticky: true, wantReturnCap: rawReturnChBuf},
 		{name: "wg", wantReturnCap: returnChBuf},
 		{name: "defensive invalid pair", rawMultipath: true, wantReturnCap: returnChBuf},
@@ -98,6 +134,7 @@ func TestDispatcherRegisterChannelPolicy(t *testing.T) {
 		rawMode, rawMultipath, rawChunked bool
 		wantPrivate, wantPrio             bool
 	}{
+		{name: "raw default sticky", rawMode: true, wantPrivate: true},
 		{name: "raw chunked", rawMode: true, rawChunked: true, wantPrivate: true, wantPrio: true},
 		{name: "raw sticky", rawMode: true, wantPrivate: true},
 		{name: "wg shared"},
@@ -117,6 +154,47 @@ func TestDispatcherRegisterChannelPolicy(t *testing.T) {
 				t.Fatalf("chunk SendCh cap=%d", cap(slot.SendCh))
 			}
 		})
+	}
+}
+
+func udpGamePkt(srcHost byte, sport, dport uint16, payload int) []byte {
+	if payload < 0 {
+		payload = 0
+	}
+	pkt := make([]byte, 28+payload)
+	pkt[0] = 0x45
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)))
+	pkt[8] = 64
+	pkt[9] = 17
+	pkt[12], pkt[13], pkt[14], pkt[15] = 10, 70, 0, srcHost
+	pkt[16], pkt[17], pkt[18], pkt[19] = 1, 2, 3, 4
+	binary.BigEndian.PutUint16(pkt[20:22], sport)
+	binary.BigEndian.PutUint16(pkt[22:24], dport)
+	binary.BigEndian.PutUint16(pkt[24:26], uint16(8+payload))
+	return pkt
+}
+
+func TestDefaultRawDispatchSticksSmallGameUDP(t *testing.T) {
+	t.Setenv("RAW_CHUNKED", "")
+	chunked := rawChunkedEnabled("raw", "udp")
+	mp := rawMultipathEnabled("raw", "udp")
+	d := newModeTestDispatcher(t, true, mp, chunked)
+	if d.rawChunked || d.rawMP || !d.rawSticky {
+		t.Fatalf("default RAW must be sticky, got sticky=%v mp=%v chunked=%v", d.rawSticky, d.rawMP, d.rawChunked)
+	}
+	w1 := &WorkerSlot{ID: 1}
+	w2 := &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
+	pkt := udpGamePkt(1, 27015, 27015, 36)
+	for i := 0; i < 32; i++ {
+		d.dispatchSticky(append([]byte(nil), pkt...))
+	}
+	if len(w1.SendCh)+len(w2.SendCh) != 32 {
+		t.Fatalf("want 32 delivered, got w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
+	}
+	if len(w1.SendCh) > 0 && len(w2.SendCh) > 0 {
+		t.Fatal("Dota/CS2-sized UDP flow rotated across TURN workers")
 	}
 }
 

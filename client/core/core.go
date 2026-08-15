@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,7 +88,15 @@ func rawMultipathEnabled(tunnelMode, turnTransport string) bool {
 }
 
 func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
-	return tunnelMode == "raw" && (turnTransport == "udp" || turnTransport == "tcp")
+	if tunnelMode != "raw" {
+		return false
+	}
+	if turnTransport != "udp" && turnTransport != "tcp" {
+		return false
+	}
+	// Experimental: CHUNK1 rotates small packets across TURN workers and
+	// breaks game UDP (Dota 2 / CS2). Default is flow-sticky, no CHUNK1.
+	return strings.TrimSpace(os.Getenv("RAW_CHUNKED")) == "1"
 }
 
 const rawDirectPortOffset = 3
@@ -321,7 +330,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	// RAW: multipath RR + RA-frame reorder (не sticky). Sticky оставлял 1 TURN ≈ 1–2 Мбит.
+	// RAW: sticky per 5-tuple by default. CHUNK1 only with RAW_CHUNKED=1.
 	rawMode := tunnelMode == "raw"
 	disp := NewDispatcher(
 		ctx,
@@ -337,7 +346,7 @@ func (c *Core) Start() (<-chan Event, error) {
 	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
 	var sharedRawGate *wgConfigGate
 	if tunnelMode == "raw" {
-		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true)
+		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, rawChunkedEnabled(tunnelMode, turnTransport))
 	}
 
 	go func() {

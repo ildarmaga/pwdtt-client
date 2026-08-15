@@ -421,7 +421,7 @@ export default function Connect() {
         workers,
         mtu: s.mtu || 1280,
         hashes,
-        vkThroughTunnel: true,
+        vkThroughTunnel: false,
         obfsMode: s.obfsMode === 'video' || s.obfsMode === 'vkquic' ? s.obfsMode : 'audio',
         tunnelMode: mode,
         turnTransport: turnTr,

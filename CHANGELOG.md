@@ -1,6 +1,14 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.306] — 2026-08-15
+
+### Fix — RAW sticky default (Dota 2 / CS2 UDP)
+- Обычный RAW снова **sticky per 5-tuple**, без `CHUNK1` в RAWCONF.
+- CHUNK1/rotation мелких пакетов (<101 B) по TURN-воркерам ломал game UDP (jitter/reorder).
+- Эксперимент: `RAW_CHUNKED=1`. WG и WDTT не трогали.
+- VK веб/API остаются напрямую после подъёма TUN — иначе фон кредов ломает DNS и открывает капчу.
+
 ## [0.3.305] — 2026-08-14
 
 ### Fix — WB1 v3 throughput (ARQ 1024) + pre-field hardening

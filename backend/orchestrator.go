@@ -880,8 +880,8 @@ func (o *Orchestrator) Start(p ConnectParams) error {
 	if SoftReconnectPreserve() {
 		// SoftReconnect уже переключил VK на direct; не форсируем again через мёртвый WG.
 	} else {
-		// VK через туннель — всегда включено нативно (тумблер убран из настроек).
-		vkThroughTunnel.Store(true)
+		// VK веб/API напрямую — креды после TUN не должны идти в туннель.
+		vkThroughTunnel.Store(false)
 		o.softRecoverUntil = time.Time{}
 		o.softRecoverVKDirect = false
 		o.tunnelUp = false
@@ -1057,6 +1057,8 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 						runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[%s] VK-маршрутизация: %v", tag, err))
 					} else if VKThroughTunnel() {
 						runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] VK идёт через туннель (веб/API), TURN-транспорт напрямую", tag))
+					} else {
+						runtime.EventsEmit(o.appCtx, "log", "INFO", fmt.Sprintf("[%s] VK веб/API напрямую, TURN-транспорт напрямую", tag))
 					}
 					if o.sessionWatchUntil.IsZero() || time.Now().After(o.sessionWatchUntil) {
 						o.sessionWatchUntil = time.Now().Add(sessionWatchAfterConnect)

@@ -55,7 +55,10 @@ func softAuthBeforeVerify(vkDirect bool, verifyUntil time.Time) bool {
 // есть живые воркеры И подтверждён data-path (трафик или probe).
 // Workers alone ≠ OK (иначе auth dials VPN DNS 172.31.255.254 до RAWCONF).
 func shouldRestoreVKThroughTunnel(workers int32, trafficOK bool, probeOK bool) bool {
-	return workers > 0 && (trafficOK || probeOK)
+	_ = workers
+	_ = trafficOK
+	_ = probeOK
+	return false
 }
 
 // shouldSkipFinishSoftRecover — старая сессия ещё гасится, Start ещё не был.

@@ -101,22 +101,16 @@ func TestSoftRecoverBusy(t *testing.T) {
 
 func TestShouldRestoreVKThroughTunnel(t *testing.T) {
 	if shouldRestoreVKThroughTunnel(0, true, false) {
-		t.Fatal("workers=0 must not restore VK through tunnel")
+		t.Fatal("must stay off tunnel")
 	}
-	if shouldRestoreVKThroughTunnel(0, false, true) {
-		t.Fatal("probe alone without workers must not restore via helper")
+	if shouldRestoreVKThroughTunnel(9, true, false) {
+		t.Fatal("must stay off tunnel after traffic")
 	}
-	if shouldRestoreVKThroughTunnel(9, false, false) {
-		t.Fatal("workers alone without traffic/probe must not restore")
+	if shouldRestoreVKThroughTunnel(1, false, true) {
+		t.Fatal("must stay off tunnel after probe")
 	}
-	if !shouldRestoreVKThroughTunnel(9, true, false) {
-		t.Fatal("workers + trafficOK must restore")
-	}
-	if !shouldRestoreVKThroughTunnel(1, false, true) {
-		t.Fatal("workers + probeOK must restore")
-	}
-	if !shouldRestoreVKThroughTunnel(18, true, true) {
-		t.Fatal("workers + both must restore")
+	if shouldRestoreVKThroughTunnel(18, true, true) {
+		t.Fatal("must stay off tunnel")
 	}
 }
 
