@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.308] — 2026-08-15
+
+### Fix — Dota/CS2 UDP ping при RAW
+- TCP по-прежнему пачками по 12 (скорость).
+- UDP и ICMP — sticky на одном TURN, иначе подбор игр не считает задержку.
+
 ## [0.3.307] — 2026-08-15
 
 ### Fix — RAW скорость: пачки по 12 + CHUNK1

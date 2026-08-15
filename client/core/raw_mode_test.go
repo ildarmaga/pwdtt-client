@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"testing"
 )
@@ -175,5 +176,59 @@ func TestRawChunkedACKStaysOnSameWorkerAsData(t *testing.T) {
 	}
 	if len(w2.SendCh)+len(w2.PrioCh) != 0 {
 		t.Fatal("ACK jumped to another worker")
+	}
+}
+
+func udpGamePkt(srcHost byte, sport, dport uint16, payload int) []byte {
+	if payload < 0 {
+		payload = 0
+	}
+	pkt := make([]byte, 28+payload)
+	pkt[0] = 0x45
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)))
+	pkt[8] = 64
+	pkt[9] = 17
+	pkt[12], pkt[13], pkt[14], pkt[15] = 10, 70, 0, srcHost
+	pkt[16], pkt[17], pkt[18], pkt[19] = 1, 2, 3, 4
+	binary.BigEndian.PutUint16(pkt[20:22], sport)
+	binary.BigEndian.PutUint16(pkt[22:24], dport)
+	binary.BigEndian.PutUint16(pkt[24:26], uint16(8+payload))
+	return pkt
+}
+
+func TestRawChunkedKeepsUDPGameSticky(t *testing.T) {
+	d := newModeTestDispatcher(t, true, false, true)
+	w1 := &WorkerSlot{ID: 1}
+	w2 := &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
+	pkt := udpGamePkt(1, 27015, 27015, 36)
+	if !rawUDPOrICMP(pkt) {
+		t.Fatal("dota pkt must be UDP")
+	}
+	for i := 0; i < 32; i++ {
+		d.dispatchSticky(append([]byte(nil), pkt...))
+	}
+	if len(w1.SendCh)+len(w2.SendCh) != 32 {
+		t.Fatalf("want 32 delivered, got w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
+	}
+	if len(w1.SendCh) > 0 && len(w2.SendCh) > 0 {
+		t.Fatal("Dota UDP flow rotated across TURN workers")
+	}
+}
+
+func TestRawChunkedTCPStillBatches(t *testing.T) {
+	d := &Dispatcher{rawChunked: true, stats: NewStats()}
+	w1 := &WorkerSlot{ID: 1, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 2)}
+	w2 := &WorkerSlot{ID: 2, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 2)}
+	d.workers = []*WorkerSlot{w1, w2}
+	pkt := tcpPkt(1, 50000, 443)
+	pkt = append(pkt, make([]byte, 1160)...)
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)))
+	for i := 0; i < 13; i++ {
+		d.dispatchChunked(append([]byte(nil), pkt...))
+	}
+	if len(w1.SendCh) != 12 || len(w2.SendCh) != 1 {
+		t.Fatalf("TCP must still batch-12: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
 	}
 }

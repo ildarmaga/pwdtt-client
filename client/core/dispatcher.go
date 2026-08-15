@@ -115,7 +115,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] RAW пачки по 12")
+		log.Printf("[ДИСП] RAW пачки по 12, UDP sticky")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -322,6 +322,22 @@ func (d *Dispatcher) dispatchSticky(pkt []byte) {
 	}
 }
 
+func rawIPv4Proto(pkt []byte) byte {
+	if len(pkt) < 20 || pkt[0]>>4 != 4 {
+		return 0
+	}
+	return pkt[9]
+}
+
+func rawUDPOrICMP(pkt []byte) bool {
+	switch rawIPv4Proto(pkt) {
+	case 1, 17:
+		return true
+	default:
+		return false
+	}
+}
+
 func rawChunkSizeFor(_ int) int {
 	return rawBatchSize
 }
@@ -407,7 +423,11 @@ func (d *Dispatcher) readLoop() {
 		copy(pkt, buf[:n])
 
 		if d.rawChunked {
-			d.dispatchChunked(pkt)
+			if rawUDPOrICMP(pkt) {
+				d.dispatchSticky(pkt)
+			} else {
+				d.dispatchChunked(pkt)
+			}
 			continue
 		}
 		if d.rawSticky {
