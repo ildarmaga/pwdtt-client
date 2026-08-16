@@ -42,12 +42,12 @@ const (
 	wbProbeTimeout   = 5 * time.Second
 
 	// Meaningful throughput (not trickle keepalive) — probe ignored only during real load.
-	wbMeaningfulRateBps  = 32 * 1024 // 32 KiB/s combined rx+tx
-	wbMeaningfulWindow   = 25 * time.Second
-	wbTrafficActiveWindow  = 30 * time.Second
+	wbMeaningfulRateBps     = 32 * 1024 // 32 KiB/s combined rx+tx
+	wbMeaningfulWindow      = 25 * time.Second
+	wbTrafficActiveWindow   = 30 * time.Second
 	wbTrafficActiveMinDelta = int64(8192)
-	wbTrafficStallWindow   = 45 * time.Second
-	wbDownloadStallWindow = 35 * time.Second // rx frozen while probe fails → zombie
+	wbTrafficStallWindow    = 45 * time.Second
+	wbDownloadStallWindow   = 35 * time.Second // rx frozen while probe fails → zombie
 
 	// Zombie: probe fails while download stalled (upload trickle ≠ healthy).
 	wbZombieProbeLimit = 3
@@ -60,14 +60,14 @@ const (
 	wbRecoverVerifyWait          = 25 * time.Second // soft recover must pass probe by then or full reconnect
 	wbSocksRecoverVerifyWait     = 20 * time.Second
 
-	wbSoftRecoverMax      = 3
-	wbSoftRecoverCooldown = 90 * time.Second
+	wbSoftRecoverMax          = 3
+	wbSoftRecoverCooldown     = 90 * time.Second
 	wbSoftRecoverCooldownDead = 15 * time.Second // RTT dead — retry faster
 
 	// OpenStream/closed pipe after soft rebound: only escalate AFTER settle.
 	// During RestartLink, in-flight dials die with closed pipe — that must not
 	// trigger full reconnect (user wants soft recovery).
-	wbTunnelErrBurstRecover   = 20
+	wbTunnelErrBurstRecover      = 20
 	wbTunnelErrIgnoreAfterRebind = 12 * time.Second
 )
 
@@ -86,24 +86,24 @@ type WBManager struct {
 	stop   bool
 	runGen atomic.Uint64
 
-	room           string
-	password       string
-	displayName    string
-	routingMode    string
-	routingPayload string
-	vp8Fps         int
-	vp8Batch       int
-	vp8DualTrack   bool
-	socksOnly      bool
-	socksHost      string
-	socksPort      int
-	socksUser      string
-	socksPass      string
-	socksReady     bool
-	reconnecting atomic.Bool
-	connectedAt  time.Time // when this run started
+	room             string
+	password         string
+	displayName      string
+	routingMode      string
+	routingPayload   string
+	vp8Fps           int
+	vp8Batch         int
+	vp8DualTrack     bool
+	socksOnly        bool
+	socksHost        string
+	socksPort        int
+	socksUser        string
+	socksPass        string
+	socksReady       bool
+	reconnecting     atomic.Bool
+	connectedAt      time.Time // when this run started
 	sessionStartedAt time.Time // TRAFFIC_READY — uptime for UI
-	lastHealthy  time.Time // last stats callback with rtt > 0
+	lastHealthy      time.Time // last stats callback with rtt > 0
 
 	lastStatsLog time.Time
 	lastLogRx    int64
@@ -111,19 +111,19 @@ type WBManager struct {
 
 	recoverCh chan struct{}
 
-	lastTrafficAt    time.Time
-	lastTrafficBytes int64
-	lastRxAt         time.Time
-	lastRxBytes      int64
-	lastFastTrafficAt time.Time
-	probeGraceUntil  time.Time
-	recoverVerifyUntil time.Time
-	softRecoverCount int
-	lastSoftRecover  time.Time
-	lastRTT          int64 // ms — adaptive probe interval on mobile
-	tunnelErrBurst        int
-	lastTunnelErrLog      time.Time
-	ignoreTunnelErrUntil  time.Time // after soft rebind: ignore stale OpenStream deaths
+	lastTrafficAt        time.Time
+	lastTrafficBytes     int64
+	lastRxAt             time.Time
+	lastRxBytes          int64
+	lastFastTrafficAt    time.Time
+	probeGraceUntil      time.Time
+	recoverVerifyUntil   time.Time
+	softRecoverCount     int
+	lastSoftRecover      time.Time
+	lastRTT              int64 // ms — adaptive probe interval on mobile
+	tunnelErrBurst       int
+	lastTunnelErrLog     time.Time
+	ignoreTunnelErrUntil time.Time // after soft rebind: ignore stale OpenStream deaths
 }
 
 func NewWBManager(ctx context.Context) *WBManager {
@@ -334,6 +334,16 @@ func wbTunnelDead(now, started, lastHealthy, lastTraffic, lastFast, lastRxAt tim
 	return false, "", false
 }
 
+// wbSocksIgnoreDeadRTT keeps a SOCKS session when mux ping is dead but
+// bytes still move (speedtest / congestion). RTT death plus a traffic stall
+// must reconnect — otherwise WBT 0 / 0 B/s sits forever.
+func wbSocksIgnoreDeadRTT(reason string, now, lastTraffic time.Time, lastBytes int64) bool {
+	if reason != "нет живого RTT" {
+		return false
+	}
+	return !wbTrafficStalled(now, lastTraffic, lastBytes)
+}
+
 func wbTrafficMeaningful(now, lastFast time.Time) bool {
 	return !lastFast.IsZero() && now.Sub(lastFast) <= wbMeaningfulWindow
 }
@@ -512,10 +522,10 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 			if !dead {
 				continue
 			}
-			// SOCKS/WBT: RTT floor stays >0 while smux is dead — do not kill on
-			// RTT alone. Traffic stall after grace → full reconnect (soft already tried).
+			// SOCKS: do not kill on RTT alone while bytes still move.
+			// RTT death + traffic stall must recover (WBT 0 / 0 B/s).
 			if socks {
-				if reason == "нет живого RTT" {
+				if wbSocksIgnoreDeadRTT(reason, now, lastTraffic, lastTrafficBytes) {
 					continue
 				}
 				if reason == "туннель не поднялся" && !lastTraffic.IsZero() &&

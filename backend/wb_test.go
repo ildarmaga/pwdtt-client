@@ -126,6 +126,52 @@ func TestWBTrafficActive(t *testing.T) {
 	}
 }
 
+func TestWBSocksIgnoreDeadRTT(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name        string
+		reason      string
+		lastTraffic time.Time
+		lastBytes   int64
+		wantIgnore  bool
+	}{
+		{
+			name:        "rtt dead but SOCKS bytes still move — keep session",
+			reason:      "нет живого RTT",
+			lastTraffic: now.Add(-5 * time.Second),
+			lastBytes:   1024 * 1024,
+			wantIgnore:  true,
+		},
+		{
+			name:        "rtt dead and traffic stalled — must reconnect",
+			reason:      "нет живого RTT",
+			lastTraffic: now.Add(-wbTrafficStallWindow - time.Second),
+			lastBytes:   1024 * 1024,
+			wantIgnore:  false,
+		},
+		{
+			name:       "rtt dead and never any traffic — must reconnect",
+			reason:     "нет живого RTT",
+			wantIgnore: false,
+		},
+		{
+			name:        "other dead reason is not an RTT skip",
+			reason:      "туннель завис (zombie)",
+			lastTraffic: now.Add(-wbTrafficStallWindow - time.Second),
+			lastBytes:   1024 * 1024,
+			wantIgnore:  false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := wbSocksIgnoreDeadRTT(c.reason, now, c.lastTraffic, c.lastBytes)
+			if got != c.wantIgnore {
+				t.Fatalf("wbSocksIgnoreDeadRTT() = %v, want %v", got, c.wantIgnore)
+			}
+		})
+	}
+}
+
 // A shutdown watcher for run N must not clear (or emergency-stop) run N+1:
 // the user can reconnect while the old run is still tearing down.
 func TestAwaitShutdownRunSupersededGeneration(t *testing.T) {
