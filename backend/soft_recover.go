@@ -19,6 +19,8 @@ import (
 const (
 	softRecoverVerifyWait  = 45 * time.Second
 	softRecoverTrafficNeed = int64(64 * 1024) // обязательный data-path после soft
+	// 18 воркеров keepalive ≈ 8–12KiB / 3с. 8KiB порог принимал это за «живой» путь.
+	softKeepaliveTickMax = int64(24 * 1024)
 	softStormMax           = 5                // panel-flap: больше soft до manual
 	softStormWindow        = 10 * time.Minute
 	softEscalateAfter      = 2 // 2 soft fail → следующий recover = full
@@ -59,6 +61,29 @@ func shouldRestoreVKThroughTunnel(workers int32, trafficOK bool, probeOK bool) b
 	_ = trafficOK
 	_ = probeOK
 	return false
+}
+
+// finishSoftRecoverShouldSkipRepeat — noteWorkerStats зовёт finish каждые ~3с.
+// Повтор: не логировать и не продлевать stall-immune (иначе zombie никогда не soft).
+func finishSoftRecoverShouldSkipRepeat(announced, startVerify bool) bool {
+	return announced && !startVerify
+}
+
+// shouldStartSoftVerify — одно verify-окно на soft. announced=true → уже стартовали.
+func shouldStartSoftVerify(needVK bool, recoverCount int, verifyUntilZero, announced bool) bool {
+	return needVK && recoverCount > 0 && verifyUntilZero && !announced
+}
+
+// lastTrafficAtForVerifyStart — keepalive с момента soft не считается свежим трафиком.
+// Если поставить now, 45с окно всегда «свежее» и 64KiB keepalive проходят verify.
+func lastTrafficAtForVerifyStart() time.Time {
+	return time.Time{}
+}
+
+// vkDirectHoldAfterDataPath — после решения по data-path hold снимается всегда.
+// Restore-in-tunnel — отдельная политика (сейчас всегда false).
+func vkDirectHoldAfterDataPath(restoreThrough bool) (through bool, hold bool) {
+	return restoreThrough, false
 }
 
 // shouldSkipFinishSoftRecover — старая сессия ещё гасится, Start ещё не был.
@@ -127,7 +152,14 @@ func softRecoverSucceeded(now, lastTrafficAt time.Time, bytesSinceSoft int64, wo
 
 // meaningfulTrafficDelta — keepalive TURN/RAW (~1 КБ/с) не считается «живым».
 func meaningfulTrafficDelta(delta int64) bool {
-	return delta >= trafficStallMinBytes
+	if delta < trafficStallMinBytes {
+		return false
+	}
+	// Тик на уровне keepalive 18 воркеров (~8–12KiB/3с) — не data-path.
+	if delta <= softKeepaliveTickMax {
+		return false
+	}
+	return true
 }
 
 // shouldStallSoft — zombie: воркеры живы, а meaningful-трафик давно молчит.
@@ -237,21 +269,36 @@ func DecideSoftTick(in SoftTickInput) SoftTickResult {
 
 // SimTrafficNote — как noteTrafficBytes двигает lastTrafficAt (keepalive vs real).
 func SimTrafficNote(lastAt time.Time, lastBytes, total int64, now time.Time) (newAt time.Time, newBytes int64, meaningful bool) {
-	newBytes = lastBytes
-	newAt = lastAt
-	if lastAt.IsZero() {
-		return now, total, false
-	}
 	if total < lastBytes {
-		return now, total, false
+		// Новая база счётчика. Часы meaningful не трогаем (keepalive после soft).
+		return lastAt, total, false
 	}
 	if total <= lastBytes {
 		return lastAt, lastBytes, false
 	}
 	delta := total - lastBytes
-	newBytes = total
 	if meaningfulTrafficDelta(delta) {
-		return now, newBytes, true
+		return now, total, true
 	}
-	return lastAt, newBytes, false
+	return lastAt, total, false
+}
+
+// stallDuration — если meaningful ещё не было, часы от connectedAt (иначе zombie с keepalive не ловится).
+func stallDuration(now, lastTrafficAt, connectedAt time.Time) time.Duration {
+	if !lastTrafficAt.IsZero() {
+		return now.Sub(lastTrafficAt)
+	}
+	if !connectedAt.IsZero() {
+		return now.Sub(connectedAt)
+	}
+	return 0
+}
+
+// reconnectCooldownBlocks — stall/workers-lost не чаще cooldown.
+// Verify-fail — продолжение того же recover (45с < 60с cooldown), иначе nested soft глохнет.
+func reconnectCooldownBlocks(skipCooldown bool, lastAt, now time.Time, cooldown time.Duration) bool {
+	if skipCooldown || lastAt.IsZero() {
+		return false
+	}
+	return now.Sub(lastAt) < cooldown
 }

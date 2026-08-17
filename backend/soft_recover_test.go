@@ -155,8 +155,98 @@ func TestMeaningfulTrafficDelta(t *testing.T) {
 	if meaningfulTrafficDelta(trafficStallMinBytes - 1) {
 		t.Fatal("just below threshold must not count")
 	}
-	if !meaningfulTrafficDelta(trafficStallMinBytes) {
-		t.Fatal("threshold must count")
+	if meaningfulTrafficDelta(12 * 1024) {
+		t.Fatal("12KiB/tick (18 workers keepalive) must not count")
+	}
+	if meaningfulTrafficDelta(softKeepaliveTickMax) {
+		t.Fatal("keepalive ceiling must not count")
+	}
+	if !meaningfulTrafficDelta(softKeepaliveTickMax + 1) {
+		t.Fatal("burst above keepalive ceiling must count")
+	}
+}
+
+func TestFinishSoftRecoverSkipRepeat(t *testing.T) {
+	if !finishSoftRecoverShouldSkipRepeat(true, false) {
+		t.Fatal("already announced + no new verify → skip")
+	}
+	if finishSoftRecoverShouldSkipRepeat(false, true) {
+		t.Fatal("first announce with verify must run")
+	}
+	if finishSoftRecoverShouldSkipRepeat(false, false) {
+		t.Fatal("first announce without verify must still log once")
+	}
+	if finishSoftRecoverShouldSkipRepeat(true, true) {
+		t.Fatal("new verify despite announced should not skip (shouldStartSoftVerify prevents this)")
+	}
+}
+
+func TestShouldStartSoftVerifyOnce(t *testing.T) {
+	if !shouldStartSoftVerify(true, 1, true, false) {
+		t.Fatal("first workers-up after soft must start verify")
+	}
+	if shouldStartSoftVerify(true, 1, true, true) {
+		t.Fatal("already announced must not restart verify")
+	}
+	if shouldStartSoftVerify(true, 0, true, false) {
+		t.Fatal("no soft count → no verify")
+	}
+	if shouldStartSoftVerify(false, 1, true, false) {
+		t.Fatal("VK not in hold → no verify from this path")
+	}
+	if shouldStartSoftVerify(true, 1, false, false) {
+		t.Fatal("verify already running → do not restart")
+	}
+}
+
+func TestLastTrafficAtForVerifyStartIsZero(t *testing.T) {
+	if !lastTrafficAtForVerifyStart().IsZero() {
+		t.Fatal("verify start must not stamp lastTrafficAt=now")
+	}
+}
+
+func TestSimTrafficNoteKeepaliveDoesNotStampZeroClock(t *testing.T) {
+	start := time.Date(2026, 8, 17, 13, 17, 0, 0, time.UTC)
+	at, bytes, meaningful := SimTrafficNote(time.Time{}, 0, 12*1024, start)
+	if meaningful || !at.IsZero() {
+		t.Fatal("keepalive must not stamp lastTrafficAt from zero")
+	}
+	if bytes != 12*1024 {
+		t.Fatalf("bytes=%d", bytes)
+	}
+	at, bytes, meaningful = SimTrafficNote(at, bytes, bytes+12*1024, start.Add(3*time.Second))
+	if meaningful || !at.IsZero() {
+		t.Fatal("second keepalive tick must keep zero clock")
+	}
+	burst := bytes + softKeepaliveTickMax + 1
+	at, bytes, meaningful = SimTrafficNote(at, bytes, burst, start.Add(6*time.Second))
+	if !meaningful || at.IsZero() {
+		t.Fatal("real burst must stamp lastTrafficAt")
+	}
+}
+
+func TestReconnectCooldownSkipsVerifyFail(t *testing.T) {
+	now := time.Date(2026, 8, 17, 13, 17, 0, 0, time.UTC)
+	last := now.Add(-45 * time.Second)
+	if !reconnectCooldownBlocks(false, last, now, autoReconnectCooldown) {
+		t.Fatal("stall 45s after soft must still be in cooldown")
+	}
+	if reconnectCooldownBlocks(true, last, now, autoReconnectCooldown) {
+		t.Fatal("verify-fail must skip cooldown so nested soft can run at 45s")
+	}
+	if reconnectCooldownBlocks(false, last, now.Add(autoReconnectCooldown), autoReconnectCooldown) {
+		t.Fatal("after cooldown window stall may reconnect")
+	}
+}
+
+func TestVKDirectHoldClearsAfterDataPath(t *testing.T) {
+	through, hold := vkDirectHoldAfterDataPath(false)
+	if through || hold {
+		t.Fatal("policy off-tunnel: no restore, hold must end")
+	}
+	through, hold = vkDirectHoldAfterDataPath(true)
+	if !through || hold {
+		t.Fatal("if restore allowed: through=true, hold ends")
 	}
 }
 

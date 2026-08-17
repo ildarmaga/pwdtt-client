@@ -620,6 +620,10 @@ func (o *Orchestrator) triggerAutoReconnect(msg string) { o.triggerReconnect(msg
 // полный reconnect (с пересборкой маршрутов) — нужен при смене сети, когда
 // сменился шлюз и прямые /32-маршруты к TURN устарели.
 func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
+	o.triggerReconnectWithCooldown(msg, forceFull, false)
+}
+
+func (o *Orchestrator) triggerReconnectWithCooldown(msg string, forceFull, skipCooldown bool) {
 	o.mu.Lock()
 	if !o.tunnelUp || o.autoReconnecting || o.suppressWorkersLost {
 		o.mu.Unlock()
@@ -631,7 +635,7 @@ func (o *Orchestrator) triggerReconnect(msg string, forceFull bool) {
 		o.mu.Unlock()
 		return
 	}
-	if !o.lastAutoReconnectAt.IsZero() && time.Since(o.lastAutoReconnectAt) < autoReconnectCooldown {
+	if reconnectCooldownBlocks(skipCooldown, o.lastAutoReconnectAt, time.Now(), autoReconnectCooldown) {
 		o.mu.Unlock()
 		return
 	}
@@ -750,9 +754,9 @@ func (o *Orchestrator) maybeAutoReconnectOnStall() {
 			o.softRecoverUntil = time.Time{}
 			o.mu.Unlock()
 			if failCount >= softEscalateAfter {
-				o.triggerReconnect("Soft без data-path — полный reconnect…", true)
+				o.triggerReconnectWithCooldown("Soft без data-path — полный reconnect…", true, true)
 			} else {
-				o.triggerAutoReconnect("Soft без data-path — повторный soft…")
+				o.triggerReconnectWithCooldown("Soft без data-path — повторный soft…", false, true)
 			}
 			return
 		}

@@ -96,14 +96,12 @@ func (s *softSim) workersUp(n int32) {
 		// Как finishSoftRecoverVK: снимаем softBusy (until), но VK/verify
 		// не считаем OK — нужен трафик / probe (не workers alone).
 		s.softBusyUntil = time.Time{}
+		s.lastTrafficAt = lastTrafficAtForVerifyStart()
 	}
 }
 
 func (s *softSim) tick() SoftTickResult {
-	stallDur := time.Duration(0)
-	if !s.lastTrafficAt.IsZero() {
-		stallDur = s.now.Sub(s.lastTrafficAt)
-	}
+	stallDur := stallDuration(s.now, s.lastTrafficAt, s.connectedAt)
 	in := SoftTickInput{
 		Now:            s.now,
 		Watch:          true,
@@ -332,6 +330,29 @@ func TestScenario_KeepaliveDoesNotResetStallClock(t *testing.T) {
 	}
 	if mid.Sub(at) < 60*time.Second {
 		t.Fatalf("stall clock should keep growing, got %s", mid.Sub(at))
+	}
+}
+
+func TestScenario_WorkerKeepaliveIsNotDataPath(t *testing.T) {
+	s := newSoftSim(t, time.Date(2026, 8, 17, 13, 16, 42, 0, time.UTC))
+	s.beginSoft()
+	s.stormCount = 1
+	s.stormStarted = s.now
+	s.advance(5 * time.Second)
+	s.workersUp(18)
+	// Лог пользователя: ~10КиБ/3с при 18 воркерах, суммарно >64КиБ за 45с.
+	for i := 0; i < 16; i++ {
+		s.advance(3 * time.Second)
+		s.addBytes(12 * 1024)
+	}
+	s.cooldownUntil = time.Time{}
+	res := s.tick()
+	if res.Action == softTickVerifyOK {
+		t.Fatal("18-worker keepalive must not VerifyOK")
+	}
+	if res.Action != softTickVerifyFailSoft {
+		t.Fatalf("want VerifyFailSoft, got %d events=%v lastAtZero=%v bytes=%d",
+			res.Action, s.softEvents, s.lastTrafficAt.IsZero(), s.lastBytes-s.bytesAtSoft)
 	}
 }
 
