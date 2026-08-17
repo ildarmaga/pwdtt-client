@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.318] — 2026-08-17
+
+### Fix — ACK не блокирует Recv на YouTube
+- Reliable LiveKit data topic ждал Recv-loop перед VP8 ACK. Под googlevideo окно стопорожно, mux closed через 10 с.
+- Ping/Pong/ACK: сначала VP8, data topic в фоне. Тест: медленный data не держит ACK >400 мс.
+
 ## [0.3.317] — 2026-08-17
 
 ### Fix — mux не умирает живой download

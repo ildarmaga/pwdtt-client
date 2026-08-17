@@ -51,6 +51,7 @@ type RoomSession struct {
 	vp8Clk    vp8SampleClock
 	pacer     *bytePacer
 	writeHook func([]byte, time.Duration) error
+	dataHook  func([]byte) error
 
 	vp8N     atomic.Uint64
 	vp8Stamp atomic.Int64
@@ -431,32 +432,46 @@ func (s *RoomSession) writeVP8(ctx context.Context, dest SessionID, frame []byte
 	return s.pacedWriteSample(ctx, WrapVP8(dest, frame))
 }
 
+func (s *RoomSession) publishData(wire []byte) error {
+	if s.dataHook != nil {
+		return s.dataHook(wire)
+	}
+	if s.room == nil {
+		return errMuxClosed
+	}
+	pkt := lksdk.UserData(wire)
+	pkt.Topic = DataTopic
+	return s.room.LocalParticipant.PublishDataPacket(
+		pkt,
+		lksdk.WithDataPublishReliable(true),
+		lksdk.WithDataPublishTopic(DataTopic),
+	)
+}
+
 func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []byte) error {
 	typ, envDest, _, ok := PeekRoute(wire)
 	if !ok || envDest != dest {
 		return errBadLength
 	}
 	useData, useVP8 := publishPlan(dest, typ)
+	if isControlType(typ) && useVP8 {
+		// ACK/Ping run on Mux.Run's Recv loop. LiveKit reliable data can
+		// block for seconds under googlevideo load; that stalls Recv, ACKs
+		// stop, send window fills, mux closes. VP8 first, data in background.
+		if err := s.writeVP8Unpaced(ctx, dest, wire); err != nil {
+			return err
+		}
+		if useData {
+			go func() { _ = s.publishData(wire) }()
+		}
+		return nil
+	}
 	var dataErr, vp8Err error
 	if useData {
-		if s.room == nil {
-			dataErr = errMuxClosed
-		} else {
-			pkt := lksdk.UserData(wire)
-			pkt.Topic = DataTopic
-			dataErr = s.room.LocalParticipant.PublishDataPacket(
-				pkt,
-				lksdk.WithDataPublishReliable(true),
-				lksdk.WithDataPublishTopic(DataTopic),
-			)
-		}
+		dataErr = s.publishData(wire)
 	}
 	if useVP8 {
-		if isControlType(typ) {
-			vp8Err = s.writeVP8Unpaced(ctx, dest, wire)
-		} else {
-			vp8Err = s.writeVP8(ctx, dest, wire)
-		}
+		vp8Err = s.writeVP8(ctx, dest, wire)
 	}
 	if useData && useVP8 {
 		if dataErr != nil && vp8Err != nil {

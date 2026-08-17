@@ -221,6 +221,49 @@ func TestAckRidesVP8WhenDataTopicSilent(t *testing.T) {
 	}
 }
 
+func TestControlVP8NotBlockedBySlowDataTopic(t *testing.T) {
+	key := testKey(t)
+	s := newTestSession(testSID(1))
+	s.dataHook = func([]byte) error {
+		time.Sleep(2 * time.Second)
+		return nil
+	}
+	var acks int
+	s.writeHook = func(data []byte, _ time.Duration) error {
+		_, frame, ok := UnwrapVP8(data)
+		if !ok {
+			return nil
+		}
+		typ, _, _, ok := PeekRoute(frame)
+		if ok && typ == TypeAck {
+			acks++
+		}
+		return nil
+	}
+	wire, err := Pack(key, Frame{
+		Type: TypeAck, Dest: testSID(2), Src: testSID(1),
+		Payload: packAckPayload(1, 0, 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.publishWire(context.Background(), testSID(2), wire)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(400 * time.Millisecond):
+		t.Fatal("ACK send blocked on LiveKit data topic; Recv loop would stall and close mux")
+	}
+	if acks == 0 {
+		t.Fatal("ACK must ride VP8 before waiting on data topic")
+	}
+}
+
 func TestIdleJoinerNotReapedAfterOutboundSend(t *testing.T) {
 	creatorSID := testSID(1)
 	s := newTestSession(creatorSID)
