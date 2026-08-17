@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.319] — 2026-08-17
+
+### Fix — WBT RTT не растёт на скачивании
+- Ping/ACK больше не стоят в очереди за VP8-кадрами YouTube/файлов. Раньше WBT уходил в секунды, потом mux closed.
+
 ## [0.3.318] — 2026-08-17
 
 ### Fix — ACK не блокирует Recv на YouTube

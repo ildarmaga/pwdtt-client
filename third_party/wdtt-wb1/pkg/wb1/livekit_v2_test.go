@@ -264,6 +264,31 @@ func TestControlVP8NotBlockedBySlowDataTopic(t *testing.T) {
 	}
 }
 
+func TestControlVP8JumpsDataWriteQueue(t *testing.T) {
+	s := newTestSession(testSID(1))
+	s.writeHook = func([]byte, time.Duration) error {
+		time.Sleep(80 * time.Millisecond)
+		return nil
+	}
+	var started sync.WaitGroup
+	started.Add(8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			started.Done()
+			_ = s.writeVP8(context.Background(), testSID(2), []byte{1, 2, 3})
+		}()
+	}
+	started.Wait()
+	time.Sleep(20 * time.Millisecond)
+	start := time.Now()
+	if err := s.writeVP8Unpaced(context.Background(), testSID(2), []byte{9}); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("ping waited %s behind download WriteSample queue; WBT RTT spikes and mux dies", d)
+	}
+}
+
 func TestIdleJoinerNotReapedAfterOutboundSend(t *testing.T) {
 	creatorSID := testSID(1)
 	s := newTestSession(creatorSID)

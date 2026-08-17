@@ -39,6 +39,12 @@ type pendingJoiner struct {
 	c   Carrier
 }
 
+type vp8WriteReq struct {
+	data []byte
+	ctx  context.Context
+	done chan error
+}
+
 // RoomSession is a LiveKit room: one call, many joiners (like VK).
 type RoomSession struct {
 	room     *lksdk.Room
@@ -52,6 +58,10 @@ type RoomSession struct {
 	pacer     *bytePacer
 	writeHook func([]byte, time.Duration) error
 	dataHook  func([]byte) error
+
+	vp8WriterOnce sync.Once
+	vp8Ctrl       chan *vp8WriteReq
+	vp8Data       chan *vp8WriteReq
 
 	vp8N     atomic.Uint64
 	vp8Stamp atomic.Int64
@@ -416,16 +426,7 @@ func (s *RoomSession) pacedWriteSample(ctx context.Context, data []byte) error {
 	if err := s.paceWait(ctx, len(data)); err != nil {
 		return err
 	}
-	s.videoMu.Lock()
-	defer s.videoMu.Unlock()
-	if s.writeHook == nil && s.video == nil {
-		return errMuxClosed
-	}
-	dur := s.vp8Clk.Next()
-	start := time.Now()
-	err := s.writeSampleLocked(data, dur)
-	s.noteWriteSample(err, time.Since(start))
-	return err
+	return s.enqueueVP8(ctx, data, false)
 }
 
 func (s *RoomSession) writeVP8(ctx context.Context, dest SessionID, frame []byte) error {
@@ -492,6 +493,83 @@ func (s *RoomSession) writeVP8Unpaced(ctx context.Context, dest SessionID, frame
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return s.enqueueVP8(ctx, WrapVP8(dest, frame), true)
+}
+
+func (s *RoomSession) ensureVP8Writer() {
+	s.vp8WriterOnce.Do(func() {
+		s.vp8Ctrl = make(chan *vp8WriteReq, 32)
+		s.vp8Data = make(chan *vp8WriteReq, 8)
+		go s.runVP8Writer()
+	})
+}
+
+func (s *RoomSession) enqueueVP8(ctx context.Context, data []byte, ctrl bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.done == nil {
+		return s.commitVP8(data)
+	}
+	s.ensureVP8Writer()
+	req := &vp8WriteReq{data: data, ctx: ctx, done: make(chan error, 1)}
+	ch := s.vp8Data
+	if ctrl {
+		ch = s.vp8Ctrl
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return errMuxClosed
+	case ch <- req:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return errMuxClosed
+	case err := <-req.done:
+		return err
+	}
+}
+
+func (s *RoomSession) nextVP8Req() (*vp8WriteReq, bool) {
+	select {
+	case <-s.done:
+		return nil, false
+	case req := <-s.vp8Ctrl:
+		return req, true
+	default:
+	}
+	select {
+	case <-s.done:
+		return nil, false
+	case req := <-s.vp8Ctrl:
+		return req, true
+	case req := <-s.vp8Data:
+		return req, true
+	}
+}
+
+func (s *RoomSession) runVP8Writer() {
+	for {
+		req, ok := s.nextVP8Req()
+		if !ok {
+			return
+		}
+		if err := req.ctx.Err(); err != nil {
+			req.done <- err
+			continue
+		}
+		req.done <- s.commitVP8(req.data)
+	}
+}
+
+func (s *RoomSession) commitVP8(data []byte) error {
 	s.videoMu.Lock()
 	defer s.videoMu.Unlock()
 	if s.writeHook == nil && s.video == nil {
@@ -499,7 +577,7 @@ func (s *RoomSession) writeVP8Unpaced(ctx context.Context, dest SessionID, frame
 	}
 	dur := s.vp8Clk.Next()
 	start := time.Now()
-	err := s.writeSampleLocked(WrapVP8(dest, frame), dur)
+	err := s.writeSampleLocked(data, dur)
 	s.noteWriteSample(err, time.Since(start))
 	return err
 }
