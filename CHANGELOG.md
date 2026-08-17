@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.315] — 2026-08-17
+
+### Fix — WB ping снова на VP8
+- Handshake Ping/Pong идут и в data topic, и в VP8: WB часто отдаёт beacon/Hello по видео, а mux-ping по data не доходит.
+- ACK по-прежнему только data topic (спидтест не ждёт VP8 pacer).
+
 ## [0.3.314] — 2026-08-17
 
 ### Fix — WB Stream не висит на мёртвом mux

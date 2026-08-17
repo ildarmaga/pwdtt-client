@@ -437,7 +437,7 @@ func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []by
 		return errBadLength
 	}
 	useData, useVP8 := publishPlan(dest, typ)
-	var dataErr error
+	var dataErr, vp8Err error
 	if useData {
 		if s.room == nil {
 			dataErr = errMuxClosed
@@ -452,11 +452,41 @@ func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []by
 		}
 	}
 	if useVP8 {
-		if err := s.writeVP8(ctx, dest, wire); err != nil {
-			return err
+		if isControlType(typ) {
+			vp8Err = s.writeVP8Unpaced(ctx, dest, wire)
+		} else {
+			vp8Err = s.writeVP8(ctx, dest, wire)
 		}
 	}
+	if useData && useVP8 {
+		if dataErr != nil && vp8Err != nil {
+			return dataErr
+		}
+		return nil
+	}
+	if useVP8 {
+		return vp8Err
+	}
 	return dataErr
+}
+
+func (s *RoomSession) writeVP8Unpaced(ctx context.Context, dest SessionID, frame []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.videoMu.Lock()
+	defer s.videoMu.Unlock()
+	if s.writeHook == nil && s.video == nil {
+		return errMuxClosed
+	}
+	dur := s.vp8Clk.Next()
+	start := time.Now()
+	err := s.writeSampleLocked(WrapVP8(dest, frame), dur)
+	s.noteWriteSample(err, time.Since(start))
+	return err
 }
 
 func (s *RoomSession) noteWriteSample(err error, d time.Duration) {

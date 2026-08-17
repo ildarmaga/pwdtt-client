@@ -182,12 +182,12 @@ func TestMuxPayloadNotOnDataTopic(t *testing.T) {
 		t.Fatal("ACK must use LiveKit data topic and skip VP8 pacer")
 	}
 	data, vp8 = publishPlan(testSID(2), TypePing)
-	if !data || vp8 {
-		t.Fatal("mux Ping must use LiveKit data topic and skip VP8 pacer")
+	if !data || !vp8 {
+		t.Fatal("mux Ping must use data topic and VP8 fallback")
 	}
 	data, vp8 = publishPlan(testSID(2), TypePong)
-	if !data || vp8 {
-		t.Fatal("Pong must use LiveKit data topic and skip VP8 pacer")
+	if !data || !vp8 {
+		t.Fatal("Pong must use data topic and VP8 fallback")
 	}
 }
 

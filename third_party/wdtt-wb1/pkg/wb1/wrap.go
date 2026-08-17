@@ -64,9 +64,14 @@ func publishPlan(dest SessionID, typ byte) (dataTopic, vp8 bool) {
 	if dest.IsZero() {
 		return true, true
 	}
-	// Ping/Pong/ACK must not wait behind bulk VP8 WriteSample (speedtest stalls WBT).
-	if isControlType(typ) {
+	if typ == TypeAck {
+		// ACK must not wait behind bulk VP8 WriteSample (speedtest stalls WBT).
 		return true, false
+	}
+	if typ == TypePing || typ == TypePong {
+		// Data topic skips the pacer; VP8 is the handshake fallback when WB
+		// delivers beacons/Hello on video but drops mux data packets.
+		return true, true
 	}
 	return false, true
 }
