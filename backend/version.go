@@ -1,7 +1,7 @@
 package backend
 
 // AppVersion is injected at build time via -ldflags "-X pwdtt-desktop/backend.AppVersion=...".
-var AppVersion = "0.3.315"
+var AppVersion = "0.3.316"
 
 func (a *App) GetAppVersion() string {
 	if AppVersion == "" {

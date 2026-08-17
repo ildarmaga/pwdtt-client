@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.316] — 2026-08-17
+
+### Fix — WB ACK снова на VP8
+- Handshake ping жив, но SOCKS убивал mux через ~10 с: ACK оставался только в LiveKit data topic, WB его не доставляет.
+- ACK теперь как Ping/Pong: data topic + VP8 без pacer.
+
 ## [0.3.315] — 2026-08-17
 
 ### Fix — WB ping снова на VP8

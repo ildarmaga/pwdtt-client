@@ -178,8 +178,8 @@ func TestMuxPayloadNotOnDataTopic(t *testing.T) {
 		t.Fatal("creator beacon must use both data topic and VP8")
 	}
 	data, vp8 = publishPlan(testSID(2), TypeAck)
-	if !data || vp8 {
-		t.Fatal("ACK must use LiveKit data topic and skip VP8 pacer")
+	if !data || !vp8 {
+		t.Fatal("ACK must use data topic and VP8 fallback when WB drops data packets")
 	}
 	data, vp8 = publishPlan(testSID(2), TypePing)
 	if !data || !vp8 {
@@ -188,6 +188,36 @@ func TestMuxPayloadNotOnDataTopic(t *testing.T) {
 	data, vp8 = publishPlan(testSID(2), TypePong)
 	if !data || !vp8 {
 		t.Fatal("Pong must use data topic and VP8 fallback")
+	}
+}
+
+func TestAckRidesVP8WhenDataTopicSilent(t *testing.T) {
+	key := testKey(t)
+	s := newTestSession(testSID(1))
+	var acks int
+	s.writeHook = func(data []byte, _ time.Duration) error {
+		_, frame, ok := UnwrapVP8(data)
+		if !ok {
+			return nil
+		}
+		typ, _, _, ok := PeekRoute(frame)
+		if ok && typ == TypeAck {
+			acks++
+		}
+		return nil
+	}
+	wire, err := Pack(key, Frame{
+		Type: TypeAck, Dest: testSID(2), Src: testSID(1),
+		Payload: packAckPayload(1, 0, 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.publishWire(context.Background(), testSID(2), wire); err != nil {
+		t.Fatalf("ACK must succeed via VP8 when LiveKit data topic is down: %v", err)
+	}
+	if acks == 0 {
+		t.Fatal("ACK vanished: data topic silent and VP8 was skipped")
 	}
 }
 

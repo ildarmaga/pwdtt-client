@@ -64,13 +64,10 @@ func publishPlan(dest SessionID, typ byte) (dataTopic, vp8 bool) {
 	if dest.IsZero() {
 		return true, true
 	}
-	if typ == TypeAck {
-		// ACK must not wait behind bulk VP8 WriteSample (speedtest stalls WBT).
-		return true, false
-	}
-	if typ == TypePing || typ == TypePong {
-		// Data topic skips the pacer; VP8 is the handshake fallback when WB
-		// delivers beacons/Hello on video but drops mux data packets.
+	if isControlType(typ) {
+		// Data topic skips the pacer. VP8 is required: WB often accepts
+		// beacon/Hello on video and silently drops mux data packets, so
+		// ACK-only-on-data closes the mux ~10s after SOCKS starts.
 		return true, true
 	}
 	return false, true
