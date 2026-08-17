@@ -216,6 +216,21 @@ func TestRetransmitDueClosesWhenNoAckProgress(t *testing.T) {
 	}
 }
 
+func TestRetransmitDueKeepsMuxIfInboundDataMoves(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	m.rto = minRTO
+	now := time.Now()
+	m.lastProgress = now.Add(-arqStallTimeout - time.Second)
+	m.lastInbound = now
+	m.sendUnacked = 1
+	m.sendNext = 2
+	old := now.Add(-arqStallTimeout - time.Second)
+	m.sendBuf[1] = &sendSlot{seq: 1, wire: []byte{1}, sentAt: old, firstAt: old}
+	if !m.retransmitDue(context.Background()) {
+		t.Fatal("stale upload must not close mux while download still moves")
+	}
+}
+
 func TestRetransmitDueKeepsMuxAfterIdleResume(t *testing.T) {
 	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
 	m.rto = minRTO

@@ -162,6 +162,9 @@ func (m *Mux) admitReliable(ctx context.Context, f Frame) bool {
 		switch sc.push(f.Payload) {
 		case pushAdmitted:
 			m.addTraffic(0, int64(len(f.Payload)))
+			m.mu.Lock()
+			m.lastInbound = time.Now()
+			m.mu.Unlock()
 			return true
 		case pushClosed:
 			return true
@@ -556,7 +559,7 @@ func (m *Mux) retransmitDue(ctx context.Context) bool {
 				break
 			}
 		}
-		if staleFlight {
+		if staleFlight && (m.lastInbound.IsZero() || now.Sub(m.lastInbound) >= arqStallTimeout) {
 			m.mu.Unlock()
 			return false
 		}

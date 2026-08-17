@@ -71,6 +71,7 @@ type Mux struct {
 	srtt         time.Duration
 	rttvar       time.Duration
 	lastProgress time.Time
+	lastInbound  time.Time
 	peerHookAt   atomic.Int64
 	delayAck     *time.Timer
 	closeCh      chan struct{}
@@ -295,6 +296,9 @@ func (m *Mux) handleData(f Frame) {
 	}
 	if sc.push(f.Payload) == pushAdmitted {
 		m.addTraffic(0, int64(len(f.Payload)))
+		m.mu.Lock()
+		m.lastInbound = time.Now()
+		m.mu.Unlock()
 	}
 }
 

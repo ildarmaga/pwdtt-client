@@ -1,6 +1,12 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.317] — 2026-08-17
+
+### Fix — mux не умирает живой download
+- Застрявший upload ARQ больше не делает Close всего mux, пока идёт входящий SOCKS.
+- Тест: stale upload + свежий lastInbound — mux жив. Полная тишина по-прежнему закрывает.
+
 ## [0.3.316] — 2026-08-17
 
 ### Fix — WB ACK снова на VP8
