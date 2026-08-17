@@ -240,3 +240,12 @@ func TestClearRunStaleGeneration(t *testing.T) {
 		t.Fatal("clearRun with stale generation must be a no-op")
 	}
 }
+
+func TestWBUserConnectResetsSoftCount(t *testing.T) {
+	if got := resetWBSoftCount(true, 3); got != 0 {
+		t.Fatalf("user Connect must reset strikes, got %d", got)
+	}
+	if got := resetWBSoftCount(false, 3); got != 3 {
+		t.Fatalf("watchdog reconnect must keep strikes, got %d", got)
+	}
+}

@@ -1,6 +1,13 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.314] — 2026-08-17
+
+### Fix — WB Stream не висит на мёртвом mux
+- Закрытие ARQ-mux сразу рвёт сессию (раньше WBT 0 / 0 B/s ждали ~45 с).
+- Ping/ACK идут по LiveKit data topic, не через VP8-pacer спидтеста.
+- Счётчик обрывов не сбрасывается на watchdog-reconnect. В логе каждый SOCKS CONNECT (кто качает сразу после bind).
+
 ## [0.3.313] — 2026-08-17
 
 ### Fix — SOFT не крутится вечно на keepalive

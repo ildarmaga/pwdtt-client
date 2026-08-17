@@ -178,22 +178,36 @@ func (m *Mux) addTraffic(up, down int64) {
 	}
 }
 
-// Run reads frames until ctx is done.
+func (m *Mux) Closed() bool { return m.closed.Load() }
+
+// Run reads frames until ctx is done or Close.
 func (m *Mux) Run(ctx context.Context) error {
 	defer m.Close()
 	if err := m.initErr; err != nil {
 		return err
 	}
+	recvCtx, stopRecv := context.WithCancel(ctx)
+	defer stopRecv()
+	go func() {
+		select {
+		case <-m.closeCh:
+			stopRecv()
+		case <-recvCtx.Done():
+		}
+	}()
 	go m.retransmitLoop(ctx)
 	go m.drainLoop(ctx)
 	if !m.local.IsZero() && !m.remote.IsZero() {
 		_ = m.send(ctx, Frame{Type: TypeHello, StreamID: 0})
 	}
 	for {
-		wire, err := m.carrier.Recv(ctx)
+		wire, err := m.carrier.Recv(recvCtx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if m.closed.Load() {
+				return errMuxClosed
 			}
 			return err
 		}

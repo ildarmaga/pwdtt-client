@@ -172,6 +172,8 @@ func (m *WBManager) Connect(room string, routingPayload string, vp8Fps, vp8Batch
 	if m.socksUser == "" {
 		m.socksUser, m.socksPass = genSocksCreds()
 	}
+	m.softRecoverCount = 0
+	m.lastSoftRecover = time.Time{}
 	m.mu.Unlock()
 	return m.connect(room, routingPayload)
 }
@@ -184,6 +186,13 @@ func (m *WBManager) SocksEndpoint() (host string, port int, user, pass string, o
 		return "", 0, "", "", false
 	}
 	return m.socksHost, m.socksPort, m.socksUser, m.socksPass, true
+}
+
+func resetWBSoftCount(userConnect bool, softCount int) int {
+	if userConnect {
+		return 0
+	}
+	return softCount
 }
 
 func genSocksCreds() (user, pass string) {
@@ -238,8 +247,6 @@ func (m *WBManager) connect(room, routingPayload string) error {
 	m.lastFastTrafficAt = time.Time{}
 	m.probeGraceUntil = time.Time{}
 	m.recoverVerifyUntil = time.Time{}
-	m.softRecoverCount = 0
-	m.lastSoftRecover = time.Time{}
 	m.tunnelErrBurst = 0
 	m.lastTunnelErrLog = time.Time{}
 	m.recoverCh = nil
@@ -536,7 +543,7 @@ func (m *WBManager) watchLiveness(ctx context.Context, gen uint64) {
 					canSoftStall := softCount < wbSoftRecoverMax &&
 						(lastSoft.IsZero() || now.Sub(lastSoft) >= wbSoftRecoverCooldownFor(healthy, now))
 					if canSoftStall {
-						m.emitLog("WARN", "[WB] SOCKS без трафика — soft WebRTC-сессия (без полного reconnect)…")
+						m.emitLog("WARN", "[WB] SOCKS без трафика — переподключаю LiveKit…")
 						m.mu.Lock()
 						m.softRecoverCount++
 						m.lastSoftRecover = now
@@ -871,7 +878,7 @@ func (m *WBManager) logRelay(raw string) {
 		// After settle: prefer another soft WebRTC session; full reconnect last.
 		if burst == wbTunnelErrBurstRecover && !stopped && !m.reconnecting.Load() {
 			if softCount < wbSoftRecoverMax {
-				m.emitLog("WARN", "[WB] OpenStream после settle — soft WebRTC-сессия (без полного reconnect)…")
+				m.emitLog("WARN", "[WB] OpenStream после settle — переподключаю LiveKit…")
 				m.mu.Lock()
 				m.softRecoverCount++
 				m.lastSoftRecover = now

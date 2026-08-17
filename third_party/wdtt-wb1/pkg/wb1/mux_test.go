@@ -222,3 +222,29 @@ func TestMuxRejectsOversizedPayload(t *testing.T) {
 		t.Fatal("oversized payload must fail pack")
 	}
 }
+
+func TestMuxRunReturnsOnClose(t *testing.T) {
+	key, err := DeriveKey("secret", "room-mux-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, _ := newCarrierPair()
+	m := NewMux(key, left)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	m.Close()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Run must return an error after Close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after Close")
+	}
+	if !m.Closed() {
+		t.Fatal("Closed() after Close")
+	}
+}

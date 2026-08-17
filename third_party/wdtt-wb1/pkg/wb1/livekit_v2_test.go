@@ -177,6 +177,32 @@ func TestMuxPayloadNotOnDataTopic(t *testing.T) {
 	if !data || !vp8 {
 		t.Fatal("creator beacon must use both data topic and VP8")
 	}
+	data, vp8 = publishPlan(testSID(2), TypeAck)
+	if !data || vp8 {
+		t.Fatal("ACK must use LiveKit data topic and skip VP8 pacer")
+	}
+	data, vp8 = publishPlan(testSID(2), TypePing)
+	if !data || vp8 {
+		t.Fatal("mux Ping must use LiveKit data topic and skip VP8 pacer")
+	}
+	data, vp8 = publishPlan(testSID(2), TypePong)
+	if !data || vp8 {
+		t.Fatal("Pong must use LiveKit data topic and skip VP8 pacer")
+	}
+}
+
+func TestIdleJoinerNotReapedAfterOutboundSend(t *testing.T) {
+	creatorSID := testSID(1)
+	s := newTestSession(creatorSID)
+	oldSID := testSID(2)
+	p := newSIDPipe(s, oldSID)
+	p.lastSeen.Store(time.Now().Add(-time.Minute).UnixNano())
+	s.joiners[oldSID] = p
+	_ = p.Send(context.Background(), []byte{0})
+	s.reapIdleJoiners(time.Now(), joinerIdleTimeout)
+	if len(s.joiners) != 1 {
+		t.Fatalf("outbound send must keep joiner, got %d", len(s.joiners))
+	}
 }
 
 func TestCreatorMuxCap32(t *testing.T) {

@@ -98,7 +98,9 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() { _ = mux.Run(runCtx) }()
+	defer mux.Close()
+	muxDone := make(chan error, 1)
+	go func() { muxDone <- mux.Run(runCtx) }()
 
 	pingCtx, pingCancel := context.WithTimeout(runCtx, 5*time.Second)
 	if _, err := mux.Ping(pingCtx); err != nil {
@@ -114,8 +116,13 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 		return fmt.Errorf("socks listen %s: %w", addr, err)
 	}
 	defer ln.Close()
+	dialTCP := func(ctx context.Context, dest string) (net.Conn, error) {
+		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS CONNECT %s", dest))
+		return mux.Dial(ctx, dest)
+	}
 	go func() {
-		_ = wb1.ServeSOCKSUDP(runCtx, ln, socksUser, socksPass, mux.Dial, func(ctx context.Context, dest string) (net.Conn, error) {
+		_ = wb1.ServeSOCKSUDP(runCtx, ln, socksUser, socksPass, dialTCP, func(ctx context.Context, dest string) (net.Conn, error) {
+			m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS UDP %s", dest))
 			return mux.Dial(ctx, wb1.UDPDest(dest))
 		})
 	}()
@@ -135,7 +142,15 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 			return ctx.Err()
 		case <-sess.Done():
 			return fmt.Errorf("livekit disconnected")
+		case err := <-muxDone:
+			if err != nil && ctx.Err() == nil {
+				return fmt.Errorf("mux: %w", err)
+			}
+			return fmt.Errorf("mux closed")
 		case <-ticker.C:
+			if mux.Closed() {
+				return fmt.Errorf("mux closed")
+			}
 			pingCtx, pingCancel := context.WithTimeout(runCtx, 5*time.Second)
 			rtt, err := mux.Ping(pingCtx)
 			pingCancel()

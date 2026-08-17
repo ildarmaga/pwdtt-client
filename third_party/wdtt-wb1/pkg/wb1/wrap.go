@@ -51,9 +51,22 @@ func DestForMe(me, dest SessionID) bool {
 
 // publishPlan is the production send policy: mux payloads go VP8 only;
 // creator beacon (zero dest) also rides the LiveKit data topic for discovery.
+func isControlType(typ byte) bool {
+	switch typ {
+	case TypePing, TypePong, TypeAck:
+		return true
+	default:
+		return false
+	}
+}
+
 func publishPlan(dest SessionID, typ byte) (dataTopic, vp8 bool) {
 	if dest.IsZero() {
 		return true, true
+	}
+	// Ping/Pong/ACK must not wait behind bulk VP8 WriteSample (speedtest stalls WBT).
+	if isControlType(typ) {
+		return true, false
 	}
 	return false, true
 }

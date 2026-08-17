@@ -179,6 +179,8 @@ func (p *sidPipe) Send(ctx context.Context, payload []byte) error {
 	if p.sess == nil {
 		return errMuxClosed
 	}
+	// Outbound TypeData (guest download) is activity — do not idle-reap a one-way dump.
+	p.touch()
 	_, dest, _, ok := PeekRoute(payload)
 	if !ok {
 		dest = p.remote
