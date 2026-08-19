@@ -2,8 +2,11 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { IconSearch, IconTrashX, IconCopy } from '@tabler/icons-react';
 import { logStore, type LogEntry, type LogLevel } from '../lib/stores/logStore';
 import { useMobileUI } from '../lib/useMobileUI';
+import { GetTrafficConsumers } from '../../wailsjs/go/backend/App';
+import { formatBytes } from '../lib/utils/wdttLink';
 
-type Filter = 'ALL' | 'INFO' | 'GO' | 'STATUS' | 'WARN' | 'ERROR';
+type Filter = 'ALL' | 'INFO' | 'GO' | 'STATUS' | 'WARN' | 'ERROR' | 'КУДА УШЛО';
+type Consumer = { address: string; rxBytes: number; txBytes: number };
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   INFO:  'var(--text)',
@@ -19,10 +22,21 @@ export default function Logs() {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [search, setSearch] = useState('');
   const [entries, setEntries] = useState<LogEntry[]>(() => logStore.getAll());
+  const [consumers, setConsumers] = useState<Consumer[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const autoScroll = useRef(true);
 
   useEffect(() => logStore.subscribe(setEntries), []);
+  useEffect(() => {
+    if (filter !== 'КУДА УШЛО') return;
+    let stopped = false;
+    const refresh = () => GetTrafficConsumers()
+      .then(rows => { if (!stopped) setConsumers(rows ?? []); })
+      .catch(() => {});
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [filter]);
 
   const scrollToBottom = useCallback(() => {
     const el = listRef.current;
@@ -103,6 +117,12 @@ export default function Logs() {
         .log-msg { flex: 1; word-break: break-all; color: var(--text); min-width: 0; }
         .log-count { flex-shrink: 0; background: var(--seg-bg); border-radius: 20px; padding: 1px 6px; font-size: 10px; color: var(--text-2); }
         .logs-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-4); font-size: 13px; }
+        .consumer-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+        .consumer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--bg-2); font-size: 12px; }
+        .consumer-address { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-family: monospace; }
+        .consumer-total { color: var(--text-2); white-space: nowrap; font-weight: 600; }
+        .consumer-rx { color: var(--accent); white-space: nowrap; }
+        .consumer-tx { color: var(--text-3); white-space: nowrap; }
       `}</style>
       <main className="logs-main">
         <div className={`logs-card${compact ? ' logs-card--compact' : ''}`}>
@@ -122,7 +142,7 @@ export default function Logs() {
             )}
             <div className="logs-toolbar-right">
               <div className="filter-group">
-                {(['ALL', 'INFO', 'GO', 'STATUS', 'WARN', 'ERROR'] as Filter[]).map(f => (
+                {(['ALL', 'INFO', 'GO', 'STATUS', 'WARN', 'ERROR', 'КУДА УШЛО'] as Filter[]).map(f => (
                   <button key={f} className={`filter-btn${filter === f ? ' filter-btn--active' : ''}`} onClick={() => setFilter(f)}>{f}</button>
                 ))}
               </div>
@@ -150,7 +170,22 @@ export default function Logs() {
             )}
           </div>
 
-          {visible.length === 0 ? (
+          {filter === 'КУДА УШЛО' ? (
+            consumers.length === 0 ? (
+              <div className="logs-empty">Подключитесь через RAW — статистика появится здесь</div>
+            ) : (
+              <div className="consumer-list">
+                {consumers.map(row => (
+                  <div className="consumer-row" key={row.address} title={row.address}>
+                    <span className="consumer-address">{row.address}</span>
+                    <span className="consumer-total">{formatBytes(row.rxBytes + row.txBytes)}</span>
+                    <span className="consumer-rx">↓ {formatBytes(row.rxBytes)}</span>
+                    <span className="consumer-tx">↑ {formatBytes(row.txBytes)}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : visible.length === 0 ? (
             <div className="logs-empty">{entries.length === 0 ? 'Логи появятся здесь...' : 'Ничего не найдено'}</div>
           ) : (
             <div className="logs-list" ref={listRef} onScroll={onScroll}>

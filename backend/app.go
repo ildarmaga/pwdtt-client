@@ -77,6 +77,7 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 }
 
 func (a *App) Connect(p ConnectParams) error {
+	resetTunnelConsumers()
 	// Ensure WB is fully stopped before bringing up the VK tunnel.
 	// Without this, switching protocol in Settings while WB is connected
 	// leaves WB alive in the same room alongside the new VK session.
@@ -90,7 +91,7 @@ func (a *App) Disconnect() {
 	a.schedulePendingUpdateApply()
 }
 func (a *App) Reconnect() error { return a.orch.Reconnect() }
-func (a *App) IsRunning() bool { return a.orch.IsRunning() || a.wb.IsRunning() }
+func (a *App) IsRunning() bool  { return a.orch.IsRunning() || a.wb.IsRunning() }
 
 // IsWBRunning reports whether the WB Stream tunnel is active (for UI sync).
 func (a *App) IsWBRunning() bool { return a.wb.IsRunning() }

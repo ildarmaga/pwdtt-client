@@ -49,11 +49,32 @@ func TestPacerStartsWithBoundedBurstNotWindow(t *testing.T) {
 	if pacerBurstBytes < 16*1024 || pacerBurstBytes > 32*1024 {
 		t.Fatalf("burst %d outside 16–32KiB", pacerBurstBytes)
 	}
-	if pacerWrappedRateBits < 48_000_000 || pacerWrappedRateBits > 55_000_000 {
-		t.Fatalf("wrapped rate %d outside 48–55 Mbps", pacerWrappedRateBits)
+	if pacerWrappedRateBits < pacerMinRateBits || pacerWrappedRateBits > pacerMaxRateBits {
+		t.Fatalf("wrapped rate %d outside adaptive bounds", pacerWrappedRateBits)
 	}
 	if pacerBurstBytes >= ARQWindow*MaxPayload {
 		t.Fatalf("burst must not start as cwnd1024 dump (%d bytes)", pacerBurstBytes)
+	}
+}
+
+func TestPacerAdaptsToLiveKitBackpressure(t *testing.T) {
+	p := newBytePacer(float64(pacerWrappedRateBits)/8, pacerBurstBytes)
+	start := p.RateBits()
+	p.ObserveWrite(time.Second, false)
+	if got := p.RateBits(); got >= start {
+		t.Fatalf("slow WriteSample did not reduce rate: %d >= %d", got, start)
+	}
+	for i := 0; i < 20; i++ {
+		p.ObserveWrite(2*time.Second, false)
+	}
+	if got := p.RateBits(); got != pacerMinRateBits {
+		t.Fatalf("rate floor %d, want %d", got, pacerMinRateBits)
+	}
+	for i := 0; i < 64; i++ {
+		p.ObserveWrite(10*time.Millisecond, false)
+	}
+	if got := p.RateBits(); got <= pacerMinRateBits {
+		t.Fatalf("healthy writes did not recover rate: %d", got)
 	}
 }
 
@@ -131,7 +152,7 @@ func TestPacerRejectsLargerThanBurst(t *testing.T) {
 	}
 }
 
-func TestPacerPayloadCapAbove40Mbps(t *testing.T) {
+func TestPacerPayloadCapUsesConservativeWBBaseline(t *testing.T) {
 	key := testKey(t)
 	f := Frame{
 		Type:     TypeData,
@@ -155,8 +176,8 @@ func TestPacerPayloadCapAbove40Mbps(t *testing.T) {
 		t.Logf("payload/wrapped = %.4f (len %d); expected ~87–91%%", ratio, wrapped)
 	}
 	capBits := float64(pacerWrappedRateBits) * ratio
-	if capBits <= 40e6 {
-		t.Fatalf("payload cap %.2f Mbps at wrapped %d bps (sample %d B), want >40", capBits/1e6, pacerWrappedRateBits, wrapped)
+	if capBits < 14e6 || capBits > 22e6 {
+		t.Fatalf("payload cap %.2f Mbps at wrapped %d bps (sample %d B), want safe WB baseline", capBits/1e6, pacerWrappedRateBits, wrapped)
 	}
 }
 

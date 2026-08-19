@@ -289,6 +289,31 @@ func TestControlVP8JumpsDataWriteQueue(t *testing.T) {
 	}
 }
 
+func TestControlDataFallbackIsBoundedWhenLiveKitBlocks(t *testing.T) {
+	key := testKey(t)
+	s := newTestSession(testSID(1))
+	blocked := make(chan struct{})
+	s.dataHook = func([]byte) error { <-blocked; return nil }
+	s.writeHook = func([]byte, time.Duration) error { return nil }
+	t.Cleanup(func() { close(blocked) })
+	wire, err := Pack(key, Frame{Type: TypePing, Dest: testSID(2), Src: testSID(1), Payload: make([]byte, 8)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	for i := 0; i < 256; i++ {
+		if err := s.publishWire(context.Background(), testSID(2), wire); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("blocked data fallback stalled VP8 control for %s", d)
+	}
+	if got := len(s.dataCtrl); got > cap(s.dataCtrl) {
+		t.Fatalf("control fallback queue grew past cap: %d > %d", got, cap(s.dataCtrl))
+	}
+}
+
 func TestIdleJoinerNotReapedAfterOutboundSend(t *testing.T) {
 	creatorSID := testSID(1)
 	s := newTestSession(creatorSID)

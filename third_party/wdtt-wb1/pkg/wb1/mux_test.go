@@ -3,6 +3,7 @@ package wb1
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -209,6 +210,14 @@ func TestNewMuxInvalidKeyFailsClosed(t *testing.T) {
 		!strings.Contains(strings.ToLower(runErr.Error()), "key") &&
 		!strings.Contains(strings.ToLower(runErr.Error()), "aead") {
 		t.Fatalf("error %q should mention invalid key/AEAD", runErr)
+	}
+}
+
+func TestMuxPreservesCloseReason(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	m.closeWithError(errSendTimeout)
+	if !errors.Is(m.CloseError(), errSendTimeout) {
+		t.Fatalf("close reason lost: %v", m.CloseError())
 	}
 }
 

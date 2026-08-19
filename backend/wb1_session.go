@@ -136,6 +136,7 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+	pingFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -156,9 +157,16 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 			pingCancel()
 			rttMs := int64(0)
 			if err == nil {
+				pingFailures = 0
 				rttMs = rtt.Milliseconds()
 				if rttMs <= 0 {
 					rttMs = 1
+				}
+			} else {
+				pingFailures++
+				if pingFailures >= 3 {
+					ws := sess.VP8WriteStats()
+					return fmt.Errorf("WB transport stalled: ping failures=%d write_last=%s write_max=%s rate=%.1fMbps: %w", pingFailures, ws.Last, ws.Max, float64(ws.RateBits)/1e6, err)
 				}
 			}
 			m.onStats(rx.Load(), tx.Load(), rttMs, sess.VP8FPS())

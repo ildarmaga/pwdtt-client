@@ -28,6 +28,8 @@ var (
 
 type pushStatus int
 
+type muxCloseState struct{ err error }
+
 const (
 	pushAdmitted pushStatus = iota
 	pushFull
@@ -48,6 +50,7 @@ type Mux struct {
 	acceptCh chan acceptReq
 	nextID   atomic.Uint32
 	closed   atomic.Bool
+	closeErr atomic.Pointer[muxCloseState]
 
 	pings   sync.Map // uint64 nonce -> chan struct{}
 	pingSeq atomic.Uint64
@@ -208,7 +211,7 @@ func (m *Mux) Run(ctx context.Context) error {
 				return ctx.Err()
 			}
 			if m.closed.Load() {
-				return errMuxClosed
+				return m.CloseError()
 			}
 			return err
 		}
@@ -412,8 +415,15 @@ func (m *Mux) drop(id uint32) {
 
 // Close tears down all streams.
 func (m *Mux) Close() {
+	m.closeWithError(nil)
+}
+
+func (m *Mux) closeWithError(err error) {
 	if !m.closed.CompareAndSwap(false, true) {
 		return
+	}
+	if err != nil {
+		m.closeErr.Store(&muxCloseState{err: err})
 	}
 	close(m.closeCh)
 	m.stopDelayAck()
@@ -425,6 +435,13 @@ func (m *Mux) Close() {
 	for _, sc := range streams {
 		sc.remoteClose()
 	}
+}
+
+func (m *Mux) CloseError() error {
+	if state := m.closeErr.Load(); state != nil && state.err != nil {
+		return state.err
+	}
+	return errMuxClosed
 }
 
 type streamConn struct {

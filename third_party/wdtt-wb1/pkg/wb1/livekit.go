@@ -62,6 +62,8 @@ type RoomSession struct {
 	vp8WriterOnce sync.Once
 	vp8Ctrl       chan *vp8WriteReq
 	vp8Data       chan *vp8WriteReq
+	dataCtrlOnce  sync.Once
+	dataCtrl      chan []byte
 
 	vp8N     atomic.Uint64
 	vp8Stamp atomic.Int64
@@ -463,7 +465,7 @@ func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []by
 			return err
 		}
 		if useData {
-			go func() { _ = s.publishData(wire) }()
+			s.enqueueControlData(wire)
 		}
 		return nil
 	}
@@ -484,6 +486,32 @@ func (s *RoomSession) publishWire(ctx context.Context, dest SessionID, wire []by
 		return vp8Err
 	}
 	return dataErr
+}
+
+func (s *RoomSession) enqueueControlData(wire []byte) {
+	if s.done == nil && s.dataHook == nil && s.room == nil {
+		return
+	}
+	s.dataCtrlOnce.Do(func() {
+		s.dataCtrl = make(chan []byte, 64)
+		go func() {
+			for {
+				select {
+				case <-s.done:
+					return
+				case pkt := <-s.dataCtrl:
+					_ = s.publishData(pkt)
+				}
+			}
+		}()
+	})
+	cp := append([]byte(nil), wire...)
+	select {
+	case s.dataCtrl <- cp:
+	default:
+		// VP8 already carried the control frame. The data topic is redundant;
+		// dropping here prevents goroutine growth when LiveKit blocks.
+	}
 }
 
 func (s *RoomSession) writeVP8Unpaced(ctx context.Context, dest SessionID, frame []byte) error {
@@ -583,6 +611,9 @@ func (s *RoomSession) commitVP8(data []byte) error {
 }
 
 func (s *RoomSession) noteWriteSample(err error, d time.Duration) {
+	if s.pacer != nil {
+		s.pacer.ObserveWrite(d, err != nil)
+	}
 	s.wsN.Add(1)
 	if err != nil {
 		s.wsErr.Add(1)
@@ -634,14 +665,16 @@ func (s *RoomSession) VP8FPS() int64 {
 type VP8WriteStats struct {
 	Count, Errors int64
 	Last, Max     time.Duration
+	RateBits      int64
 }
 
 func (s *RoomSession) VP8WriteStats() VP8WriteStats {
 	return VP8WriteStats{
-		Count:  s.wsN.Load(),
-		Errors: s.wsErr.Load(),
-		Last:   time.Duration(s.wsLastNs.Load()),
-		Max:    time.Duration(s.wsMaxNs.Load()),
+		Count:    s.wsN.Load(),
+		Errors:   s.wsErr.Load(),
+		Last:     time.Duration(s.wsLastNs.Load()),
+		Max:      time.Duration(s.wsMaxNs.Load()),
+		RateBits: s.pacer.RateBits(),
 	}
 }
 

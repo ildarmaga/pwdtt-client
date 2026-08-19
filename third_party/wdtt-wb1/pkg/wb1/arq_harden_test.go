@@ -201,10 +201,10 @@ func TestRetransmitDueKeepsMuxIfAcksStillMove(t *testing.T) {
 func TestRetransmitDueClosesWhenNoAckProgress(t *testing.T) {
 	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
 	m.rto = minRTO
-	m.lastProgress = time.Now().Add(-arqStallTimeout - time.Second)
+	m.lastProgress = time.Now().Add(-muxStallTimeout - time.Second)
 	m.sendUnacked = 1
 	m.sendNext = 2
-	old := time.Now().Add(-arqStallTimeout - time.Second)
+	old := time.Now().Add(-muxStallTimeout - time.Second)
 	m.sendBuf[1] = &sendSlot{
 		seq:     1,
 		wire:    []byte{1},
@@ -228,6 +228,16 @@ func TestRetransmitDueKeepsMuxIfInboundDataMoves(t *testing.T) {
 	m.sendBuf[1] = &sendSlot{seq: 1, wire: []byte{1}, sentAt: old, firstAt: old}
 	if !m.retransmitDue(context.Background()) {
 		t.Fatal("stale upload must not close mux while download still moves")
+	}
+}
+
+func TestRetransmitDueAllowsLongWBWriteStall(t *testing.T) {
+	m := NewMux(testKey(t), &countCarrier{send: func([]byte) error { return nil }})
+	now := time.Now()
+	m.lastProgress = now.Add(-arqStallTimeout - time.Second)
+	m.sendBuf[1] = &sendSlot{seq: 1, wire: []byte{1}, sentAt: m.lastProgress, firstAt: m.lastProgress}
+	if !m.retransmitDue(context.Background()) {
+		t.Fatal("ordinary send timeout must not tear down the whole mux")
 	}
 }
 

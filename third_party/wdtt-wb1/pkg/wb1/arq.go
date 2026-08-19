@@ -13,6 +13,7 @@ const (
 	minRTO               = 120 * time.Millisecond
 	maxRTO               = 3 * time.Second
 	arqStallTimeout      = 10 * time.Second
+	muxStallTimeout      = 30 * time.Second
 	maxARQRetries        = 20
 	retransmitTick       = 10 * time.Millisecond
 	maxRetransmitPerTick = 64
@@ -496,7 +497,7 @@ func (m *Mux) sendReliable(ctx context.Context, f Frame) error {
 			}
 			m.mu.Unlock()
 			if !rewind {
-				m.Close()
+				m.closeWithError(fmt.Errorf("wb1: pack failed, seq hole: %w", err))
 				return fmt.Errorf("wb1: pack failed, seq hole: %w", err)
 			}
 			m.wakeSend()
@@ -534,7 +535,7 @@ func (m *Mux) retransmitLoop(ctx context.Context) {
 			return
 		case <-tick.C:
 			if !m.retransmitDue(ctx) {
-				m.Close()
+				m.closeWithError(errSendTimeout)
 				return
 			}
 		}
@@ -551,15 +552,15 @@ func (m *Mux) retransmitDue(ctx context.Context) bool {
 	if rto > maxRTO {
 		rto = maxRTO
 	}
-	if len(m.sendBuf) > 0 && now.Sub(m.lastProgress) >= arqStallTimeout {
+	if len(m.sendBuf) > 0 && now.Sub(m.lastProgress) >= muxStallTimeout {
 		staleFlight := false
 		for _, slot := range m.sendBuf {
-			if len(slot.wire) != 0 && now.Sub(slot.firstAt) >= arqStallTimeout {
+			if len(slot.wire) != 0 && now.Sub(slot.firstAt) >= muxStallTimeout {
 				staleFlight = true
 				break
 			}
 		}
-		if staleFlight && (m.lastInbound.IsZero() || now.Sub(m.lastInbound) >= arqStallTimeout) {
+		if staleFlight && (m.lastInbound.IsZero() || now.Sub(m.lastInbound) >= muxStallTimeout) {
 			m.mu.Unlock()
 			return false
 		}
