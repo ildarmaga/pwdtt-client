@@ -82,6 +82,15 @@ func observeTunnelPacket(pkt []byte, outbound bool) {
 			observeDNSMessage(pkt[ihl+8:])
 		}
 	}
+	if outbound && protocol == 6 && len(pkt) >= ihl+20 {
+		tcpLen := int(pkt[ihl+12]>>4) * 4
+		if tcpLen >= 20 && len(pkt) > ihl+tcpLen {
+			if domain := packetDomain(pkt[ihl+tcpLen:]); domain != "" {
+				ip := net.IPv4(pkt[16], pkt[17], pkt[18], pkt[19]).String()
+				rememberTrafficName(ip, domain)
+			}
+		}
+	}
 	ipOff, portOff := 12, ihl
 	if outbound {
 		ipOff, portOff = 16, ihl+2
@@ -102,6 +111,117 @@ func observeTunnelPacket(pkt []byte, outbound bool) {
 	} else {
 		addTraffic(address, domain, int64(len(pkt)), 0)
 	}
+}
+
+func rememberTrafficName(ip, domain string) {
+	domain = strings.TrimSpace(strings.TrimSuffix(domain, "."))
+	if ip == "" || domain == "" || net.ParseIP(domain) != nil {
+		return
+	}
+	tunnelConsumers.Lock()
+	tunnelConsumers.names[ip] = domain
+	for _, entry := range tunnelConsumers.items {
+		host, _, err := net.SplitHostPort(entry.Address)
+		if err == nil && host == ip {
+			entry.Domain = domain
+		}
+	}
+	tunnelConsumers.Unlock()
+}
+
+func packetDomain(payload []byte) string {
+	if domain := tlsServerName(payload); domain != "" {
+		return domain
+	}
+	// Plain HTTP and proxy-style requests. Headers are ASCII and end at CRLFCRLF.
+	if len(payload) > 8192 {
+		payload = payload[:8192]
+	}
+	text := string(payload)
+	for _, line := range strings.Split(text, "\r\n") {
+		if len(line) >= 5 && strings.EqualFold(line[:5], "host:") {
+			host := strings.TrimSpace(line[5:])
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			return host
+		}
+	}
+	return ""
+}
+
+// tlsServerName extracts SNI from a complete TLS ClientHello carried by the
+// packet. It reads only protocol metadata and never retains payload contents.
+func tlsServerName(p []byte) string {
+	if len(p) < 5 || p[0] != 22 {
+		return ""
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	if recordLen < 4 {
+		return ""
+	}
+	recordEnd := 5 + recordLen
+	if recordEnd > len(p) {
+		recordEnd = len(p)
+	}
+	h := p[5:recordEnd]
+	if len(h) < 4 || h[0] != 1 {
+		return ""
+	}
+	handshakeLen := int(h[1])<<16 | int(h[2])<<8 | int(h[3])
+	if handshakeLen < 38 {
+		return ""
+	}
+	handshakeEnd := 4 + handshakeLen
+	if handshakeEnd > len(h) {
+		handshakeEnd = len(h)
+	}
+	b := h[4:handshakeEnd]
+	off := 2 + 32
+	if off >= len(b) {
+		return ""
+	}
+	sessionLen := int(b[off])
+	off += 1 + sessionLen
+	if off+2 > len(b) {
+		return ""
+	}
+	cipherLen := int(binary.BigEndian.Uint16(b[off : off+2]))
+	off += 2 + cipherLen
+	if off >= len(b) {
+		return ""
+	}
+	compressionLen := int(b[off])
+	off += 1 + compressionLen
+	if off+2 > len(b) {
+		return ""
+	}
+	extensionsLen := int(binary.BigEndian.Uint16(b[off : off+2]))
+	off += 2
+	end := off + extensionsLen
+	if end > len(b) {
+		end = len(b)
+	}
+	for off+4 <= end {
+		typ := binary.BigEndian.Uint16(b[off : off+2])
+		length := int(binary.BigEndian.Uint16(b[off+2 : off+4]))
+		off += 4
+		if off+length > end {
+			return ""
+		}
+		if typ == 0 && length >= 5 {
+			ext := b[off : off+length]
+			listLen := int(binary.BigEndian.Uint16(ext[0:2]))
+			if listLen+2 <= len(ext) && ext[2] == 0 {
+				nameLen := int(binary.BigEndian.Uint16(ext[3:5]))
+				if 5+nameLen <= len(ext) {
+					return string(ext[5 : 5+nameLen])
+				}
+			}
+		}
+		off += length
+	}
+	return ""
 }
 
 // observeDNSMessage learns A-records from DNS responses already passing through
@@ -135,9 +255,7 @@ func observeDNSMessage(msg []byte) {
 		}
 		if typ == 1 && rdlen == 4 && name != "" {
 			ip := net.IPv4(msg[rdata], msg[rdata+1], msg[rdata+2], msg[rdata+3]).String()
-			tunnelConsumers.Lock()
-			tunnelConsumers.names[ip] = strings.TrimSuffix(name, ".")
-			tunnelConsumers.Unlock()
+			rememberTrafficName(ip, name)
 		}
 		off = rdata + rdlen
 	}

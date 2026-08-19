@@ -72,3 +72,28 @@ func TestDNSResponseLabelsTunnelIP(t *testing.T) {
 		t.Fatalf("rows=%+v", rows)
 	}
 }
+
+func TestTLSClientHelloServerName(t *testing.T) {
+	name := "api.example.com"
+	serverName := append([]byte{0, byte(len(name) + 3), 0, 0, byte(len(name))}, []byte(name)...)
+	ext := append([]byte{0, 0, byte(len(serverName) >> 8), byte(len(serverName))}, serverName...)
+	body := make([]byte, 34)
+	body = append(body, 0) // session id
+	body = append(body, 0, 2, 0x13, 0x01)
+	body = append(body, 1, 0) // compression
+	body = append(body, byte(len(ext)>>8), byte(len(ext)))
+	body = append(body, ext...)
+	handshake := []byte{1, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}
+	handshake = append(handshake, body...)
+	record := []byte{22, 3, 1, byte(len(handshake) >> 8), byte(len(handshake))}
+	record = append(record, handshake...)
+	if got := tlsServerName(record); got != name {
+		t.Fatalf("server name=%q want %q", got, name)
+	}
+}
+
+func TestHTTPHost(t *testing.T) {
+	if got := packetDomain([]byte("GET / HTTP/1.1\r\nHost: example.org:80\r\n\r\n")); got != "example.org" {
+		t.Fatalf("host=%q", got)
+	}
+}
