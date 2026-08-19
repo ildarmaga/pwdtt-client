@@ -118,12 +118,20 @@ func (m *WBManager) runWB1(ctx context.Context) error {
 	defer ln.Close()
 	dialTCP := func(ctx context.Context, dest string) (net.Conn, error) {
 		m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS CONNECT %s", dest))
-		return mux.Dial(ctx, dest)
+		conn, err := mux.Dial(ctx, dest)
+		if err != nil {
+			return nil, err
+		}
+		return wrapTrafficConn(conn, dest), nil
 	}
 	go func() {
 		_ = wb1.ServeSOCKSUDP(runCtx, ln, socksUser, socksPass, dialTCP, func(ctx context.Context, dest string) (net.Conn, error) {
 			m.emitLog("INFO", fmt.Sprintf("[WB] SOCKS UDP %s", dest))
-			return mux.Dial(ctx, wb1.UDPDest(dest))
+			conn, err := mux.Dial(ctx, wb1.UDPDest(dest))
+			if err != nil {
+				return nil, err
+			}
+			return wrapTrafficConn(conn, dest), nil
 		})
 	}()
 

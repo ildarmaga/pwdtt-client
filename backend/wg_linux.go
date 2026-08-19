@@ -152,6 +152,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return fmt.Errorf("create TUN: %w", err)
 	}
+	tunDev = wrapTrafficTun(tunDev)
 	activeRawTun = tunDev
 	setActiveRawPrimaryIP(ip)
 

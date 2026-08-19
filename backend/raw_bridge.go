@@ -101,7 +101,6 @@ func startRawBridge(tunDev tun.Device, listenPort string) error {
 				if len(pkt) < 20 || pkt[0]>>4 != 4 {
 					continue
 				}
-				observeTunnelPacket(pkt, true)
 				if _, err := uc.Write(pkt); err != nil {
 					return
 				}
@@ -129,7 +128,6 @@ func startRawBridge(tunDev tun.Device, listenPort string) error {
 			if nr < 20 || buf[0]>>4 != 4 {
 				continue
 			}
-			observeTunnelPacket(buf[:nr], false)
 			pkt := make([]byte, rawTunWriteOffset+nr)
 			copy(pkt[rawTunWriteOffset:], buf[:nr])
 			if _, err := tunDev.Write([][]byte{pkt}, rawTunWriteOffset); err != nil {

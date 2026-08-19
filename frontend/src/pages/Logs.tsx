@@ -5,8 +5,8 @@ import { useMobileUI } from '../lib/useMobileUI';
 import { GetTrafficConsumers } from '../../wailsjs/go/backend/App';
 import { formatBytes } from '../lib/utils/wdttLink';
 
-type Filter = 'ALL' | 'INFO' | 'GO' | 'STATUS' | 'WARN' | 'ERROR' | 'КУДА УШЛО';
-type Consumer = { address: string; rxBytes: number; txBytes: number };
+type Filter = 'ALL' | 'INFO' | 'GO' | 'STATUS' | 'WARN' | 'ERROR' | 'ТРАФИК';
+type Consumer = { address: string; domain: string; rxBytes: number; txBytes: number };
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   INFO:  'var(--text)',
@@ -28,7 +28,7 @@ export default function Logs() {
 
   useEffect(() => logStore.subscribe(setEntries), []);
   useEffect(() => {
-    if (filter !== 'КУДА УШЛО') return;
+    if (filter !== 'ТРАФИК') return;
     let stopped = false;
     const refresh = () => GetTrafficConsumers()
       .then(rows => { if (!stopped) setConsumers(rows ?? []); })
@@ -142,7 +142,7 @@ export default function Logs() {
             )}
             <div className="logs-toolbar-right">
               <div className="filter-group">
-                {(['ALL', 'INFO', 'GO', 'STATUS', 'WARN', 'ERROR', 'КУДА УШЛО'] as Filter[]).map(f => (
+                {(['ALL', 'INFO', 'GO', 'STATUS', 'WARN', 'ERROR', 'ТРАФИК'] as Filter[]).map(f => (
                   <button key={f} className={`filter-btn${filter === f ? ' filter-btn--active' : ''}`} onClick={() => setFilter(f)}>{f}</button>
                 ))}
               </div>
@@ -170,14 +170,14 @@ export default function Logs() {
             )}
           </div>
 
-          {filter === 'КУДА УШЛО' ? (
+          {filter === 'ТРАФИК' ? (
             consumers.length === 0 ? (
-              <div className="logs-empty">Подключитесь через RAW — статистика появится здесь</div>
+              <div className="logs-empty">После подключения статистика трафика появится здесь</div>
             ) : (
               <div className="consumer-list">
                 {consumers.map(row => (
-                  <div className="consumer-row" key={row.address} title={row.address}>
-                    <span className="consumer-address">{row.address}</span>
+                  <div className="consumer-row" key={row.address} title={row.domain ? `${row.domain} (${row.address})` : row.address}>
+                    <span className="consumer-address">{row.domain || row.address}</span>
                     <span className="consumer-total">{formatBytes(row.rxBytes + row.txBytes)}</span>
                     <span className="consumer-rx">↓ {formatBytes(row.rxBytes)}</span>
                     <span className="consumer-tx">↑ {formatBytes(row.txBytes)}</span>

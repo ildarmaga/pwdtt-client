@@ -129,6 +129,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return fmt.Errorf("create TUN: %w", err)
 	}
+	tunDev = wrapTrafficTun(tunDev)
 	activeTun = tunDev
 
 	// Create userspace WireGuard device
@@ -242,6 +243,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return fmt.Errorf("create TUN: %w", err)
 	}
+	tunDev = wrapTrafficTun(tunDev)
 	activeTun = tunDev
 	activeDevice = nil
 	setActiveRawPrimaryIP(ip)
