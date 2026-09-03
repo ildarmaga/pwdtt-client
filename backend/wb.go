@@ -28,9 +28,10 @@ const (
 	// has failed — tear everything down and reconnect from scratch (iOS-style).
 	wbDeadTimeout = 30 * time.Second
 	// If a fresh connect never becomes healthy at all, retry from scratch too.
-	wbConnectTimeout = 90 * time.Second
-	wbWatchTick      = 5 * time.Second
-	wbReconnectDelay = 2 * time.Second
+	wbConnectTimeout    = 90 * time.Second
+	wbWatchTick         = 5 * time.Second
+	wbReconnectDelay    = 2 * time.Second
+	wbReconnectMaxDelay = 30 * time.Second
 
 	// Active data-path probe: KCP rtt can stay healthy while the actual TCP
 	// forwarding through netstack is dead (traffic trickles at B/s, browser
@@ -70,6 +71,20 @@ const (
 	wbTunnelErrBurstRecover      = 20
 	wbTunnelErrIgnoreAfterRebind = 12 * time.Second
 )
+
+func wbReconnectBackoff(failures int) time.Duration {
+	if failures <= 1 {
+		return 5 * time.Second
+	}
+	delay := 5 * time.Second
+	for i := 1; i < failures && delay < wbReconnectMaxDelay; i++ {
+		delay *= 2
+	}
+	if delay > wbReconnectMaxDelay {
+		return wbReconnectMaxDelay
+	}
+	return delay
+}
 
 var wbProbeURLs = []string{
 	"http://cp.cloudflare.com/generate_204",
@@ -660,23 +675,29 @@ func (m *WBManager) reconnect(gen uint64) {
 		return
 	}
 
-	m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
-	if err := m.connect(room, payload); err != nil {
+	for failures := 0; ; failures++ {
 		m.mu.Lock()
 		stopped = m.stop
+		stale := m.runGen.Load() != gen
+		active := m.cancel != nil
 		m.mu.Unlock()
-		if stopped {
+		if stopped || stale || active {
 			return
 		}
-		m.emitLog("ERROR", "[WB] Реконнект не удался: "+err.Error())
-		time.Sleep(5 * time.Second)
-		m.mu.Lock()
-		stopped = m.stop
-		active := m.cancel != nil // a user Connect won the race — leave it alone
-		cur := m.runGen.Load()
-		m.mu.Unlock()
-		if !stopped && !active {
-			go m.reconnect(cur)
+		m.emitLog("INFO", "[WB] Переподключение к новой сессии…")
+		if err := m.connect(room, payload); err == nil {
+			return
+		}
+		delay := wbReconnectBackoff(failures + 1)
+		m.emitLog("ERROR", fmt.Sprintf("[WB] Реконнект не удался — повтор через %s", delay))
+		waitCtx := m.ctx
+		if waitCtx == nil {
+			waitCtx = context.Background()
+		}
+		select {
+		case <-waitCtx.Done():
+			return
+		case <-time.After(delay):
 		}
 	}
 }

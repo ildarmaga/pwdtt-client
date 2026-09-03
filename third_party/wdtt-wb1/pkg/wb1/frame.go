@@ -23,7 +23,7 @@ const (
 	MaxPayload    = 1024 // WrapVP8(Pack(max)) must fit one Pion VP8 RTP payload (<=1199)
 	VP8MaxSample  = 1199 // Pion VP8Payloader outboundMTU=1200 minus 1-byte descriptor
 	ARQWindow     = 1024
-	initialFlight = 32   // flight/cwnd until a valid peer ACK (mixed old peers)
+	initialFlight = 32         // flight/cwnd until a valid peer ACK (mixed old peers)
 	StreamRecvCap = 256 * 1024 // per-stream app recv cap; Data is not ACKed until admitted here
 	headerLen     = MagicSize + 1 + 2 + SIDSize + SIDSize
 	relHdrLen     = 4 + 4 + 4 // epoch + seq + stream_id
@@ -69,6 +69,9 @@ var (
 	errZeroDest      = errors.New("wb1: zero dest")
 	errZeroSrc       = errors.New("wb1: zero src")
 	errBadSID        = errors.New("wb1: bad session id")
+	errBadFrameType  = errors.New("wb1: bad frame type")
+	errBadStreamID   = errors.New("wb1: bad stream id")
+	errEmptyDest     = errors.New("wb1: empty open destination")
 )
 
 // Frame is one WDTT-WB1 message after AEAD open.
@@ -266,6 +269,23 @@ func unpackWithAEAD(a cipher.AEAD, wire []byte) (Frame, error) {
 		z.Payload = append([]byte(nil), plain[relHdrLen:]...)
 	}
 	return z, nil
+}
+
+func validateFrameSemantics(f Frame) error {
+	switch f.Type {
+	case TypePing, TypePong, TypeData, TypeFin, TypeErr, TypeHello, TypeAck:
+		return nil
+	case TypeOpen:
+		if f.StreamID == 0 {
+			return errBadStreamID
+		}
+		if len(f.Payload) == 0 {
+			return errEmptyDest
+		}
+		return nil
+	default:
+		return errBadFrameType
+	}
 }
 
 func isReliable(typ byte) bool {

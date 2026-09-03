@@ -6,18 +6,49 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
 
-const socksReadTimeout = 10 * time.Second
+const (
+	socksReadTimeout = 10 * time.Second
+	maxSOCKSClients  = 256
+	maxUpstreamDials = 64
+	copyDrainTimeout = 5 * time.Second
+)
 
 // DialFunc opens a TCP stream to dest ("host:port").
 type DialFunc func(ctx context.Context, dest string) (net.Conn, error)
 
 const udpDestPrefix = "udp:"
+
+func normalizeMuxDestination(dest string) (hostPort string, udp bool, err error) {
+	for {
+		stripped, ok := stripUDPDest(dest)
+		if !ok {
+			break
+		}
+		udp = true
+		dest = stripped
+	}
+	host, portText, err := net.SplitHostPort(dest)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "", false, fmt.Errorf("wb1: invalid destination %q", dest)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", false, fmt.Errorf("wb1: invalid destination port %q", portText)
+	}
+	return dest, udp, nil
+}
+
+func validateMuxDestination(dest string) error {
+	_, _, err := normalizeMuxDestination(dest)
+	return err
+}
 
 // UDPDest marks a mux Open as a datagram flow (SOCKS UDP ASSOCIATE).
 func UDPDest(hostPort string) string {
@@ -46,9 +77,16 @@ func ServeAcceptUDP(ctx context.Context, m *Mux, dial func(dest string) (net.Con
 			return d.DialContext(ctx, "udp", dest)
 		}
 	}
+	dialSlots := make(chan struct{}, maxUpstreamDials)
 	for {
 		dest, conn, err := m.Accept(ctx)
 		if err != nil {
+			return
+		}
+		select {
+		case dialSlots <- struct{}{}:
+		case <-ctx.Done():
+			_ = conn.Close()
 			return
 		}
 		go func(dest string, conn net.Conn) {
@@ -58,8 +96,15 @@ func ServeAcceptUDP(ctx context.Context, m *Mux, dial func(dest string) (net.Con
 				}
 				_ = conn.Close()
 			}
-			if hostPort, ok := stripUDPDest(dest); ok {
+			hostPort, udp, err := normalizeMuxDestination(dest)
+			if err != nil {
+				<-dialSlots
+				sendErr(err.Error())
+				return
+			}
+			if udp {
 				up, err := udpDial(ctx, hostPort)
+				<-dialSlots
 				if err != nil {
 					sendErr(err.Error())
 					return
@@ -67,7 +112,8 @@ func ServeAcceptUDP(ctx context.Context, m *Mux, dial func(dest string) (net.Con
 				RelayDatagrams(conn, up)
 				return
 			}
-			up, err := dial(dest)
+			up, err := dial(hostPort)
+			<-dialSlots
 			if err != nil {
 				sendErr(err.Error())
 				return
@@ -125,15 +171,23 @@ func ServeSOCKS(ctx context.Context, ln net.Listener, user, pass string, dial Di
 func ServeSOCKSUDP(ctx context.Context, ln net.Listener, user, pass string, dial, udpDial DialFunc) error {
 	relay := newUDPRelay(ctx, udpDial)
 	defer relay.Close()
+	clientSlots := make(chan struct{}, maxSOCKSClients)
 	for {
+		select {
+		case clientSlots <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		c, err := ln.Accept()
 		if err != nil {
+			<-clientSlots
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			return err
 		}
 		go func(c net.Conn) {
+			defer func() { <-clientSlots }()
 			if err := socksHandle(ctx, c, user, pass, dial, relay); err != nil {
 				_ = c.Close()
 			}
@@ -284,11 +338,23 @@ func CopyBoth(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() {
 		_, _ = io.Copy(a, b)
+		closeWrite(a)
 		done <- struct{}{}
 	}()
 	go func() {
 		_, _ = io.Copy(b, a)
+		closeWrite(b)
 		done <- struct{}{}
 	}()
 	<-done
+	select {
+	case <-done:
+	case <-time.After(copyDrainTimeout):
+	}
+}
+
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
 }

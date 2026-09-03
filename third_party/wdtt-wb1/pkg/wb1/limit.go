@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -67,11 +68,17 @@ func CopyBothLimited(a, b net.Conn, down, up *ByteLimiter) {
 	done := make(chan struct{}, 2)
 	go func() {
 		_, _ = io.Copy(limitedWriter{w: a, l: down}, b)
+		closeWrite(a)
 		done <- struct{}{}
 	}()
 	go func() {
 		_, _ = io.Copy(limitedWriter{w: b, l: up}, a)
+		closeWrite(b)
 		done <- struct{}{}
 	}()
 	<-done
+	select {
+	case <-done:
+	case <-time.After(copyDrainTimeout):
+	}
 }

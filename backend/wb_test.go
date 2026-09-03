@@ -109,6 +109,18 @@ func TestWBTunnelDead(t *testing.T) {
 	}
 }
 
+func TestWBReconnectBackoffIsBounded(t *testing.T) {
+	tests := []struct {
+		failures int
+		want     time.Duration
+	}{{0, 5 * time.Second}, {1, 5 * time.Second}, {2, 10 * time.Second}, {3, 20 * time.Second}, {4, 30 * time.Second}, {100, 30 * time.Second}}
+	for _, tt := range tests {
+		if got := wbReconnectBackoff(tt.failures); got != tt.want {
+			t.Fatalf("wbReconnectBackoff(%d) = %s, want %s", tt.failures, got, tt.want)
+		}
+	}
+}
+
 func TestWBTrafficMeaningful(t *testing.T) {
 	now := time.Now()
 	if !wbTrafficMeaningful(now, now.Add(-5*time.Second)) {

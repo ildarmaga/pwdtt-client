@@ -24,7 +24,10 @@ type Carrier interface {
 var (
 	errMuxClosed   = errors.New("wb1: mux closed")
 	errSendTimeout = errors.New("wb1: send window timeout")
+	errStreamLimit = errors.New("wb1: stream limit reached")
 )
+
+const MaxMuxStreams = 256
 
 type pushStatus int
 
@@ -44,13 +47,14 @@ type Mux struct {
 	local   SessionID
 	remote  SessionID
 
-	mu       sync.Mutex
-	streams  map[uint32]*streamConn
-	pending  map[uint32]chan error
-	acceptCh chan acceptReq
-	nextID   atomic.Uint32
-	closed   atomic.Bool
-	closeErr atomic.Pointer[muxCloseState]
+	mu         sync.Mutex
+	streams    map[uint32]*streamConn
+	pending    map[uint32]chan error
+	acceptCh   chan acceptReq
+	maxStreams int
+	nextID     atomic.Uint32
+	closed     atomic.Bool
+	closeErr   atomic.Pointer[muxCloseState]
 
 	pings   sync.Map // uint64 nonce -> chan struct{}
 	pingSeq atomic.Uint64
@@ -107,6 +111,7 @@ func NewMux(key []byte, c Carrier) *Mux {
 		streams:      make(map[uint32]*streamConn),
 		pending:      make(map[uint32]chan error),
 		acceptCh:     make(chan acceptReq, 16),
+		maxStreams:   MaxMuxStreams,
 		epoch:        epoch,
 		sendNext:     1,
 		sendUnacked:  1,
@@ -224,6 +229,9 @@ func (m *Mux) Run(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
+		if err := validateFrameSemantics(f); err != nil {
+			continue
+		}
 		if !m.routeOK(f) {
 			continue
 		}
@@ -274,6 +282,16 @@ func (m *Mux) handleOpen(ctx context.Context, f Frame) {
 	if _, ok := m.streams[f.StreamID]; ok {
 		m.mu.Unlock()
 		sc.remoteClose()
+		return
+	}
+	if len(m.streams) >= m.maxStreams {
+		m.mu.Unlock()
+		sc.remoteClose()
+		go func() {
+			sendCtx, cancel := context.WithTimeout(ctx, arqStallTimeout)
+			defer cancel()
+			_ = m.send(sendCtx, Frame{Type: TypeErr, StreamID: f.StreamID, Payload: []byte(errStreamLimit.Error())})
+		}()
 		return
 	}
 	m.streams[f.StreamID] = sc
@@ -344,6 +362,10 @@ func (m *Mux) Dial(ctx context.Context, dest string) (net.Conn, error) {
 	if m.closed.Load() {
 		m.mu.Unlock()
 		return nil, errMuxClosed
+	}
+	if len(m.streams) >= m.maxStreams {
+		m.mu.Unlock()
+		return nil, errStreamLimit
 	}
 	m.streams[id] = sc
 	m.pending[id] = wait
