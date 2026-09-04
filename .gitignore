@@ -24,3 +24,9 @@ frontend/wailsjs/
 .idea/
 .vscode/
 *.swp
+tools/tunnel-bench/bench-config.json
+tools/tunnel-bench/reports/
+tools/tunnel-bench/direct-smoke.json
+tools/tunnel-bench/*-smoke.json
+tools/tunnel-bench/tunnel-bench.exe
+tools/tunnel-bench/tunnel-bench-linux-amd64

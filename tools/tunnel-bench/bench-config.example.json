@@ -1,0 +1,14 @@
+{
+  "target": "178.173.248.141:18080",
+  "token": "replace-with-a-long-random-token",
+  "megabytes": 128,
+  "streams": 4,
+  "pings": 15,
+  "timeout": "5m",
+  "protocols": [
+    { "name": "wdtt",  "proxy": "socks5://127.0.0.1:10806", "enabled": true },
+    { "name": "raw",   "proxy": "socks5://127.0.0.1:10807", "enabled": true },
+    { "name": "csqtt", "proxy": "socks5://127.0.0.1:10808", "enabled": true },
+    { "name": "wb",    "proxy": "socks5://user:pass@127.0.0.1:10809", "enabled": true }
+  ]
+}
