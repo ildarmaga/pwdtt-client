@@ -9,12 +9,10 @@ import (
 )
 
 const (
-	pacerWrappedRateBits  = 32_000_000 // solo WB1 start; ACK RTT feedback controls queue delay
-	pacerMinRateBits      = 4_000_000
-	pacerMaxRateBits      = 112_000_000
-	pacerBurstBytes       = 24 * 1024 // 24 KiB quantum; avoids Windows ~1ms/pkt cap
-	pacerRTTAdjustEvery   = 200 * time.Millisecond
-	pacerRTTRecoveryCount = 10
+	pacerWrappedRateBits = 16_000_000 // conservative WB LiveKit baseline; adaptive feedback may reduce it
+	pacerMinRateBits     = 4_000_000
+	pacerMaxRateBits     = 24_000_000
+	pacerBurstBytes      = 24 * 1024 // 24 KiB quantum; avoids Windows ~1ms/pkt cap
 )
 
 var errPacerBurst = errors.New("wb1: sample exceeds pacer burst")
@@ -47,10 +45,9 @@ func (p *bytePacer) ObserveRTT(sample time.Duration) {
 		return
 	}
 	now := p.now()
-	if !p.lastRTTAdjust.IsZero() && now.Sub(p.lastRTTAdjust) < pacerRTTAdjustEvery {
+	if !p.lastRTTAdjust.IsZero() && now.Sub(p.lastRTTAdjust) < 200*time.Millisecond {
 		return
 	}
-	p.lastRTTAdjust = now
 	if sample > p.baseRTT+40*time.Millisecond && sample*2 > p.baseRTT*3 {
 		p.rate *= 0.85
 		minRate := float64(pacerMinRateBits) / 8
@@ -58,21 +55,8 @@ func (p *bytePacer) ObserveRTT(sample time.Duration) {
 			p.rate = minRate
 		}
 		p.healthy = 0
-		return
+		p.lastRTTAdjust = now
 	}
-	if sample <= p.baseRTT+20*time.Millisecond {
-		p.healthy++
-		if p.healthy >= pacerRTTRecoveryCount {
-			p.rate *= 1.08
-			maxRate := float64(pacerMaxRateBits) / 8
-			if p.rate > maxRate {
-				p.rate = maxRate
-			}
-			p.healthy = 0
-		}
-		return
-	}
-	p.healthy = 0
 }
 
 func (p *bytePacer) ObserveWrite(d time.Duration, failed bool) {
@@ -88,8 +72,14 @@ func (p *bytePacer) ObserveWrite(d time.Duration, failed bool) {
 	case d >= 200*time.Millisecond:
 		p.rate *= 0.75
 		p.healthy = 0
+	case d <= 80*time.Millisecond:
+		p.healthy++
+		if p.healthy >= 64 {
+			p.rate *= 1.10
+			p.healthy = 0
+		}
 	default:
-		// Recovery is driven by end-to-end ACK RTT, not enqueue latency.
+		p.healthy = 0
 	}
 	minRate, maxRate := float64(pacerMinRateBits)/8, float64(pacerMaxRateBits)/8
 	if p.rate < minRate {
