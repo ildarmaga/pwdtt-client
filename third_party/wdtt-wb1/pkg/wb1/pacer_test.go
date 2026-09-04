@@ -73,8 +73,8 @@ func TestPacerAdaptsToLiveKitBackpressure(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		p.ObserveWrite(10*time.Millisecond, false)
 	}
-	if got := p.RateBits(); got <= pacerMinRateBits {
-		t.Fatalf("healthy writes did not recover rate: %d", got)
+	if got := p.RateBits(); got != pacerMinRateBits {
+		t.Fatalf("fast WriteSample falsely recovered queued transport: %d", got)
 	}
 }
 
@@ -96,6 +96,16 @@ func TestPacerRTTNormalJitter(t *testing.T) {
 	}
 	if got := p.RateBits(); got != start {
 		t.Fatalf("normal RTT jitter changed rate: got %d want %d", got, start)
+	}
+}
+
+func TestPacerFastWritesDoNotFalselyRecover(t *testing.T) {
+	p := newBytePacer(float64(pacerMinRateBits)/8, pacerBurstBytes)
+	for i := 0; i < 256; i++ {
+		p.ObserveWrite(10*time.Millisecond, false)
+	}
+	if got := p.RateBits(); got != pacerMinRateBits {
+		t.Fatalf("fast WriteSample falsely recovered queued transport: %d", got)
 	}
 }
 
@@ -197,8 +207,8 @@ func TestPacerPayloadCapUsesConservativeWBBaseline(t *testing.T) {
 		t.Logf("payload/wrapped = %.4f (len %d); expected ~87–91%%", ratio, wrapped)
 	}
 	capBits := float64(pacerWrappedRateBits) * ratio
-	if capBits < 14e6 || capBits > 22e6 {
-		t.Fatalf("payload cap %.2f Mbps at wrapped %d bps (sample %d B), want safe WB baseline", capBits/1e6, pacerWrappedRateBits, wrapped)
+	if capBits < 27e6 || capBits > 31e6 {
+		t.Fatalf("payload start %.2f Mbps at wrapped %d bps (sample %d B), want solo WB1 start", capBits/1e6, pacerWrappedRateBits, wrapped)
 	}
 }
 

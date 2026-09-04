@@ -3,7 +3,7 @@ package wb1
 import "sync"
 
 const (
-	carrierDataCap = 4096
+	carrierDataCap = 512
 	carrierCtrlCap = 32
 	ctrlFairLimit  = 4 // after this many ctrl pops, drain one data if queued
 )
