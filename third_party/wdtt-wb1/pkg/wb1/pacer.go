@@ -21,14 +21,42 @@ var errPacerBurst = errors.New("wb1: sample exceeds pacer burst")
 // only; sleep happens without holding pacer.mu so concurrent callers share
 // the configured aggregate rate.
 type bytePacer struct {
-	mu      sync.Mutex
-	rate    float64
-	burst   float64
-	tokens  float64
-	last    time.Time
-	now     func() time.Time
-	sleep   func(context.Context, time.Duration) error
-	healthy int
+	mu            sync.Mutex
+	rate          float64
+	burst         float64
+	tokens        float64
+	last          time.Time
+	now           func() time.Time
+	sleep         func(context.Context, time.Duration) error
+	healthy       int
+	baseRTT       time.Duration
+	lastRTTAdjust time.Time
+}
+
+// ObserveRTT applies delay-based backpressure using end-to-end ACK latency.
+func (p *bytePacer) ObserveRTT(sample time.Duration) {
+	if p == nil || sample <= 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.baseRTT == 0 || sample < p.baseRTT {
+		p.baseRTT = sample
+		return
+	}
+	now := p.now()
+	if !p.lastRTTAdjust.IsZero() && now.Sub(p.lastRTTAdjust) < 200*time.Millisecond {
+		return
+	}
+	if sample > p.baseRTT+40*time.Millisecond && sample*2 > p.baseRTT*3 {
+		p.rate *= 0.85
+		minRate := float64(pacerMinRateBits) / 8
+		if p.rate < minRate {
+			p.rate = minRate
+		}
+		p.healthy = 0
+		p.lastRTTAdjust = now
+	}
 }
 
 func (p *bytePacer) ObserveWrite(d time.Duration, failed bool) {

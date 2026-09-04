@@ -254,11 +254,16 @@ func (m *Mux) handleAck(ctx context.Context, f Frame) {
 	m.peerRecvWnd = clampPeerWnd(wnd)
 	m.gotPeerWnd = true
 	newly := 0
+	var ackRTT time.Duration
 	if cum > m.sendUnacked && cum <= m.sendNext {
 		for seq := m.sendUnacked; seq < cum; seq++ {
 			if slot, ok := m.sendBuf[seq]; ok {
 				if !slot.karn && slot.retries == 0 {
-					m.updateRTOLocked(now.Sub(slot.sentAt))
+					sample := now.Sub(slot.sentAt)
+					m.updateRTOLocked(sample)
+					if ackRTT == 0 || sample < ackRTT {
+						ackRTT = sample
+					}
 				}
 				delete(m.sendBuf, seq)
 				newly++
@@ -276,7 +281,11 @@ func (m *Mux) handleAck(ctx context.Context, f Frame) {
 			continue
 		}
 		if !slot.karn && slot.retries == 0 {
-			m.updateRTOLocked(now.Sub(slot.sentAt))
+			sample := now.Sub(slot.sentAt)
+			m.updateRTOLocked(sample)
+			if ackRTT == 0 || sample < ackRTT {
+				ackRTT = sample
+			}
 		}
 		delete(m.sendBuf, seq)
 		newly++
@@ -291,6 +300,11 @@ func (m *Mux) handleAck(ctx context.Context, f Frame) {
 	}
 	fast := m.collectFastRetransmitLocked(now, cum, sack)
 	m.mu.Unlock()
+	if ackRTT > 0 {
+		if observer, ok := m.carrier.(interface{ ObserveRTT(time.Duration) }); ok {
+			observer.ObserveRTT(ackRTT)
+		}
+	}
 	for _, slot := range fast {
 		if m.closed.Load() || ctx.Err() != nil {
 			break

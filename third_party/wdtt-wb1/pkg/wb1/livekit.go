@@ -201,6 +201,12 @@ func (p *sidPipe) Send(ctx context.Context, payload []byte) error {
 	return p.sess.publishWire(ctx, dest, payload)
 }
 
+func (p *sidPipe) ObserveRTT(sample time.Duration) {
+	if p != nil && p.sess != nil && p.sess.pacer != nil {
+		p.sess.pacer.ObserveRTT(sample)
+	}
+}
+
 func (p *sidPipe) Recv(ctx context.Context) ([]byte, error) {
 	for {
 		if b, ok := p.q.Pop(); ok {
@@ -242,6 +248,12 @@ func (s *RoomSession) JoinerCarrier() Carrier {
 }
 
 type joinerCarrier struct{ s *RoomSession }
+
+func (c *joinerCarrier) ObserveRTT(sample time.Duration) {
+	if c != nil && c.s != nil && c.s.pacer != nil {
+		c.s.pacer.ObserveRTT(sample)
+	}
+}
 
 func (c *joinerCarrier) Send(ctx context.Context, payload []byte) error {
 	if err := ctx.Err(); err != nil {

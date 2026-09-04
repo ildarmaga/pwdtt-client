@@ -78,6 +78,27 @@ func TestPacerAdaptsToLiveKitBackpressure(t *testing.T) {
 	}
 }
 
+func TestPacerRTTBackpressure(t *testing.T) {
+	p := newBytePacer(float64(pacerWrappedRateBits)/8, pacerBurstBytes)
+	start := p.RateBits()
+	p.ObserveRTT(70 * time.Millisecond)
+	p.ObserveRTT(150 * time.Millisecond)
+	if got := p.RateBits(); got >= start {
+		t.Fatalf("congested RTT did not reduce rate: %d", got)
+	}
+}
+
+func TestPacerRTTNormalJitter(t *testing.T) {
+	p := newBytePacer(float64(pacerWrappedRateBits)/8, pacerBurstBytes)
+	start := p.RateBits()
+	for _, sample := range []time.Duration{70, 76, 81, 74, 79} {
+		p.ObserveRTT(sample * time.Millisecond)
+	}
+	if got := p.RateBits(); got != start {
+		t.Fatalf("normal RTT jitter changed rate: got %d want %d", got, start)
+	}
+}
+
 func TestPacerTokenAccountingNoSleepWhileBurst(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	var sleeps atomic.Int32

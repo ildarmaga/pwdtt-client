@@ -1,6 +1,11 @@
 
 # Changelog — PWDTT Client (WDTT Desktop)
 
+## [0.3.325] — 2026-09-04
+
+### Fix — WB1 bufferbloat под загрузкой
+- Pacer адаптируется по реальному ACK RTT и снижает скорость до роста WBT и `send window timeout`.
+
 ## [0.3.324] — 2026-09-04
 
 ### Fix — стабильность WB1 mux
