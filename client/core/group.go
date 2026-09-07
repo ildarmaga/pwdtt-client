@@ -66,15 +66,12 @@ func credBootstrapMinSlots(poolSize int) int {
 	return 1
 }
 
-// pickReadyCredSlot — preferred слот если готов, иначе любой готовый, иначе -1.
+// pickReadyCredSlot returns only the worker's assigned credential slot.
+// Falling back to slot 0 during bootstrap made most RAW workers share one
+// short-lived VK credential, so they were closed in one synchronized wave.
 func pickReadyCredSlot(preferred int, ready []bool) int {
 	if preferred >= 0 && preferred < len(ready) && ready[preferred] {
 		return preferred
-	}
-	for i, ok := range ready {
-		if ok {
-			return i
-		}
 	}
 	return -1
 }
@@ -426,7 +423,8 @@ func WorkerGroup(
 				}
 				credsMu.RUnlock()
 				if slotCreds == nil {
-					// Bootstrap ещё не дал ни одного слота / гонка — ждём фон.
+					// Wait for this worker's own slot. Reusing another ready slot
+					// synchronizes credential expiry across the whole RAW group.
 					select {
 					case <-time.After(200 * time.Millisecond):
 					case <-ctx.Done():

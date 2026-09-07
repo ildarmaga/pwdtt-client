@@ -51,11 +51,6 @@ func pickReadyCredSlot(preferred int, ready []bool) int {
 	if preferred >= 0 && preferred < len(ready) && ready[preferred] {
 		return preferred
 	}
-	for i, ok := range ready {
-		if ok {
-			return i
-		}
-	}
 	return -1
 }
 

@@ -16,8 +16,8 @@ func TestCredBootstrapMinSlots(t *testing.T) {
 
 func TestPickReadyCredSlot(t *testing.T) {
 	ready := []bool{true, false, false, false}
-	if got := pickReadyCredSlot(2, ready); got != 0 {
-		t.Fatalf("fallback to slot0: got %d", got)
+	if got := pickReadyCredSlot(2, ready); got != -1 {
+		t.Fatalf("unready assigned slot must wait, got fallback slot %d", got)
 	}
 	ready[2] = true
 	if got := pickReadyCredSlot(2, ready); got != 2 {
@@ -26,8 +26,8 @@ func TestPickReadyCredSlot(t *testing.T) {
 	if got := pickReadyCredSlot(1, []bool{false, false, false}); got != -1 {
 		t.Fatalf("none ready: got %d want -1", got)
 	}
-	if got := pickReadyCredSlot(0, []bool{false, true, false}); got != 1 {
-		t.Fatalf("any ready: got %d want 1", got)
+	if got := pickReadyCredSlot(0, []bool{false, true, false}); got != -1 {
+		t.Fatalf("must not borrow another credential slot, got %d", got)
 	}
 }
 
