@@ -176,6 +176,7 @@ export default function Connect() {
   const [editServer, setEditServer] = useState<Server | null>(null);
   const [linkFlash, setLinkFlash] = useState(false);
   const [traffic, setTraffic] = useState<TrafficStats | null>(() => trafficStatsStore.get(selected?.subUrl));
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
@@ -300,7 +301,7 @@ export default function Connect() {
     const tick = async () => {
       let nextMs = fallbackMs;
       try {
-        const stats = await fetchTrafficStats(subUrl);
+        const stats = await fetchTrafficStats(subUrl, displayServer?.deviceId);
         if (cancelled) return;
         if (stats) {
           setTraffic(stats);
@@ -316,7 +317,7 @@ export default function Connect() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [displayServer?.subUrl, displayServer?.id, metricsRefreshSec, tunnelState]);
+  }, [displayServer?.subUrl, displayServer?.id, displayServer?.deviceId, metricsRefreshSec, tunnelState]);
 
   useEffect(() => {
     if (tunnelProtocol !== 'wb' || tunnelState !== 'idle') return;
@@ -336,14 +337,23 @@ export default function Connect() {
   useEffect(() => {
     if (tunnelState !== 'connected' || !displayServer?.subUrl) return;
     let cancelled = false;
-    fetchTrafficStats(displayServer.subUrl).then((stats) => {
+    fetchTrafficStats(displayServer.subUrl, displayServer.deviceId).then((stats) => {
       if (!cancelled && stats) {
         setTraffic(stats);
         trafficStatsStore.set(displayServer.subUrl!, stats);
       }
     });
     return () => { cancelled = true; };
-  }, [tunnelState, displayServer?.subUrl, displayServer?.id]);
+  }, [tunnelState, displayServer?.subUrl, displayServer?.id, displayServer?.deviceId]);
+
+  useEffect(() => {
+    if (!traffic) return;
+    const state = (traffic.expireState || '').toLowerCase();
+    if (state === 'unlimited' || state === 'pending') return;
+    if (!traffic.expire && !traffic.remainingSeconds) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [traffic?.expire, traffic?.expireState, traffic?.serverTs, traffic?.fetchedAt]);
 
   const doConnectWB = async () => {
     const room = (selected?.wbRoom ?? '').trim();
@@ -1032,7 +1042,7 @@ export default function Connect() {
                   )}
                   <span className="status-traffic-text">{trafficCompactLabel(traffic)}</span>
                 </span>
-                <span className="status-expire" title={expireLabel(traffic)}>{expireLabel(traffic)}</span>
+                <span className="status-expire" title={expireLabel(traffic, nowTick)}>{expireLabel(traffic, nowTick)}</span>
                 {traffic.supportUrl && (
                   <span
                     className="status-support"

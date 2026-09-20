@@ -61,6 +61,33 @@ func TestParseSubUserInfo(t *testing.T) {
 	}
 }
 
+func TestParseSubUserInfoPromoFields(t *testing.T) {
+	s := parseSubUserInfo("upload=0; download=0; total=0; expire=0; expire_kind=promo; expire_state=pending; remaining_seconds=0; server_ts=1700000000")
+	if s == nil || s.ExpireKind != "promo" || s.ExpireState != "pending" || s.ServerTs != 1700000000 {
+		t.Fatalf("promo pending: %+v", s)
+	}
+	h := http.Header{}
+	h.Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0; expire_kind=promo; expire_state=pending; remaining_seconds=0; server_ts=1")
+	got := parseSubResponseStats(h)
+	if got == nil || got.ExpireKind != "promo" || got.ExpireState != "pending" {
+		t.Fatalf("pending promo must not look empty: %+v", got)
+	}
+}
+
+func TestAttachSubDeviceID(t *testing.T) {
+	req, err := http.NewRequest(http.MethodHead, "https://panel.example/sub/abc", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachSubDeviceID(req, "phone-1")
+	if req.URL.Query().Get("did") != "phone-1" {
+		t.Fatalf("query: %s", req.URL.RawQuery)
+	}
+	if req.Header.Get("X-WDTT-Device-ID") != "phone-1" {
+		t.Fatalf("header: %s", req.Header.Get("X-WDTT-Device-ID"))
+	}
+}
+
 func TestParseSubResponseStats(t *testing.T) {
 	h := http.Header{}
 	h.Set("Subscription-Userinfo", "upload=100; download=200; total=0; expire=1717459200")

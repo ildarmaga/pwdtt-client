@@ -4,8 +4,12 @@ import {
 } from '../../../wailsjs/go/backend/App';
 import type { backend } from '../../../wailsjs/go/models';
 import type { Server } from '../types';
+import { expireCompactLabel, expireLabel, type ExpireStats } from './expireLabel';
 
-export interface TrafficStats {
+export type { ExpireStats };
+export { expireCompactLabel, expireLabel };
+
+export interface TrafficStats extends ExpireStats {
   upload: number;
   download: number;
   total: number;
@@ -66,7 +70,19 @@ export function isImportableInput(raw: string): boolean {
   return isOfflineWdtt(s) || extractSubFromWdtt(s) !== null;
 }
 
+type SubStatsPayload = backend.SubTrafficStats & {
+  expireKind?: string;
+  expire_kind?: string;
+  expireState?: string;
+  expire_state?: string;
+  remainingSeconds?: number;
+  remaining_seconds?: number;
+  serverTs?: number;
+  server_ts?: number;
+};
+
 function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
+  const raw = r as SubStatsPayload;
   return {
     upload: r.upload,
     download: r.download,
@@ -76,6 +92,11 @@ function statsFromResult(r: backend.SubTrafficStats): TrafficStats {
     announce: r.announce || undefined,
     supportUrl: r.supportUrl || undefined,
     updateInterval: r.updateInterval || undefined,
+    expireKind: raw.expireKind || raw.expire_kind || undefined,
+    expireState: raw.expireState || raw.expire_state || undefined,
+    remainingSeconds: raw.remainingSeconds ?? raw.remaining_seconds,
+    serverTs: raw.serverTs ?? raw.server_ts,
+    fetchedAt: Date.now(),
   };
 }
 
@@ -109,10 +130,11 @@ export function serverVpnTitle(server: Server | null, traffic?: TrafficStats | n
   return vpn || user || 'Server';
 }
 
-export async function fetchTrafficStats(subUrl: string): Promise<TrafficStats | null> {
+export async function fetchTrafficStats(subUrl: string, deviceId?: string): Promise<TrafficStats | null> {
   if (!isPanelSubUrl(subUrl)) return null;
   try {
-    const r = await FetchSubscriptionStats(subUrl.trim());
+    const fetchStats = FetchSubscriptionStats as (url: string, deviceID?: string) => Promise<backend.SubTrafficStats>;
+    const r = await fetchStats(subUrl.trim(), (deviceId || '').trim());
     if (!r) return null;
     return statsFromResult(r);
   } catch {
@@ -223,44 +245,6 @@ export function trafficCompactLabel(stats: TrafficStats): string {
   const used = stats.upload + stats.download;
   const totalStr = !stats.total || stats.total <= 0 ? '∞' : formatBytes(stats.total).replace(' ', '');
   return `${formatBytes(used).replace(' ', '')}/${totalStr}`;
-}
-
-function daysWord(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 14) return 'дней';
-  if (mod10 === 1) return 'день';
-  if (mod10 >= 2 && mod10 <= 4) return 'дня';
-  return 'дней';
-}
-
-export function expireLabel(stats: TrafficStats): string {
-  if (!stats.expire || stats.expire <= 0) return 'Бессрочно';
-  const d = new Date(stats.expire * 1000);
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expDay = new Date(d);
-  expDay.setHours(0, 0, 0, 0);
-  const daysLeft = Math.ceil((expDay.getTime() - today.getTime()) / 86400000);
-  if (daysLeft < 0) return `Истекло: ${dd}.${mm}.${yyyy}`;
-  if (daysLeft === 0) return `Истекает сегодня · ${dd}.${mm}.${yyyy}`;
-  return `Истекает: ${dd}.${mm}.${yyyy} · осталось ${daysLeft} ${daysWord(daysLeft)}`;
-}
-
-export function expireCompactLabel(stats: TrafficStats): string {
-  if (!stats.expire || stats.expire <= 0) return '∞';
-  const d = new Date(stats.expire * 1000);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expDay = new Date(d);
-  expDay.setHours(0, 0, 0, 0);
-  const daysLeft = Math.ceil((expDay.getTime() - today.getTime()) / 86400000);
-  if (daysLeft < 0) return 'истекло';
-  if (daysLeft === 0) return 'сегодня';
-  return `${daysLeft} ${daysWord(daysLeft)}`;
 }
 
 export function subRefreshMs(stats: TrafficStats | null): number {

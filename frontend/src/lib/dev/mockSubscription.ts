@@ -34,11 +34,17 @@ function parseUserInfo(header: string): Partial<TrafficStats> | null {
     if (idx <= 0) continue;
     const key = part.slice(0, idx).trim().toLowerCase();
     const val = Number(part.slice(idx + 1).trim());
-    if (Number.isNaN(val)) continue;
+    if (Number.isNaN(val)) {
+      if (key === 'expire_kind') out.expireKind = part.slice(idx + 1).trim();
+      if (key === 'expire_state') out.expireState = part.slice(idx + 1).trim();
+      continue;
+    }
     if (key === 'upload') out.upload = val;
     if (key === 'download') out.download = val;
     if (key === 'total') out.total = val;
     if (key === 'expire') out.expire = val;
+    if (key === 'remaining_seconds') out.remainingSeconds = val;
+    if (key === 'server_ts') out.serverTs = val;
   }
   return out;
 }
@@ -69,9 +75,21 @@ function toProxyUrl(url: string): string {
   return `/sub-fetch?u=${encodeURIComponent(url)}`;
 }
 
+function withDeviceID(url: string, deviceID?: string) {
+  const did = (deviceID || '').trim();
+  if (!did) return url;
+  try {
+    const u = new URL(url);
+    u.searchParams.set('did', did);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 async function fetchSubRaw(url: string, method: 'GET' | 'HEAD') {
   const fetchUrl = toProxyUrl(url);
-  logDevMetric(method, url, `via ${fetchUrl}`, true);
+  logDevMetric(method, url.split('?')[0], `via ${fetchUrl}`, true);
   const resp = await fetch(fetchUrl, {
     method,
     headers: { Accept: 'text/plain', 'User-Agent': 'WDTT/1.0' },
@@ -89,6 +107,11 @@ function statsFromHeaders(resp: Response): TrafficStats | null {
     download: base.download ?? 0,
     total: base.total ?? 0,
     expire: base.expire ?? 0,
+    expireKind: base.expireKind,
+    expireState: base.expireState,
+    remainingSeconds: base.remainingSeconds,
+    serverTs: base.serverTs,
+    fetchedAt: Date.now(),
   };
   const title = decodeHeaderValue(resp.headers.get('Profile-Title') ?? '');
   const announce = decodeHeaderValue(resp.headers.get('Announce') ?? '');
@@ -201,16 +224,17 @@ export async function devFetchSubscriptionURL(rawURL: string) {
   }
 }
 
-export async function devFetchSubscriptionStats(rawURL: string, connected: boolean) {
+export async function devFetchSubscriptionStats(rawURL: string, connected: boolean, deviceID = '') {
   const subUrl = normSubUrl(rawURL);
   const store = loadStore();
+  const fetchURL = withDeviceID(subUrl, deviceID);
 
   try {
-    let resp = await fetchSubRaw(subUrl, 'HEAD');
+    let resp = await fetchSubRaw(fetchURL, 'HEAD');
     let stats = statsFromHeaders(resp);
     if (!stats) {
       logDevMetric('GET', subUrl, 'fallback: no userinfo on HEAD', true);
-      resp = await fetchSubRaw(subUrl, 'GET');
+      resp = await fetchSubRaw(fetchURL, 'GET');
       stats = statsFromHeaders(resp);
     } else {
       logDevMetric('HEAD', subUrl, `userinfo upload=${stats.upload} download=${stats.download}`, true);

@@ -12,14 +12,18 @@ import (
 )
 
 type SubTrafficStats struct {
-	Upload         int64  `json:"upload"`
-	Download       int64  `json:"download"`
-	Total          int64  `json:"total"`
-	Expire         int64  `json:"expire"`
-	Title          string `json:"title,omitempty"`
-	Announce       string `json:"announce,omitempty"`
-	SupportURL     string `json:"supportUrl,omitempty"`
-	UpdateInterval int    `json:"updateInterval,omitempty"`
+	Upload           int64  `json:"upload"`
+	Download         int64  `json:"download"`
+	Total            int64  `json:"total"`
+	Expire           int64  `json:"expire"`
+	ExpireKind       string `json:"expireKind,omitempty"`
+	ExpireState      string `json:"expireState,omitempty"`
+	RemainingSeconds int64  `json:"remainingSeconds,omitempty"`
+	ServerTs         int64  `json:"serverTs,omitempty"`
+	Title            string `json:"title,omitempty"`
+	Announce         string `json:"announce,omitempty"`
+	SupportURL       string `json:"supportUrl,omitempty"`
+	UpdateInterval   int    `json:"updateInterval,omitempty"`
 }
 
 type SubImportResult struct {
@@ -104,7 +108,7 @@ func fetchWBRoomViaAuth(subURL, password string) (string, error) {
 	return strings.TrimSpace(resp.WbRoom), nil
 }
 
-func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
+func (a *App) FetchSubscriptionStats(rawURL string, deviceID string) (*SubTrafficStats, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if err := validatePanelSubURL(rawURL); err != nil {
 		return nil, err
@@ -116,6 +120,7 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 	}
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("User-Agent", "WDTT/1.0")
+	attachSubDeviceID(req, deviceID)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -128,6 +133,7 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 		}
 		req.Header.Set("Accept", "text/plain")
 		req.Header.Set("User-Agent", "WDTT/1.0")
+		attachSubDeviceID(req, deviceID)
 		resp, err = client.Do(req)
 		if err != nil {
 			return nil, err
@@ -142,6 +148,20 @@ func (a *App) FetchSubscriptionStats(rawURL string) (*SubTrafficStats, error) {
 		return nil, fmt.Errorf("no subscription info")
 	}
 	return stats, nil
+}
+
+func attachSubDeviceID(req *http.Request, deviceID string) {
+	if req == nil {
+		return
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	req.Header.Set("X-WDTT-Device-ID", deviceID)
+	q := req.URL.Query()
+	q.Set("did", deviceID)
+	req.URL.RawQuery = q.Encode()
 }
 
 func (a *App) ParseWdttLink(link string) (*SubImportResult, error) {
@@ -159,7 +179,8 @@ func parseSubResponseStats(h http.Header) *SubTrafficStats {
 	}
 	applySubMeta(stats, h)
 	if stats.Upload == 0 && stats.Download == 0 && stats.Total == 0 && stats.Expire == 0 &&
-		stats.Title == "" && stats.Announce == "" && stats.SupportURL == "" && stats.UpdateInterval == 0 {
+		stats.Title == "" && stats.Announce == "" && stats.SupportURL == "" && stats.UpdateInterval == 0 &&
+		stats.ExpireKind == "" && stats.ExpireState == "" {
 		return nil
 	}
 	return stats
@@ -212,7 +233,16 @@ func parseSubUserInfo(header string) *SubTrafficStats {
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(part[:idx]))
-		val, err := strconv.ParseInt(strings.TrimSpace(part[idx+1:]), 10, 64)
+		rawVal := strings.TrimSpace(part[idx+1:])
+		switch key {
+		case "expire_kind":
+			out.ExpireKind = rawVal
+			continue
+		case "expire_state":
+			out.ExpireState = rawVal
+			continue
+		}
+		val, err := strconv.ParseInt(rawVal, 10, 64)
 		if err != nil {
 			continue
 		}
@@ -225,6 +255,10 @@ func parseSubUserInfo(header string) *SubTrafficStats {
 			out.Total = val
 		case "expire":
 			out.Expire = val
+		case "remaining_seconds":
+			out.RemainingSeconds = val
+		case "server_ts":
+			out.ServerTs = val
 		}
 	}
 	return out

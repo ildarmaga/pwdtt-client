@@ -188,10 +188,11 @@ function installGoMock() {
           startDevTunnelStats();
         },
         DeleteProfile: asyncVoid,
-        FetchSubscriptionStats: async (rawURL: unknown) => {
+        FetchSubscriptionStats: async (rawURL: unknown, deviceID?: unknown) => {
           const url = String(rawURL ?? '');
+          const did = String(deviceID ?? '');
           markDevSubConnected(url, !!window.__pwdttDevConnected);
-          return devFetchSubscriptionStats(url, !!window.__pwdttDevConnected);
+          return devFetchSubscriptionStats(url, !!window.__pwdttDevConnected, did);
         },
         FetchSubscriptionURL: async (rawURL: unknown) => devFetchSubscriptionURL(String(rawURL ?? '')),
         ParseWdttLink: async (link: unknown) => {
@@ -284,11 +285,11 @@ function installGoMock() {
         ClearVKCookies: async () => {
           localStorage.removeItem(VK_COOKIES_RAW_KEY);
         },
-        GetAppVersion: async () => '0.3.90',
+        GetAppVersion: async () => '0.3.326',
         GetDataDir: async () => '/tmp/wdtt-data',
         CheckForUpdate: async () => ({
-          current: '0.3.90',
-          latest: '0.3.90',
+          current: '0.3.326',
+          latest: '0.3.326',
           hasUpdate: false,
           downloadURL: '',
           releaseURL: 'https://github.com/ildarmaga/pwdtt-client/releases',
