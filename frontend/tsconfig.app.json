@@ -21,5 +21,6 @@
     "erasableSyntaxOnly": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "wailsjs"]
+  "include": ["src", "wailsjs"],
+  "exclude": ["src/**/*.test.ts"]
 }
