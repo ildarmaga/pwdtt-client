@@ -33,12 +33,12 @@ func NormalizeWorkers(workers int) int {
 	return (n / workersPerGroup) * workersPerGroup
 }
 
-// Как CSQTT: один TURN-набор на две группы (18 аллокаций). Хеш берётся из панели
-// или подписки, звонок клиент не создаёт. Новый запрос к VK — только после
-// исчерпания этих 18 аллокаций или ответа STUN 401 / 438 / 441.
+// Одна группа — свой хеш и свой TURN-логин. Делить логин на две группы нельзя:
+// VK режет Allocate квотой 486 примерно после 11 живых аллокаций на имя.
+// Набор группы живёт 18 аллокаций (переподключения), новый запрос к VK — после
+// этого или на STUN 401 / 438 / 441. Обрыв relay логин не сбрасывает.
 const (
-	groupsPerCredential  = 2
-	workersPerCredential = workersPerGroup * groupsPerCredential
+	workersPerCredential = workersPerGroup * 2
 	workerStartInterval  = 100 * time.Millisecond
 )
 
@@ -46,7 +46,7 @@ func credentialCohort(groupID int) int {
 	if groupID < 1 {
 		groupID = 1
 	}
-	return (groupID - 1) / groupsPerCredential
+	return groupID - 1
 }
 
 func credentialStreamID(cohort int) int {
@@ -162,7 +162,7 @@ func cloneCreds(c *Credentials) *Credentials {
 	}
 }
 
-// WorkerGroup запускает N потоков на одном TURN-наборе когорты (две группы = 18 аллокаций).
+// WorkerGroup запускает N потоков на TURN-логине своего хеша.
 func WorkerGroup(
 	ctx context.Context,
 	groupID int,

@@ -6,12 +6,9 @@ import (
 	"testing"
 )
 
-func TestCredentialCohortPairsTwoGroups(t *testing.T) {
-	if credentialCohort(1) != 0 || credentialCohort(2) != 0 {
-		t.Fatalf("groups 1-2 cohort=%d,%d want 0", credentialCohort(1), credentialCohort(2))
-	}
-	if credentialCohort(3) != 1 || credentialCohort(4) != 1 {
-		t.Fatalf("groups 3-4 cohort=%d,%d want 1", credentialCohort(3), credentialCohort(4))
+func TestCredentialCohortIsPerGroup(t *testing.T) {
+	if credentialCohort(1) != 0 || credentialCohort(2) != 1 || credentialCohort(3) != 2 {
+		t.Fatalf("cohorts=%d,%d,%d want 0,1,2", credentialCohort(1), credentialCohort(2), credentialCohort(3))
 	}
 	if credentialStreamID(0) != 100 || credentialStreamID(1) != 200 {
 		t.Fatalf("stream ids %d %d", credentialStreamID(0), credentialStreamID(1))
