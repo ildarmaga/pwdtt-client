@@ -133,6 +133,7 @@ func WorkerGroup(
 			tp.MTU,
 			tp.RawPrimaryIP,
 			rawChunkedEnabled(tp.TunnelMode, tp.TurnTransport),
+			tp.ObfsMode,
 		)
 	}
 	if !getConfig {
@@ -612,7 +613,7 @@ type TurnParams struct {
 	Hashes        []string
 	WrapKey       []byte // Password-derived WRAP key (32 bytes), nil = disabled
 	ObfsMode      string // audio|video
-	TunnelMode    string // wg|raw
+	TunnelMode    string // wg|raw|csqtt
 	TurnTransport string // tcp|udp — канал к TURN (default tcp, как qWDTT 1.4)
 	MTU           int    // для RAWCONF
 	RawPrimaryIP  string // soft-reconnect: IP сохранённого TUN

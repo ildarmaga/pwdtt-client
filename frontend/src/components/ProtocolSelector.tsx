@@ -6,7 +6,7 @@ interface Props {
   onChange: (p: TunnelProtocol) => void;
   locked?: boolean;
   /** Только для VK: WG или RAW */
-  tunnelMode?: 'wg' | 'raw';
+  tunnelMode?: 'wg' | 'raw' | 'csqtt';
   /** Только для VK: TURN tcp|udp */
   turnTransport?: 'tcp' | 'udp';
   /** Только для VK: RTP-маскировка */
@@ -22,7 +22,7 @@ export default function ProtocolSelector({ value, onChange, locked, tunnelMode =
   const meta = PROTOCOL_META[value];
   const hint =
     value === 'vk'
-      ? `VK Calls · ${tunnelMode === 'raw' ? 'RAW' : 'WG'} · ${turnTransport === 'udp' ? 'UDP' : 'TCP'} · ${obfsMode === 'video' ? 'Видео' : 'Аудио'}`
+      ? `VK Calls · ${tunnelMode === 'csqtt' ? 'CSQTT' : tunnelMode === 'raw' ? 'RAW' : 'WG'} · ${turnTransport === 'udp' ? 'UDP' : 'TCP'} · ${obfsMode === 'video' ? 'Видео' : 'Аудио'}`
       : meta.hint;
 
   return (

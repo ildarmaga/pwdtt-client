@@ -25,10 +25,11 @@ type Config struct {
 	CaptchaMode     string   // -captcha-mode
 	MTU             int      // 0 = default 1380
 	ObfsMode        string   // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode      string   // wg|raw — raw = IP over WRAP direct (DTLS+3), без WireGuard
+	TunnelMode      string   // wg|raw|csqtt — raw = IP без WireGuard; csqtt = WG через CSQTT-WRAP-v1
 	TurnTransport   string   // tcp|udp — канал клиент↔TURN (default tcp)
 	RawPrimaryIP    string   // soft-reconnect: IP сохранённого TUN для rewrite
 	RawDirectPort   int      // 0 = peer DTLS+3; иначе явный UDP порт RAW
+	CSQTTPeerPort   int      // 0 = 46000; UDP-порт CSQTT на том же хосте, что и peer
 	TunAlreadyReady bool     // soft: TUN/маршруты уже живы — не ждать wg_config
 }
 
@@ -91,6 +92,30 @@ func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
 }
 
 const rawDirectPortOffset = 3
+const defaultCSQTTPeerPort = 46000
+
+func normalizeTunnelMode(mode string) string {
+	switch mode {
+	case "raw", "csqtt":
+		return mode
+	default:
+		return "wg"
+	}
+}
+
+func csqttPeerAddr(peer string, csqttPort int) (string, error) {
+	host, _, err := net.SplitHostPort(peer)
+	if err != nil {
+		return "", fmt.Errorf("CSQTT peer %q: %w", peer, err)
+	}
+	if csqttPort <= 0 {
+		csqttPort = defaultCSQTTPeerPort
+	}
+	if csqttPort > 65535 {
+		return "", fmt.Errorf("CSQTT port %d", csqttPort)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(csqttPort)), nil
+}
 
 func rawDirectPeerAddr(peer string, rawPort int) (string, error) {
 	host, portText, err := net.SplitHostPort(peer)
@@ -231,14 +256,18 @@ func (c *Core) Start() (<-chan Event, error) {
 		return nil, fmt.Errorf("Password is required")
 	}
 
-	tunnelMode := c.cfg.TunnelMode
-	if tunnelMode != "raw" {
-		tunnelMode = "wg"
-	}
+	tunnelMode := normalizeTunnelMode(c.cfg.TunnelMode)
 	peerAddr := c.cfg.PeerAddr
 	if tunnelMode == "raw" {
 		var err error
 		peerAddr, err = rawDirectPeerAddr(peerAddr, c.cfg.RawDirectPort)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+	} else if tunnelMode == "csqtt" {
+		var err error
+		peerAddr, err = csqttPeerAddr(peerAddr, c.cfg.CSQTTPeerPort)
 		if err != nil {
 			cancel()
 			return nil, err
@@ -250,10 +279,18 @@ func (c *Core) Start() (<-chan Event, error) {
 		return nil, fmt.Errorf("resolve peer: %w", err)
 	}
 
-	wrapKey, err := deriveWrapKey(c.cfg.Password)
+	var wrapKey []byte
+	if tunnelMode == "csqtt" {
+		wrapKey, err = deriveCSQTTWrapKey(c.cfg.Password)
+	} else {
+		wrapKey, err = deriveWrapKey(c.cfg.Password)
+	}
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("derive wrap key: %w", err)
+	}
+	if tunnelMode == "csqtt" {
+		log.Printf("[CSQTT] peer %s salt=CSQTT-WRAP-v1 obfs=%s", peerAddr, c.cfg.ObfsMode)
 	}
 
 	n := NormalizeWorkers(c.cfg.Workers)
@@ -337,7 +374,7 @@ func (c *Core) Start() (<-chan Event, error) {
 	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
 	var sharedRawGate *wgConfigGate
 	if tunnelMode == "raw" {
-		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true)
+		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true, c.cfg.ObfsMode)
 	}
 
 	go func() {

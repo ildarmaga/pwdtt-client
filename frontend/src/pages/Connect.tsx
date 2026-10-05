@@ -180,7 +180,10 @@ export default function Connect() {
   const [sessionStats, setSessionStats] = useState<TunnelStats | null>(() => tunnelStatsStore.get());
   const [metricsRefreshSec, setMetricsRefreshSec] = useState(() => settingsStore.get().metricsRefreshSec);
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
-  const [tunnelMode, setTunnelMode] = useState<'wg' | 'raw'>(() => settingsStore.get().tunnelMode === 'raw' ? 'raw' : 'wg');
+  const [tunnelMode, setTunnelMode] = useState<'wg' | 'raw' | 'csqtt'>(() => {
+    const mode = settingsStore.get().tunnelMode;
+    return mode === 'raw' || mode === 'csqtt' ? mode : 'wg';
+  });
   const [turnTransport, setTurnTransport] = useState<'tcp' | 'udp'>(() => settingsStore.get().turnTransport === 'udp' ? 'udp' : 'tcp');
   const [obfsMode, setObfsMode] = useState<'audio' | 'video'>(() => settingsStore.get().obfsMode === 'video' ? 'video' : 'audio');
   const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
@@ -188,7 +191,7 @@ export default function Connect() {
   useEffect(() => settingsStore.subscribe(s => {
     setMetricsRefreshSec(s.metricsRefreshSec);
     setTunnelProtocol(s.tunnelProtocol);
-    setTunnelMode(s.tunnelMode === 'raw' ? 'raw' : 'wg');
+    setTunnelMode(s.tunnelMode === 'raw' || s.tunnelMode === 'csqtt' ? s.tunnelMode : 'wg');
     setTurnTransport(s.turnTransport === 'udp' ? 'udp' : 'tcp');
     setObfsMode(s.obfsMode === 'video' ? 'video' : 'audio');
   }), []);
@@ -419,7 +422,7 @@ export default function Connect() {
     tunnelStore.set('connecting');
     activeServerStore.setId(selected!.id);
     logStore.push('INFO', 'Подключение VK…');
-    const mode = s.tunnelMode === 'raw' ? 'raw' : 'wg';
+    const mode = s.tunnelMode === 'raw' || s.tunnelMode === 'csqtt' ? s.tunnelMode : 'wg';
     const turnTr = s.turnTransport === 'udp' ? 'udp' : 'tcp';
     logStore.push('GO', `vk: ${selected!.host} · hashes ${hashes.length}/4 · power ${s.useGlobalHashes ? (s.power || 9) : (selected!.power || Math.max(9, hashes.length * 9))} · obfs ${s.obfsMode} · mode ${mode} · turn ${turnTr}`);
     try {
@@ -437,6 +440,7 @@ export default function Connect() {
         obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
         tunnelMode: mode,
         turnTransport: turnTr,
+        csqttPeerPort: mode === 'csqtt' ? (s.csqttPort || 46000) : 0,
       });
     } catch (e) {
       tunnelStore.set('idle');

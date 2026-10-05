@@ -56,8 +56,11 @@ export const settingsStore = {
     if (merged.obfsMode !== 'audio' && merged.obfsMode !== 'video') {
       merged.obfsMode = DEFAULT_SETTINGS.obfsMode;
     }
-    if (merged.tunnelMode !== 'wg' && merged.tunnelMode !== 'raw') {
+    if (merged.tunnelMode !== 'wg' && merged.tunnelMode !== 'raw' && merged.tunnelMode !== 'csqtt') {
       merged.tunnelMode = DEFAULT_SETTINGS.tunnelMode;
+    }
+    if (typeof merged.csqttPort !== 'number' || merged.csqttPort < 1 || merged.csqttPort > 65535) {
+      merged.csqttPort = DEFAULT_SETTINGS.csqttPort;
     }
     if (merged.turnTransport !== 'tcp' && merged.turnTransport !== 'udp') {
       merged.turnTransport = DEFAULT_SETTINGS.turnTransport;

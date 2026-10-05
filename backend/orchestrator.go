@@ -197,9 +197,10 @@ type ConnectParams struct {
 	MTU             int      `json:"mtu,omitempty"`
 	Hashes          []string `json:"hashes,omitempty"`
 	VKThroughTunnel bool     `json:"vkThroughTunnel,omitempty"`
-	ObfsMode        string   `json:"obfsMode,omitempty"`       // audio|video
-	TunnelMode      string   `json:"tunnelMode,omitempty"`     // wg|raw
+	ObfsMode        string   `json:"obfsMode,omitempty"`      // audio|video
+	TunnelMode      string   `json:"tunnelMode,omitempty"`    // wg|raw|csqtt
 	TurnTransport   string   `json:"turnTransport,omitempty"` // tcp|udp (default tcp)
+	CSQTTPeerPort   int      `json:"csqttPeerPort,omitempty"` // 0 = 46000
 }
 
 func loadProfile(name string) (*ProfileData, error) {
@@ -943,8 +944,14 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		obfsMode = "audio"
 	}
 	tunnelMode := p.TunnelMode
-	if tunnelMode != "raw" {
+	switch tunnelMode {
+	case "raw", "csqtt":
+	default:
 		tunnelMode = "wg"
+	}
+	csqttPort := p.CSQTTPeerPort
+	if tunnelMode == "csqtt" && csqttPort <= 0 {
+		csqttPort = 46000
 	}
 	turnTransport := p.TurnTransport
 	if turnTransport != "udp" {
@@ -967,6 +974,7 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		TurnTransport: turnTransport,
 		RawPrimaryIP:  "",
 		RawDirectPort: prof.RawDirectPort,
+		CSQTTPeerPort: csqttPort,
 	}
 	if SoftReconnectPreserve() {
 		cfg.TunAlreadyReady = true

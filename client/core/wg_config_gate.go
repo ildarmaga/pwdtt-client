@@ -7,10 +7,11 @@ import (
 	"sync/atomic"
 )
 
-// wgConfigGate — один конфиг на группу (WG GETCONF или RAW RAWCONF).
+// wgConfigGate — один конфиг на группу (WG/CSQTT GETCONF или RAW RAWCONF).
 type wgConfigGate struct {
 	ch           chan<- string
-	tunnelMode   string // wg|raw
+	tunnelMode   string // wg|raw|csqtt
+	obfsMode     string // audio|video, только CSQTT GETCONF
 	mtu          int
 	sent         atomic.Int32
 	inFlight     atomic.Int32
@@ -18,8 +19,10 @@ type wgConfigGate struct {
 	requireChunk bool
 }
 
-func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string, requireChunk bool) *wgConfigGate {
-	if tunnelMode != "raw" {
+func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint string, requireChunk bool, obfsMode string) *wgConfigGate {
+	switch tunnelMode {
+	case "raw", "csqtt":
+	default:
 		tunnelMode = "wg"
 	}
 	// WG без канала = нет GETCONF. RAW: ch может быть nil у вторичных групп,
@@ -27,7 +30,7 @@ func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint s
 	if ch == nil && tunnelMode != "raw" {
 		return nil
 	}
-	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, mtu: mtu, requireChunk: requireChunk}
+	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, obfsMode: obfsMode, mtu: mtu, requireChunk: requireChunk}
 	if tunnelMode == "raw" {
 		if ip := net.ParseIP(strings.TrimSpace(primaryHint)); ip != nil {
 			if ip4 := ip.To4(); ip4 != nil {
@@ -110,6 +113,35 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 			log.Printf("[ВОРКЕР #%d] RAW-сессия ip=%s (primary=%s)", sessionID, workerIP, g.PrimaryIP())
 		}
 		return true, append(net.IP(nil), workerIP...), nil
+	}
+
+	if g.tunnelMode == "csqtt" {
+		if !g.inFlight.CompareAndSwap(0, 1) {
+			return false, nil, nil
+		}
+		defer g.inFlight.Store(0)
+
+		conf, err := RequestCSQTTConfig(conn, localPort, deviceID, password, g.obfsMode)
+		if err != nil {
+			if strings.Contains(err.Error(), "FATAL_AUTH") {
+				return false, nil, err
+			}
+			log.Printf("[ВОРКЕР #%d] Ошибка CSQTT GETCONF: %v", sessionID, err)
+			return false, nil, nil
+		}
+		if conf == "" {
+			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал CSQTT-конфиг, повторим позже", sessionID)
+			return false, nil, nil
+		}
+		if g.sent.CompareAndSwap(0, 1) {
+			select {
+			case g.ch <- conf:
+				log.Printf("[ВОРКЕР #%d] CSQTT-конфиг получен", sessionID)
+			default:
+				log.Printf("[ВОРКЕР #%d] CSQTT-конфиг уже был доставлен другим воркером", sessionID)
+			}
+		}
+		return true, nil, nil
 	}
 
 	// WG: один GETCONF

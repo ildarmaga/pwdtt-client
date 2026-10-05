@@ -268,7 +268,7 @@ export default function Settings({ onClose }: Props) {
         .st-stepper button:disabled { opacity: 0.35; cursor: default; }
         .st-stepper span { min-width: 24px; text-align: center; font-size: 12px; font-weight: 600; }
         .st-stepper--disabled { opacity: 0.45; pointer-events: none; }
-        .st-num-input--stepper { width: 48px; padding: 3px 4px; text-align: center; font-size: 12px; -moz-appearance: textfield; }
+        .st-num-input--stepper { width: 58px; padding: 3px 4px; text-align: center; font-size: 12px; -moz-appearance: textfield; }
         .st-num-input--stepper::-webkit-outer-spin-button,
         .st-num-input--stepper::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .st-field { margin-top: 6px; }
@@ -517,7 +517,7 @@ export default function Settings({ onClose }: Props) {
             <div className="st-seg">
               <button
                 type="button"
-                className={`st-seg-btn${settings.tunnelMode !== 'raw' ? ' st-seg-btn--active' : ''}`}
+                className={`st-seg-btn${settings.tunnelMode === 'wg' ? ' st-seg-btn--active' : ''}`}
                 disabled={locked}
                 onClick={() => update('tunnelMode', 'wg')}
               >
@@ -531,8 +531,28 @@ export default function Settings({ onClose }: Props) {
               >
                 RAW
               </button>
+              <button
+                type="button"
+                className={`st-seg-btn${settings.tunnelMode === 'csqtt' ? ' st-seg-btn--active' : ''}`}
+                disabled={locked}
+                onClick={() => update('tunnelMode', 'csqtt')}
+              >
+                CSQTT
+              </button>
             </div>
           </div>
+
+          {settings.tunnelMode === 'csqtt' && (
+            <div className={`st-row${locked ? ' st-locked' : ''}`}>
+              <span>CSQTT порт</span>
+              <NumberStepper
+                value={settings.csqttPort || 46000}
+                min={1} max={65535} step={1}
+                disabled={locked}
+                onChange={v => update('csqttPort', v)}
+              />
+            </div>
+          )}
 
           <div className={`st-row${locked ? ' st-locked' : ''}`}>
             <div>

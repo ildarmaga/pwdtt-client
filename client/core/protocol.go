@@ -17,9 +17,27 @@ var deniedMessages = map[string]string{
 	"traffic_exceeded":  "FATAL_AUTH: лимит трафика исчерпан",
 }
 
+// csqttGetconfPayload — 5 полей: порт, устройство, пароль, воркер, Audio|Video.
+func csqttGetconfPayload(localPort, deviceID, password, obfs string) string {
+	extra := "Audio"
+	if obfs == "video" {
+		extra = "Video"
+	}
+	return fmt.Sprintf("GETCONF:%s|%s|%s|0|%s", localPort, deviceID, password, extra)
+}
+
+// RequestCSQTTConfig запрашивает WireGuard-конфиг у CSQTT (соль CSQTT-WRAP-v1 уже на канале).
+func RequestCSQTTConfig(conn net.Conn, localPort, deviceID, password, obfs string) (string, error) {
+	return requestConfigPayload(conn, csqttGetconfPayload(localPort, deviceID, password, obfs))
+}
+
 // RequestConfig запрашивает WireGuard конфиг через DTLS-соединение.
 func RequestConfig(conn net.Conn, localPort, deviceID, password string) (string, error) {
 	payload := fmt.Sprintf("GETCONF:%s|%s|%s", localPort, deviceID, password)
+	return requestConfigPayload(conn, payload)
+}
+
+func requestConfigPayload(conn net.Conn, payload string) (string, error) {
 	if _, err := conn.Write([]byte(payload)); err != nil {
 		return "", fmt.Errorf("отправка GETCONF: %w", err)
 	}
