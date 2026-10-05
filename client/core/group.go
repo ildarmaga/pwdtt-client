@@ -33,51 +33,136 @@ func NormalizeWorkers(workers int) int {
 	return (n / workersPerGroup) * workersPerGroup
 }
 
-// groupPhaseOffset — фазовый сдвиг старта между группами. VK гасит ВСЕ аллокации
-// под одним call-credential пачкой при его истечении (~60–90 c). Сдвиг ~полжизни
-// креда между группами, чтобы пока одна пересоздаётся, другая держит туннель.
-const groupPhaseOffset = 35 * time.Second
+// Как CSQTT: один TURN-набор на две группы (18 аллокаций). Хеш берётся из панели
+// или подписки, звонок клиент не создаёт. Новый запрос к VK — только после
+// исчерпания этих 18 аллокаций или ответа STUN 401 / 438 / 441.
+const (
+	groupsPerCredential  = 2
+	workersPerCredential = workersPerGroup * groupsPerCredential
+	workerStartInterval  = 100 * time.Millisecond
+)
 
-// credPoolSizeForWorkers — число независимых VK call-credential на группу.
-// Формула как в anton48/vk-turn-proxy-ios (poolSizeForNumConns): при 9 воркерах
-// → 4 слота (~2–3 воркера на кред). Когда один кред истекает, умирают не все 9
-// воркеров группы, а только его слот — агрегат остаётся стабильным.
-func credPoolSizeForWorkers(n int) int {
-	if n <= 0 {
-		return 2
+func credentialCohort(groupID int) int {
+	if groupID < 1 {
+		groupID = 1
 	}
-	size := (n*2 + 4) / 5
-	if size < 2 {
-		size = 2
-	}
-	if size > n {
-		size = n
-	}
-	return size
+	return (groupID - 1) / groupsPerCredential
 }
 
-// credBootstrapMinSlots — сколько слотов ждать до старта воркеров.
-// 1 = туннель поднимается сразу после первого VK Calls; остальные слоты
-// догружаются в фоне (воркеры временно сидят на готовых слотах).
-func credBootstrapMinSlots(poolSize int) int {
-	if poolSize <= 0 {
-		return 1
+func credentialStreamID(cohort int) int {
+	if cohort < 0 {
+		cohort = 0
 	}
-	return 1
+	return (cohort + 1) * 100
 }
 
-// pickReadyCredSlot returns only the worker's assigned credential slot.
-// Falling back to slot 0 during bootstrap made most RAW workers share one
-// short-lived VK credential, so they were closed in one synchronized wave.
-func pickReadyCredSlot(preferred int, ready []bool) int {
-	if preferred >= 0 && preferred < len(ready) && ready[preferred] {
-		return preferred
+// turnCredRejected — VK отозвал логин TURN. Обычный обрыв relay сюда не входит.
+func turnCredRejected(err error) bool {
+	if err == nil {
+		return false
 	}
-	return -1
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "error 401") ||
+		strings.Contains(s, "error 438") ||
+		strings.Contains(s, "error 441") ||
+		strings.Contains(s, "unauthorized") ||
+		strings.Contains(s, "stale nonce") ||
+		strings.Contains(s, "wrong credential") ||
+		strings.Contains(s, "invalid credential")
 }
 
-// WorkerGroup:
-// Запускает N потоков с пулом call-credential (несколько кредов на группу).
+type credCohortState struct {
+	mu       sync.Mutex
+	cond     *sync.Cond
+	creds    *Credentials
+	attempts int
+	fetching bool
+	gen      int
+}
+
+func newCredCohortState() *credCohortState {
+	s := &credCohortState{}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+var credCohortStore sync.Map
+
+func cohortForGroup(groupID int) *credCohortState {
+	id := credentialCohort(groupID)
+	if v, ok := credCohortStore.Load(id); ok {
+		return v.(*credCohortState)
+	}
+	fresh := newCredCohortState()
+	actual, _ := credCohortStore.LoadOrStore(id, fresh)
+	return actual.(*credCohortState)
+}
+
+func (s *credCohortState) invalidate() {
+	s.mu.Lock()
+	s.gen++
+	s.creds = nil
+	s.attempts = 0
+	s.mu.Unlock()
+	s.cond.Broadcast()
+}
+
+// lease отдаёт текущий набор, пока не набралось workersPerCredential аллокаций.
+// Следующий вызов один раз зовёт fetch; параллельные вызовы ждут тот же результат.
+func (s *credCohortState) lease(fetch func() (*Credentials, error)) (*Credentials, error) {
+	s.mu.Lock()
+	for {
+		if s.creds != nil && s.attempts < workersPerCredential {
+			s.attempts++
+			snap := cloneCreds(s.creds)
+			s.mu.Unlock()
+			return snap, nil
+		}
+		if s.fetching {
+			s.cond.Wait()
+			continue
+		}
+		gen := s.gen
+		s.creds = nil
+		s.attempts = 0
+		s.fetching = true
+		s.mu.Unlock()
+
+		got, err := fetch()
+
+		s.mu.Lock()
+		s.fetching = false
+		if s.gen != gen {
+			s.cond.Broadcast()
+			continue
+		}
+		if err != nil {
+			s.cond.Broadcast()
+			s.mu.Unlock()
+			return nil, err
+		}
+		s.creds = got
+		s.attempts = 1
+		snap := cloneCreds(got)
+		s.cond.Broadcast()
+		s.mu.Unlock()
+		return snap, nil
+	}
+}
+
+func cloneCreds(c *Credentials) *Credentials {
+	if c == nil {
+		return nil
+	}
+	return &Credentials{
+		User:          c.User,
+		Pass:          c.Pass,
+		TurnURLs:      cloneStringSlice(c.TurnURLs),
+		CacheStreamID: c.CacheStreamID,
+	}
+}
+
+// WorkerGroup запускает N потоков на одном TURN-наборе когорты (две группы = 18 аллокаций).
 func WorkerGroup(
 	ctx context.Context,
 	groupID int,
@@ -106,19 +191,6 @@ func WorkerGroup(
 		log.Printf("[ГРУППА #%d] Ожидание сигнала от предыдущей группы...", groupID)
 		select {
 		case <-waitReady:
-		case <-ctx.Done():
-			return
-		}
-	}
-
-	// Фазовый сдвиг: десинхронизируем жизнь кредов разных групп, чтобы они не
-	// умирали пачкой одновременно (см. groupPhaseOffset). Группа #1 стартует
-	// сразу и сразу несёт трафик; следующие — со сдвигом.
-	if groupID > 1 {
-		offset := time.Duration(groupID-1) * groupPhaseOffset
-		log.Printf("[ГРУППА #%d] Фазовый сдвиг старта %s (десинхрон жизни кредов с другими группами)", groupID, offset)
-		select {
-		case <-time.After(offset):
 		case <-ctx.Done():
 			return
 		}
@@ -158,105 +230,28 @@ func WorkerGroup(
 		shortHash = shortHash[:8]
 	}
 
-	// Лимит воркеров снят: запускаем всё запрошенное число потоков.
 	activeWorkerIDs := workerIDs
-	poolSize := credPoolSizeForWorkers(len(activeWorkerIDs))
+	cohortID := credentialCohort(groupID)
+	streamID := credentialStreamID(cohortID)
+	cohort := cohortForGroup(groupID)
+	log.Printf("[ГРУППА #%d] Креды когорты %d (хеш: %s..., до %d аллокаций на набор)",
+		groupID, cohortID, shortHash, workersPerCredential)
 
-	// Пул call-credential: несколько независимых VK-кредов на группу (как credPool
-	// в anton48/vk-turn-proxy-ios). Воркеры распределены по слотам — при истечении
-	// одного креда умирает только его слот, не вся группа разом.
-	fetchCredSlot := func(slot int) (*Credentials, error) {
-		streamID := groupID*100 + slot
-		for {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			credsCtx, credsCancel := context.WithTimeout(context.Background(), 120*time.Second)
-			go func() {
-				select {
-				case <-ctx.Done():
-					credsCancel()
-				case <-credsCtx.Done():
-				}
-			}()
-			user, pass, turnURLs, err := GetCreds(credsCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
-			credsCancel()
-			if err == nil {
-				return &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: streamID}, nil
-			}
-			log.Printf("[ГРУППА #%d] Ошибка кредов (слот %d): %v", groupID, slot, err)
-			if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
-				return nil, err
-			}
-			wait := 15 * time.Second
-			if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") {
-				wait = 65 * time.Second
-			}
-			select {
-			case <-time.After(wait):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+	fetchCohortCreds := func() (*Credentials, error) {
+		getStreamCache(streamID).invalidate(streamID)
+		credsCtx, credsCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer credsCancel()
+		stop := context.AfterFunc(ctx, credsCancel)
+		defer stop()
+		user, pass, turnURLs, err := GetCreds(credsCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+		if err != nil {
+			return nil, err
 		}
+		return &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: streamID}, nil
 	}
-
-	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s..., pool=%d слотов, bootstrap=%d)",
-		groupID, shortHash, poolSize, credBootstrapMinSlots(poolSize))
-	credSlots := make([]*Credentials, poolSize)
 
 	var wg sync.WaitGroup
-	var credsMu sync.RWMutex
-	var refreshMu sync.Mutex
-	// Per-slot cooldown — раньше один atomic на всю группу блокировал
-	// параллельный refresh соседних слотов после mass RST.
-	lastCredRefresh := make([]atomic.Int64, poolSize)
-
-	emitTurnURLs := func(c *Credentials) {
-		if onTurnURLs == nil || c == nil || len(c.TurnURLs) == 0 {
-			return
-		}
-		onTurnURLs(c.TurnURLs)
-	}
-
-	storeCredSlot := func(slot int, c *Credentials) {
-		credsMu.Lock()
-		credSlots[slot] = c
-		credsMu.Unlock()
-		emitTurnURLs(c)
-	}
-
-	// Быстрый старт: ждём только bootstrap-слоты, остальное — фон.
-	bootN := credBootstrapMinSlots(poolSize)
-	for s := 0; s < bootN; s++ {
-		c, err := fetchCredSlot(s)
-		if err != nil {
-			return
-		}
-		storeCredSlot(s, c)
-	}
-	log.Printf("[ГРУППА #%d] Bootstrap-креды OK (%d/%d), TURN: %v — стартуем воркеров, остальное в фоне",
-		groupID, bootN, poolSize, credSlots[0].TurnURLs)
-
-	if poolSize > bootN {
-		go func() {
-			for s := bootN; s < poolSize; s++ {
-				if ctx.Err() != nil {
-					return
-				}
-				c, err := fetchCredSlot(s)
-				if err != nil {
-					log.Printf("[ГРУППА #%d] Фоновый слот %d: %v", groupID, s, err)
-					if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
-						return
-					}
-					continue
-				}
-				storeCredSlot(s, c)
-				log.Printf("[ГРУППА #%d] Фоновый слот %d/%d готов", groupID, s+1, poolSize)
-			}
-			log.Printf("[ГРУППА #%d] Пул кредов заполнен (%d слотов)", groupID, poolSize)
-		}()
-	}
+	var turnURLsOnce sync.Once
 	var quotaBackoffUntil atomic.Int64
 	var signalOnce sync.Once
 	fireSignalReady := func() {
@@ -301,46 +296,10 @@ func WorkerGroup(
 		}
 	}
 
-	refreshCredSlot := func(slot int, reason string) bool {
-		if slot < 0 || slot >= len(lastCredRefresh) {
-			return false
-		}
-		refreshMu.Lock()
-		now := time.Now().Unix()
-		last := lastCredRefresh[slot].Load()
-		minGap := int64(15)
-		reasonLower := strings.ToLower(reason)
-		if strings.Contains(reasonLower, "quota") || strings.Contains(reasonLower, "recycle") {
-			minGap = 30
-		}
-		if last > 0 && now-last < minGap {
-			refreshMu.Unlock()
-			log.Printf("[TURN] Слот %d: креды уже обновлялись %d сек назад, ждём (%s)", slot, now-last, reason)
-			return false
-		}
-		// Резервируем cooldown до GetCreds, чтобы соседние воркеры слота
-		// не стартовали параллельный refresh; mutex отпускаем на время auth.
-		lastCredRefresh[slot].Store(now)
-		streamID := groupID*100 + slot
+	dropCohortCreds := func(reason string) {
 		getStreamCache(streamID).invalidate(streamID)
-		refreshMu.Unlock()
-
-		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 35*time.Second)
-		defer refreshCancel()
-		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
-		if refreshErr != nil {
-			log.Printf("[TURN] Слот %d: не удалось обновить креды после %s: %v", slot, reason, refreshErr)
-			return false
-		}
-
-		credsMu.Lock()
-		credSlots[slot] = &Credentials{User: u, Pass: p, TurnURLs: urls, CacheStreamID: streamID}
-		credsMu.Unlock()
-		log.Printf("[TURN] Слот %d: креды обновлены после %s, TURN urls=%d", slot, reason, len(urls))
-		if onTurnURLs != nil && len(urls) > 0 {
-			onTurnURLs(urls)
-		}
-		return true
+		cohort.invalidate()
+		log.Printf("[ГРУППА #%d] TURN-креды сброшены (%s), следующий Allocate запросит VK", groupID, reason)
 	}
 
 	// Следующая группа стартует после wg_config или через 2 s (как раньше).
@@ -372,15 +331,9 @@ func WorkerGroup(
 	for i, wid := range activeWorkerIDs {
 		wg.Add(1)
 
-		// Stagger: первые 6 воркеров — 1.2s (как раньше), остальные — медленнее
-		// (как slowStagger в anton48), чтобы не штурмовать VK Allocate.
-		workerDelay := time.Duration(i) * 1200 * time.Millisecond
-		if i >= 6 {
-			workerDelay = 6*1200*time.Millisecond + time.Duration(i-5)*3*time.Second
-		}
-		credSlot := i % poolSize
+		workerDelay := time.Duration(i) * workerStartInterval
 
-		go func(wid int, slot int, delay time.Duration, idx int) {
+		go func(wid int, delay time.Duration, idx int) {
 			defer wg.Done()
 
 			if delay > 0 {
@@ -400,9 +353,6 @@ func WorkerGroup(
 
 			shouldGetConfig := getConfig
 			attempt := 0
-			// Постоянная фаза воркера: разносит 16-секундные рециклы внутри группы,
-			// чтобы воркеры не пересоздавались синхронной волной.
-			workerPhase := time.Duration(rand.Intn(3500)) * time.Millisecond
 
 			for {
 				if ctx.Err() != nil {
@@ -412,35 +362,32 @@ func WorkerGroup(
 					return
 				}
 
-				credsMu.RLock()
-				ready := make([]bool, poolSize)
-				for i := range credSlots {
-					ready[i] = credSlots[i] != nil
-				}
-				useSlot := pickReadyCredSlot(slot, ready)
-				var slotCreds *Credentials
-				if useSlot >= 0 {
-					slotCreds = credSlots[useSlot]
-				}
-				credsMu.RUnlock()
-				if slotCreds == nil {
-					// Wait for this worker's own slot. Reusing another ready slot
-					// synchronizes credential expiry across the whole RAW group.
+				slotCreds, credErr := cohort.lease(fetchCohortCreds)
+				if credErr != nil {
+					log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, credErr)
+					if strings.Contains(credErr.Error(), "FATAL_AUTH") || strings.Contains(credErr.Error(), "context canceled") || ctx.Err() != nil {
+						return
+					}
+					wait := 15 * time.Second
+					if strings.Contains(credErr.Error(), "CAPTCHA_WAIT_REQUIRED") {
+						wait = 65 * time.Second
+					}
 					select {
-					case <-time.After(200 * time.Millisecond):
+					case <-time.After(wait):
 					case <-ctx.Done():
 						return
 					}
 					continue
 				}
-				credsSnapshot := *slotCreds
-				credsSnapshot.TurnURLs = cloneStringSlice(slotCreds.TurnURLs)
-				// refresh после recycle бьёт по preferred слоту (slot), не по fallback.
+				turnURLsOnce.Do(func() {
+					if onTurnURLs != nil && len(slotCreds.TurnURLs) > 0 {
+						onTurnURLs(slotCreds.TurnURLs)
+					}
+					log.Printf("[ГРУППА #%d] TURN-креды когорты %d: %v", groupID, cohortID, slotCreds.TurnURLs)
+				})
 
-				sessStart := time.Now()
 				configDelivered, sessErr := RunSession(ctx, tp, peer, d, localPort,
-					cfgGate, wid, &credsSnapshot, deviceID, password, stats)
-				sessLife := time.Since(sessStart)
+					cfgGate, wid, slotCreds, deviceID, password, stats)
 
 				if shouldGetConfig && configDelivered {
 					atomic.StoreInt32(&configSent, 1)
@@ -448,94 +395,64 @@ func WorkerGroup(
 
 				if sessErr == nil {
 					attempt = 0
-					// SoftReconnect/Stop: ctx уже cancelled — не долбим VK auth.
-					// Mass RST / routine recycle: обновляем креды слота (cooldown 30с).
-					if ctx.Err() == nil {
-						refreshCredSlot(slot, "VK relay recycle")
+					// Обрыв relay не трогает креды: следующий Allocate идёт с тем же логином.
+					if ctx.Err() != nil {
+						return
 					}
-					// База 2с при долгой сессии. Если relay сдох быстро (флак),
-					// разносим реаллокацию шире, чтобы не устраивать шторм запросов
-					// и дать health-выбору увести воркер на стабильный сервер.
-					base := 2 * time.Second
-					if sessLife < 60*time.Second {
-						base = 6 * time.Second
-					}
-					delay := base + workerPhase + time.Duration(wid%workersPerGroup)*400*time.Millisecond + time.Duration(rand.Intn(800))*time.Millisecond
+					retry := workerStartInterval + time.Duration(rand.Intn(50))*time.Millisecond
 					select {
-					case <-time.After(delay):
+					case <-time.After(retry):
 					case <-ctx.Done():
 						return
 					}
 					continue
 				}
 
-				if sessErr != nil {
-					if ctx.Err() != nil {
-						return
+				if ctx.Err() != nil {
+					return
+				}
+				errStr := sessErr.Error()
+				errStrLower := strings.ToLower(errStr)
+
+				if strings.Contains(errStrLower, "rate limit") ||
+					strings.Contains(errStrLower, "flood control") ||
+					strings.Contains(errStrLower, "ip mismatch") ||
+					strings.Contains(errStrLower, "error 29") {
+					errStr += " (ошибка со стороны ВК)"
+				}
+
+				if strings.Contains(errStr, "хеш мёртв") ||
+					strings.Contains(errStr, "FATAL_AUTH") {
+					relay := ""
+					if len(slotCreds.TurnURLs) > 0 {
+						relay = relayHostKey(slotCreds.TurnURLs[0])
 					}
-					errStr := sessErr.Error()
-					errStrLower := strings.ToLower(errStr)
+					log.Printf("[ВОРКЕР #%d] Фатальная ошибка relay=%s: %s", wid, relay, errStr)
+					return
+				}
 
-					turnAllocAttrMissing := strings.Contains(errStrLower, "turn allocate") &&
-						strings.Contains(errStrLower, "attribute not found")
-					turnCredRefreshNeeded := turnAllocAttrMissing ||
-						strings.Contains(errStrLower, "turn allocate auth") ||
-						strings.Contains(errStrLower, "invalid credential") ||
-						strings.Contains(errStrLower, "stale nonce") ||
-						strings.Contains(errStrLower, "allocation mismatch") ||
-						strings.Contains(errStrLower, "error 508") ||
-						strings.Contains(errStrLower, "turn квота") ||
-						strings.Contains(errStrLower, "quota")
+				attempt++
+				if turnCredRejected(sessErr) {
+					log.Printf("[ВОРКЕР #%d] [TURN] STUN отверг креды, запрашиваем VK заново (попытка %d): %s", wid, attempt, errStr)
+					dropCohortCreds("stun 401/438/441")
+				} else if strings.Contains(errStrLower, "turn квота") ||
+					strings.Contains(errStrLower, "quota") ||
+					strings.Contains(errStrLower, "486") {
+					setQuotaBackoff(60)
+					log.Printf("[ВОРКЕР #%d] [TURN] квота, креды оставляем (попытка %d): %s", wid, attempt, errStr)
+				} else {
+					log.Printf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
+				}
 
-					if strings.Contains(errStrLower, "rate limit") ||
-						strings.Contains(errStrLower, "flood control") ||
-						strings.Contains(errStrLower, "ip mismatch") ||
-						strings.Contains(errStrLower, "error 29") {
-						errStr += " (ошибка со стороны ВК)"
+				isStunDeath := strings.Contains(errStrLower, "error 29") ||
+					strings.Contains(errStrLower, "cannot create socket")
+				if isStunDeath {
+					relay := ""
+					if len(slotCreds.TurnURLs) > 0 {
+						relay = relayHostKey(slotCreds.TurnURLs[0])
 					}
-
-					if strings.Contains(errStr, "хеш мёртв") ||
-						strings.Contains(errStr, "FATAL_AUTH") {
-						relay := ""
-						if len(credsSnapshot.TurnURLs) > 0 {
-							relay = relayHostKey(credsSnapshot.TurnURLs[0])
-						}
-						log.Printf("[ВОРКЕР #%d] Фатальная ошибка relay=%s: %s", wid, relay, errStr)
-						return
-					}
-
-					attempt++
-					if turnAllocAttrMissing {
-						log.Printf("[ВОРКЕР #%d] [TURN] Allocate вернул неполный ответ, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
-						refreshCredSlot(slot, "TURN Allocate attribute-not-found")
-					} else if turnCredRefreshNeeded {
-						isQuota := strings.Contains(errStrLower, "turn квота") ||
-							strings.Contains(errStrLower, "quota") ||
-							strings.Contains(errStrLower, "486")
-						if isQuota {
-							setQuotaBackoff(60)
-						}
-						log.Printf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
-						refreshCredSlot(slot, "TURN allocation error")
-					} else {
-						log.Printf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
-						if attempt >= 3 && strings.Contains(errStrLower, "retransmissions failed") {
-							refreshCredSlot(slot, "TURN Allocate: хост не отвечает")
-						}
-					}
-
-					// Если ошибка STUN (credentials invalid), воркер не сможет переподключиться. Завершаем.
-					isStunDeath := strings.Contains(errStrLower, "error 29") ||
-						strings.Contains(errStrLower, "cannot create socket")
-
-					if isStunDeath {
-						relay := ""
-						if len(credsSnapshot.TurnURLs) > 0 {
-							relay = relayHostKey(credsSnapshot.TurnURLs[0])
-						}
-						log.Printf("[ВОРКЕР #%d] Невосстановимая TURN/STUN relay=%s: %s", wid, relay, errStr)
-						return
-					}
+					log.Printf("[ВОРКЕР #%d] Невосстановимая TURN/STUN relay=%s: %s", wid, relay, errStr)
+					return
 				}
 
 				if ctx.Err() != nil {
@@ -561,7 +478,7 @@ func WorkerGroup(
 					return
 				}
 			}
-		}(wid, credSlot, workerDelay, i)
+		}(wid, workerDelay, i)
 	}
 
 	wg.Wait()

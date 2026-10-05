@@ -116,15 +116,13 @@ func cloneStringSlice(in []string) []string {
 }
 
 func isAuthError(err error) bool {
+	if turnCredRejected(err) {
+		return true
+	}
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "401") ||
-		strings.Contains(errStr, "Unauthorized") ||
-		strings.Contains(errStr, "authentication") ||
-		strings.Contains(errStr, "invalid credential") ||
-		strings.Contains(errStr, "stale nonce")
+	return strings.Contains(strings.ToLower(err.Error()), "authentication")
 }
 
 func handleAuthError(streamID int) bool {
@@ -219,8 +217,8 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, capt
 	vkRequestMu.Lock()
 	defer vkRequestMu.Unlock()
 
-	// Throttle: 3-6 seconds between requests
-	minInterval := 3*time.Second + time.Duration(rand.Intn(3000))*time.Millisecond
+	// Один набор на 18 аллокаций, поэтому пауза между редкими запросами короткая.
+	minInterval := 100*time.Millisecond + time.Duration(rand.Intn(200))*time.Millisecond
 	elapsed := time.Since(globalLastVkFetchTime)
 
 	if !globalLastVkFetchTime.IsZero() && elapsed < minInterval {
@@ -371,7 +369,6 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 			}
 		}
 	}
-
 
 	return "", "", nil, fmt.Errorf("all VK credentials failed: %w", lastErr)
 }
@@ -781,5 +778,3 @@ func setupGlobalResolver() {
 	// we do the same in vk_dns.go + OS resolver here.
 	resolveVKHostsOnce()
 }
-
-
