@@ -1,10 +1,51 @@
 package core
 
 import (
+	"bytes"
 	"encoding/binary"
 	"net"
 	"testing"
 )
+
+func TestRewriteFragmentedDatagram(t *testing.T) {
+	for _, proto := range []byte{6, 17} {
+		for _, source := range []bool{true, false} {
+			pkt := make([]byte, 100)
+			pkt[0], pkt[8], pkt[9] = 0x45, 64, proto
+			binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)))
+			copy(pkt[12:16], net.IPv4(10, 70, 0, 3).To4())
+			copy(pkt[16:20], net.IPv4(20, 47, 117, 91).To4())
+			for i := 20; i < len(pkt); i++ {
+				pkt[i] = byte(i)
+			}
+			fixIPv4Checksums(pkt)
+			first := append([]byte(nil), pkt[:52]...)
+			tail := append(append([]byte(nil), pkt[:20]...), pkt[52:]...)
+			binary.BigEndian.PutUint16(first[2:4], uint16(len(first)))
+			binary.BigEndian.PutUint16(first[6:8], 0x2000)
+			binary.BigEndian.PutUint16(tail[2:4], uint16(len(tail)))
+			binary.BigEndian.PutUint16(tail[6:8], 4)
+			originalTail := append([]byte(nil), tail[20:]...)
+			for _, fragment := range [][]byte{first, tail} {
+				if source {
+					rewriteIPv4SrcInPlace(fragment, net.IPv4(10, 70, 0, 8))
+				} else {
+					rewriteIPv4DstInPlace(fragment, net.IPv4(10, 70, 0, 8))
+				}
+				if ipChecksum(fragment[:20]) != 0 {
+					t.Fatal("invalid IP checksum")
+				}
+			}
+			if !bytes.Equal(tail[20:], originalTail) {
+				t.Fatal("continuation fragment payload corrupted")
+			}
+			payload := append(append([]byte(nil), first[20:]...), tail[20:]...)
+			if transportChecksum(first[12:16], first[16:20], proto, payload) != 0 {
+				t.Fatalf("invalid reassembled checksum proto=%d source=%v", proto, source)
+			}
+		}
+	}
+}
 
 func TestParseRawConfIP(t *testing.T) {
 	ip := parseRawConfIP("IP = 10.70.3.9\nDNS = 1.1.1.1\nMTU = 1280\n")

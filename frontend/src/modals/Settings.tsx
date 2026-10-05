@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { IconSettings2, IconHash, IconChevronDown } from '@tabler/icons-react';
 import Hash from './Hash';
+import TurnSettings from '../components/TurnSettings';
 import { settingsStore, serverStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
 import { tunnelStore } from '../lib/stores/tunnelStore';
@@ -485,6 +486,7 @@ export default function Settings({ onClose }: Props) {
           {isVk && (
             <>
           <div className="st-section-title">VK · TURN</div>
+          <TurnSettings />
 
           {settings.useGlobalHashes ? (
             <div className={`st-slider-wrap${locked ? ' st-locked' : ''}`}>

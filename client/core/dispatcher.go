@@ -182,10 +182,10 @@ func flowHash(pkt []byte) uint32 {
 	ihl := int(pkt[0]&0x0f) * 4
 	h := binary.BigEndian.Uint32(pkt[12:16]) ^ binary.BigEndian.Uint32(pkt[16:20])
 	h ^= uint32(pkt[9]) * 0x9e3779b9
-	// Фрагменты одной UDP-датаграммы несут порты только в первом. Иначе хвост
-	// уезжает на другой TURN и Raft собирает дырявый пакет.
+	// Only the first IPv4 fragment carries transport ports. Match all fragments
+	// by their shared identification instead of interpreting payload as ports.
 	frag := binary.BigEndian.Uint16(pkt[6:8])
-	if pkt[9] == 17 && frag&0x3fff != 0 {
+	if frag&0x3fff != 0 {
 		h ^= uint32(binary.BigEndian.Uint16(pkt[4:6])) * 0x85ebca6b
 		return h
 	}
@@ -356,14 +356,14 @@ func rawUDPPorts(pkt []byte) (src, dst uint16, ok bool) {
 	return rawTransportPorts(pkt)
 }
 
-// rawStripedFlow — только :443 (спидтест и QUIC) режется пачками по 12.
-// Игровой TCP и UDP остаются на одном воркере, иначе Raft рвёт сессию.
+// Only unfragmented TCP :443 is striped. UDP :443 can carry game sessions,
+// not just QUIC downloads, and has no transport-level reorder/retry guarantee.
 func rawStripedFlow(pkt []byte) bool {
 	proto := rawIPv4Proto(pkt)
-	if proto != 6 && proto != 17 {
+	if proto != 6 {
 		return false
 	}
-	if len(pkt) >= 8 && binary.BigEndian.Uint16(pkt[6:8])&0x1fff != 0 {
+	if len(pkt) >= 8 && binary.BigEndian.Uint16(pkt[6:8])&0x3fff != 0 {
 		return false
 	}
 	src, dst, ok := rawTransportPorts(pkt)
@@ -375,11 +375,7 @@ func rawUDPOrICMP(pkt []byte) bool {
 	case 1:
 		return true
 	case 17:
-		if len(pkt) >= 8 && binary.BigEndian.Uint16(pkt[6:8])&0x1fff != 0 {
-			return true // хвост UDP-фрагмента, портов уже нет
-		}
-		_, dst, ok := rawUDPPorts(pkt)
-		return ok && dst != rawQUICUDPPort
+		return true
 	default:
 		return false
 	}

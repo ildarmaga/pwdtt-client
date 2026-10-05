@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	core "wg-turn-client/core"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -38,6 +39,9 @@ func (a *App) SetShowOnStartup(v bool) { a.showOnStartup = v }
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
+	if _, err := os.Stat(filepath.Join(configDir(), "turn-selection.json")); err == nil {
+		core.SetRelayPreferences(readTURNSettings().Preferred)
+	}
 	a.orch = NewOrchestrator(ctx, a.updateTray)
 	a.wb = NewWBManager(ctx)
 	startTray(a.trayIcon,

@@ -581,7 +581,7 @@ export default function Connect() {
   const latencyRows = isVkProtocol
     ? [
         { label: 'TURN', value: turnDisplay, title: 'TURN Allocate RTT' },
-        ...(tunnelMode === 'csqtt' ? [] : [{ label: 'DTLS', value: dtlsDisplay, title: 'DTLS Handshake' }]),
+        ...(tunnelMode === 'wg' && sessionStats && sessionStats.dtlsHsMs > 0 ? [{ label: 'DTLS', value: dtlsDisplay, title: 'DTLS Handshake' }] : []),
         { label: 'Интернет', value: netDisplay, title: 'TCP до 1.1.1.1' },
       ]
     : [

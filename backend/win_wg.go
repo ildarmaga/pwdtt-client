@@ -274,6 +274,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
 		_ = run("netsh", "interface", "ip", "add", "route", cidr, wgIface)
 	}
+	if err := enableRawPrivateDNS(); err != nil {
+		teardownWG()
+		return fmt.Errorf("RAW DNS privacy: %w", err)
+	}
 
 	if err := startRawBridge(tunDev, "9000"); err != nil {
 		teardownWG()
@@ -331,13 +335,16 @@ func EnsureTurnDirectRoutes(turnIPs []string) {
 }
 
 func dropSplitDefaultRoutes() {
-	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1", "1.1.1.1/32"} {
 		_ = run("netsh", "interface", "ipv4", "delete", "route",
 			"prefix="+cidr, "interface="+wgIface)
 	}
 }
 
 func teardownWG() {
+	if err := disableRawPrivateDNS(); err != nil {
+		log.Printf("[RAW] DNS policy cleanup failed: %v", err)
+	}
 	desktoptun.RestoreIPv6Bindings()
 	ifaceMu.Lock()
 	defer ifaceMu.Unlock()

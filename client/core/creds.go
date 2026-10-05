@@ -504,6 +504,9 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 
 				successToken, solveErr := solveCaptchaBySelectedMode(ctx, streamID, attempt+1, captchaErr, client, profile, savedProfile, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
 				if solveErr != nil {
+					if ctx.Err() != nil {
+						return "", "", nil, ctx.Err()
+					}
 					log.Printf("[STREAM %d] [Captcha] Solve failed: %v", streamID, solveErr)
 					globalCaptchaLockout.Store(time.Now().Add(60 * time.Second).Unix())
 					return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED")

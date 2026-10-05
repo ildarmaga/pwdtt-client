@@ -248,27 +248,28 @@ func TestRawChunkedTCPStillBatches(t *testing.T) {
 	}
 }
 
-func TestRawChunkedLargeUDPBatches(t *testing.T) {
-	d := &Dispatcher{rawChunked: true, stats: NewStats()}
-	w1 := &WorkerSlot{ID: 1, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 8)}
-	w2 := &WorkerSlot{ID: 2, SendCh: make(chan []byte, 128), PrioCh: make(chan []byte, 8)}
-	d.workers = []*WorkerSlot{w1, w2}
+func TestRawChunkedLargeUDP443StaysSticky(t *testing.T) {
+	d := newModeTestDispatcher(t, true, false, true)
+	w1 := &WorkerSlot{ID: 1}
+	w2 := &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
 	pkt := udpGamePkt(1, 443, 443, 1200)
-	if rawUDPOrICMP(pkt) {
-		t.Fatal("QUIC-sized UDP must not take the game-sticky path")
+	if !rawUDPOrICMP(pkt) || rawStripedFlow(pkt) {
+		t.Fatal("UDP 443 must use the sticky path regardless of payload size")
 	}
 	for i := 0; i < 13; i++ {
-		d.dispatchChunked(append([]byte(nil), pkt...))
+		d.dispatchSticky(append([]byte(nil), pkt...))
 	}
-	if len(w1.SendCh) != 12 || len(w2.SendCh) != 1 {
-		t.Fatalf("large UDP must batch-12: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
+	if len(w1.SendCh)+len(w2.SendCh) != 13 || (len(w1.SendCh) > 0 && len(w2.SendCh) > 0) {
+		t.Fatalf("UDP 443 flow split or lost: w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
 	}
 }
 
-func TestRawQUICAckIsNotGameSticky(t *testing.T) {
+func TestRawUDP443SmallPacketStaysSticky(t *testing.T) {
 	pkt := udpGamePkt(1, 50000, 443, 80)
-	if rawUDPOrICMP(pkt) {
-		t.Fatal("QUIC ACK on :443 must stay in batches, not sticky")
+	if !rawUDPOrICMP(pkt) || rawStripedFlow(pkt) {
+		t.Fatal("small UDP 443 packets must also stay sticky")
 	}
 }
 
@@ -335,7 +336,7 @@ func TestChunkedReturnDropsTCPKeepsUDP(t *testing.T) {
 	if d.deliverReturn(context.Background(), tcpPkt(1, 40000, 443)) {
 		t.Fatal("TCP при полной очереди надо дропнуть")
 	}
-	udp := udpGamePkt(1, 27015, 27036, 32)
+	udp := udpGamePkt(1, 443, 50000, 32)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan bool, 1)
@@ -379,5 +380,29 @@ func TestGameTCPStaysOnOneWorker(t *testing.T) {
 	}
 	if len(w1.SendCh) > 0 && len(w2.SendCh) > 0 {
 		t.Fatal("игровой TCP разъехался по воркерам")
+	}
+}
+
+func TestRawFirstFragmentNeverStriped(t *testing.T) {
+	d := newModeTestDispatcher(t, true, false, true)
+	w1, w2 := &WorkerSlot{ID: 1}, &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
+	pkt := tcpPkt(1, 50000, 443)
+	binary.BigEndian.PutUint16(pkt[4:6], 123)
+	binary.BigEndian.PutUint16(pkt[6:8], 0x2000)
+	if rawStripedFlow(pkt) {
+		t.Fatal("first fragment must not be striped while continuation is sticky")
+	}
+	tail := append([]byte(nil), pkt...)
+	binary.BigEndian.PutUint16(tail[6:8], 8)
+	binary.BigEndian.PutUint16(tail[20:22], 999)
+	if flowHash(pkt) != flowHash(tail) {
+		t.Fatal("TCP fragments must share a datagram key")
+	}
+	d.dispatchSticky(pkt)
+	d.dispatchSticky(tail)
+	if len(w1.SendCh)+len(w2.SendCh) != 2 || (len(w1.SendCh) > 0 && len(w2.SendCh) > 0) {
+		t.Fatal("TCP fragments split across workers or were lost")
 	}
 }

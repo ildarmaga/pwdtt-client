@@ -222,6 +222,7 @@ func RunSession(
 		return false, fmt.Errorf("нет TURN URL в учетных данных")
 	}
 	// Уводим воркеры с «дохлых» VK-relay на более стабильные (см. relay_health.go).
+	RememberTURNURLs(creds.TurnURLs)
 	selectedURL := pickHealthyTurnURL(creds.TurnURLs, sessionID)
 	noteRelayLive(selectedURL, 1)
 	defer noteRelayLive(selectedURL, -1)

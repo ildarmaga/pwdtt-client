@@ -9,6 +9,8 @@ func resetRelayHealth() {
 	relayHealthMu.Lock()
 	relayHealthMap = map[string]*relayHealth{}
 	relayLive = map[string]int{}
+	relayPreferences = nil
+	relayPreferencesSet = false
 	relayHealthMu.Unlock()
 }
 
@@ -18,6 +20,42 @@ func TestRelayHostKey(t *testing.T) {
 	}
 	if got := relayHostKey("no-port"); got != "no-port" {
 		t.Fatalf("relayHostKey without port = %q, want passthrough", got)
+	}
+}
+
+func TestPreferredRelaySelectionAndFallback(t *testing.T) {
+	resetRelayHealth()
+	t.Setenv("WDTT_PREFERRED_RELAYS", "193.203.43.15,95.163.34.170")
+	first, second, other := "193.203.43.15:19302", "95.163.34.170:19302", "91.231.135.89:19302"
+	urls := []string{other, second, first}
+	if got := pickHealthyTurnURL(urls, 0); got != first {
+		t.Fatalf("preferred got %s", got)
+	}
+	recordRelaySession(first, time.Second, false)
+	if got := pickHealthyTurnURL(urls, 0); got != second {
+		t.Fatalf("failed relay fallback got %s", got)
+	}
+	noteRelayLive(second, maxLivePerRelayHost)
+	if got := pickHealthyTurnURL(urls, 0); got != other {
+		t.Fatalf("capacity fallback got %s", got)
+	}
+	if got := pickHealthyTurnURL([]string{other}, 0); got != other {
+		t.Fatalf("invented unavailable relay: %s", got)
+	}
+}
+
+func TestPreferredSubnetAndExplicitAutomaticMode(t *testing.T) {
+	resetRelayHealth()
+	defer resetRelayHealth()
+	first, second := "193.203.43.15:19302", "95.163.34.170:19302"
+	SetRelayPreferences([]string{"193.203.43.0/24"})
+	if got := pickHealthyTurnURL([]string{second, first}, 0); got != first {
+		t.Fatalf("subnet preference: %s", got)
+	}
+	t.Setenv("WDTT_PREFERRED_RELAYS", "193.203.43.15")
+	SetRelayPreferences(nil)
+	if got := pickHealthyTurnURL([]string{second, first}, 0); got != second {
+		t.Fatalf("explicit auto should override launcher: %s", got)
 	}
 }
 

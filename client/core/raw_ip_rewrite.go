@@ -11,6 +11,7 @@ func rewriteIPv4SrcInPlace(pkt []byte, newSrc net.IP) bool {
 	if src4 == nil || len(pkt) < 20 || pkt[0]>>4 != 4 {
 		return false
 	}
+	adjustFragmentAddressChecksum(pkt, pkt[12:16], src4)
 	copy(pkt[12:16], src4)
 	fixIPv4Checksums(pkt)
 	return true
@@ -22,9 +23,47 @@ func rewriteIPv4DstInPlace(pkt []byte, newDst net.IP) bool {
 	if dst4 == nil || len(pkt) < 20 || pkt[0]>>4 != 4 {
 		return false
 	}
+	adjustFragmentAddressChecksum(pkt, pkt[16:20], dst4)
 	copy(pkt[16:20], dst4)
 	fixIPv4Checksums(pkt)
 	return true
+}
+
+// Only the first fragment contains a transport header. Its checksum covers
+// the entire datagram, so adjust the changed pseudo-header words incrementally.
+func adjustFragmentAddressChecksum(pkt, oldIP, newIP []byte) {
+	frag := binary.BigEndian.Uint16(pkt[6:8])
+	if frag&0x3fff == 0 || frag&0x1fff != 0 {
+		return
+	}
+	ihl := int(pkt[0]&15) * 4
+	offset := -1
+	if pkt[9] == 17 {
+		offset = 6
+	}
+	if pkt[9] == 6 {
+		offset = 16
+	}
+	if ihl < 20 || offset < 0 || len(pkt) < ihl+offset+2 {
+		return
+	}
+	field := pkt[ihl+offset : ihl+offset+2]
+	checksum := binary.BigEndian.Uint16(field)
+	if pkt[9] == 17 && checksum == 0 {
+		return
+	}
+	sum := uint32(^checksum)
+	for i := 0; i < 4; i += 2 {
+		sum += uint32(^binary.BigEndian.Uint16(oldIP[i:i+2])) + uint32(binary.BigEndian.Uint16(newIP[i:i+2]))
+	}
+	for sum > 0xffff {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	checksum = ^uint16(sum)
+	if pkt[9] == 17 && checksum == 0 {
+		checksum = 0xffff
+	}
+	binary.BigEndian.PutUint16(field, checksum)
 }
 
 func fixIPv4Checksums(pkt []byte) {
@@ -34,6 +73,9 @@ func fixIPv4Checksums(pkt []byte) {
 	}
 	binary.BigEndian.PutUint16(pkt[10:12], 0)
 	binary.BigEndian.PutUint16(pkt[10:12], ipChecksum(pkt[:ihl]))
+	if binary.BigEndian.Uint16(pkt[6:8])&0x3fff != 0 {
+		return
+	}
 
 	proto := pkt[9]
 	payload := pkt[ihl:]

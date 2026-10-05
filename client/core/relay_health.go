@@ -2,6 +2,9 @@ package core
 
 import (
 	"net"
+	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,10 +39,39 @@ type relayHealth struct {
 }
 
 var (
-	relayHealthMu  sync.Mutex
-	relayHealthMap = map[string]*relayHealth{}
-	relayLive      = map[string]int{}
+	relayHealthMu       sync.Mutex
+	relayHealthMap      = map[string]*relayHealth{}
+	relayLive           = map[string]int{}
+	relayKnownURLs      = map[string]bool{}
+	relayPreferences    []string
+	relayPreferencesSet bool
 )
+
+func SetRelayPreferences(hosts []string) {
+	relayHealthMu.Lock()
+	defer relayHealthMu.Unlock()
+	relayPreferences = append([]string(nil), hosts...)
+	relayPreferencesSet = true
+}
+
+func RememberTURNURLs(urls []string) {
+	relayHealthMu.Lock()
+	defer relayHealthMu.Unlock()
+	for _, url := range urls {
+		relayKnownURLs[url] = true
+	}
+}
+
+func KnownTURNURLs() []string {
+	relayHealthMu.Lock()
+	defer relayHealthMu.Unlock()
+	urls := make([]string, 0, len(relayKnownURLs))
+	for url := range relayKnownURLs {
+		urls = append(urls, url)
+	}
+	sort.Strings(urls)
+	return urls
+}
 
 func relayHostKey(turnURL string) string {
 	if host, _, err := net.SplitHostPort(turnURL); err == nil {
@@ -120,6 +152,29 @@ func relayScore(turnURL string, now time.Time) float64 {
 	return score
 }
 
+// Optional experiment: prefer only relays present in VK's issued credentials.
+// Recently failed relays still fall back to the normal health selection.
+func relayPreferenceBonus(turnURL string, now time.Time) float64 {
+	key := relayHostKey(turnURL)
+	if h := relayHealthMap[key]; h != nil && !h.lastDeath.IsZero() && now.Sub(h.lastDeath) < relayHotDeadWindow {
+		return 0
+	}
+	preferences := relayPreferences
+	if !relayPreferencesSet {
+		preferences = strings.Split(os.Getenv("WDTT_PREFERRED_RELAYS"), ",")
+	}
+	for i, host := range preferences {
+		match := strings.TrimSpace(host) == key
+		if _, subnet, err := net.ParseCIDR(strings.TrimSpace(host)); err == nil {
+			match = subnet.Contains(net.ParseIP(key))
+		}
+		if match {
+			return 10000 / float64(i+1)
+		}
+	}
+	return 0
+}
+
 func noteRelayLive(turnURL string, delta int) {
 	key := relayHostKey(turnURL)
 	relayHealthMu.Lock()
@@ -150,7 +205,7 @@ func pickHealthyTurnURL(urls []string, sessionID int) string {
 			if !allowOverCap && relayLive[relayHostKey(urls[idx])] >= maxLivePerRelayHost {
 				continue
 			}
-			score := relayScore(urls[idx], now)
+			score := relayScore(urls[idx], now) + relayPreferenceBonus(urls[idx], now)
 			if i == 0 {
 				score += 0.5
 			}
