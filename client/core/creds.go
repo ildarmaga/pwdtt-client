@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -257,7 +258,7 @@ func isVKBrokenToken(err error) bool {
 }
 
 func isRetryableVKCallsError(err error) bool {
-	if err == nil {
+	if err == nil || isVKCallGone(err) {
 		return false
 	}
 	s := err.Error()
@@ -268,6 +269,20 @@ func isRetryableVKCallsError(err error) bool {
 		strings.Contains(s, "timeout") ||
 		strings.Contains(s, "EOF") ||
 		strings.Contains(s, "i/o timeout")
+}
+
+// errVKCallGone — звонок удалён. login.vk.ru тем же хешем TURN не выдаст.
+var errVKCallGone = errors.New("VK_CALL_GONE: звонок не найден")
+
+func isVKCallGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errVKCallGone) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "error_code:951") || strings.Contains(s, "Call not found")
 }
 
 // ─── Main credential fetcher (rotates through stable credential sets) ───
@@ -324,6 +339,11 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultC
 			continue
 		}
 		break
+	}
+
+	if isVKCallGone(vkCallsErr) {
+		log.Printf("[STREAM %d] [VK Auth] звонок не найден, login.vk.ru не вызываем", streamID)
+		return "", "", nil, errVKCallGone
 	}
 
 	log.Printf("[STREAM %d] [VK Auth] VK Calls path failed: %v", streamID, vkCallsErr)

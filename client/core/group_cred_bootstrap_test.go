@@ -190,3 +190,76 @@ func TestResetBudgetKeepsLogin(t *testing.T) {
 		t.Fatalf("fetches=%d user=%q, бюджет должен сброситься без нового VK", n, cred.User)
 	}
 }
+
+func TestVKCallGoneIsNotATimeout(t *testing.T) {
+	gone := errors.New("VK API error: map[error_code:951 error_msg:Call not found]")
+	if !isVKCallGone(gone) || isRetryableVKCallsError(gone) {
+		t.Fatal("951 must stop the login.vk.ru fallback")
+	}
+	if isVKCallGone(errors.New("context deadline exceeded")) {
+		t.Fatal("timeout is not a dead call")
+	}
+}
+
+func TestDeadCallDoesNotRefetch(t *testing.T) {
+	cohort := newCredCohortState()
+	n := 0
+	fetch := func() (*Credentials, error) {
+		n++
+		return nil, errors.New("VK API error: map[error_code:951 error_msg:Call not found]")
+	}
+	if _, err := cohort.lease(fetch); !isVKCallGone(err) || n != 1 {
+		t.Fatalf("first fetch n=%d", n)
+	}
+	if _, err := cohort.lease(fetch); !isVKCallGone(err) || n != 1 {
+		t.Fatalf("dead call refetched n=%d", n)
+	}
+	cohort.resetBudget()
+	if _, err := cohort.lease(fetch); !isVKCallGone(err) || n != 2 {
+		t.Fatalf("new session must try the hash again n=%d", n)
+	}
+}
+
+func TestBorrowLiveCohortUsesFewest(t *testing.T) {
+	dead := newCredCohortState()
+	busy := newCredCohortState()
+	quiet := newCredCohortState()
+	busy.creds = &Credentials{User: "busy"}
+	busy.attempts = 5
+	quiet.creds = &Credentials{User: "quiet"}
+	quiet.attempts = 4
+	credCohortStore.Store(9101, dead)
+	credCohortStore.Store(9102, busy)
+	credCohortStore.Store(9103, quiet)
+	t.Cleanup(func() {
+		credCohortStore.Delete(9101)
+		credCohortStore.Delete(9102)
+		credCohortStore.Delete(9103)
+	})
+	if got := borrowLiveCohort(dead); got != quiet {
+		t.Fatal("dead hash must take the login with fewer allocations")
+	}
+}
+
+func TestLeaseCachedDoesNotFetch(t *testing.T) {
+	s := newCredCohortState()
+	if _, ok := s.leaseCached(); ok {
+		t.Fatal("empty cohort must not hand out a login")
+	}
+	s.mu.Lock()
+	s.creds = &Credentials{User: "live", Pass: "p", TurnURLs: []string{"t"}}
+	s.mu.Unlock()
+	cred, ok := s.leaseCached()
+	if !ok || cred.User != "live" || s.attempts != 1 {
+		t.Fatalf("cached login ok=%v attempts=%d", ok, s.attempts)
+	}
+	s.mu.Lock()
+	s.attempts = workersPerCredential
+	s.mu.Unlock()
+	if _, ok := s.leaseCached(); ok {
+		t.Fatal("full cohort must not hand out another login")
+	}
+	if s.creds == nil || s.creds.User != "live" {
+		t.Fatal("leaseCached must not clear the live login")
+	}
+}

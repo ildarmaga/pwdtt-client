@@ -114,7 +114,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] пачки по 12, UDP кроме :443 sticky")
+		log.Printf("[ДИСП] пачки по 12 только :443, игра на одном воркере")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}
@@ -335,8 +335,9 @@ func rawIPv4Proto(pkt []byte) byte {
 	return pkt[9]
 }
 
-func rawUDPPorts(pkt []byte) (src, dst uint16, ok bool) {
-	if rawIPv4Proto(pkt) != 17 || len(pkt) < 28 {
+func rawTransportPorts(pkt []byte) (src, dst uint16, ok bool) {
+	proto := rawIPv4Proto(pkt)
+	if (proto != 6 && proto != 17) || len(pkt) < 20 {
 		return 0, 0, false
 	}
 	ihl := int(pkt[0]&0x0f) * 4
@@ -346,6 +347,27 @@ func rawUDPPorts(pkt []byte) (src, dst uint16, ok bool) {
 	src = binary.BigEndian.Uint16(pkt[ihl : ihl+2])
 	dst = binary.BigEndian.Uint16(pkt[ihl+2 : ihl+4])
 	return src, dst, true
+}
+
+func rawUDPPorts(pkt []byte) (src, dst uint16, ok bool) {
+	if rawIPv4Proto(pkt) != 17 {
+		return 0, 0, false
+	}
+	return rawTransportPorts(pkt)
+}
+
+// rawStripedFlow — только :443 (спидтест и QUIC) режется пачками по 12.
+// Игровой TCP и UDP остаются на одном воркере, иначе Raft рвёт сессию.
+func rawStripedFlow(pkt []byte) bool {
+	proto := rawIPv4Proto(pkt)
+	if proto != 6 && proto != 17 {
+		return false
+	}
+	if len(pkt) >= 8 && binary.BigEndian.Uint16(pkt[6:8])&0x1fff != 0 {
+		return false
+	}
+	src, dst, ok := rawTransportPorts(pkt)
+	return ok && (src == rawQUICUDPPort || dst == rawQUICUDPPort)
 }
 
 func rawUDPOrICMP(pkt []byte) bool {
@@ -452,10 +474,10 @@ func (d *Dispatcher) readLoop() {
 		copy(pkt, buf[:n])
 
 		if d.rawChunked {
-			if rawUDPOrICMP(pkt) {
-				d.dispatchSticky(pkt)
-			} else {
+			if rawStripedFlow(pkt) {
 				d.dispatchChunked(pkt)
+			} else {
+				d.dispatchSticky(pkt)
 			}
 			continue
 		}
@@ -476,10 +498,10 @@ func (d *Dispatcher) readLoop() {
 	}
 }
 
-// deliverReturn отдаёт пакет в TUN. TCP при полной очереди дропается, чтобы
-// один медленный путь не стопорил спидтест. UDP и ICMP ждут слот: дроп рвёт Raft.
+// deliverReturn отдаёт пакет в TUN. Пачки :443 при полной очереди дропаются,
+// чтобы спидтест не стопорил путь. Игровой TCP, UDP и ICMP ждут слот.
 func (d *Dispatcher) deliverReturn(ctx context.Context, pkt []byte) bool {
-	if d.rawChunked && !rawUDPOrICMP(pkt) {
+	if d.rawChunked && rawStripedFlow(pkt) {
 		select {
 		case d.ReturnCh <- pkt:
 			return true

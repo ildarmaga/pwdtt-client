@@ -348,3 +348,27 @@ func TestChunkedReturnDropsTCPKeepsUDP(t *testing.T) {
 		t.Fatal("UDP не дождался слота")
 	}
 }
+
+func TestGameTCPStaysOnOneWorker(t *testing.T) {
+	game := tcpPkt(1, 50000, 7777)
+	if rawStripedFlow(game) {
+		t.Fatal("игровой TCP не должен идти пачками")
+	}
+	if !rawStripedFlow(tcpPkt(1, 50000, 443)) {
+		t.Fatal(":443 должен остаться пачкой")
+	}
+	d := newModeTestDispatcher(t, true, false, true)
+	w1 := &WorkerSlot{ID: 1}
+	w2 := &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
+	for i := 0; i < 8; i++ {
+		d.dispatchSticky(append([]byte(nil), game...))
+	}
+	if len(w1.SendCh)+len(w2.SendCh) != 8 {
+		t.Fatalf("потеряли игровой TCP w1=%d w2=%d", len(w1.SendCh), len(w2.SendCh))
+	}
+	if len(w1.SendCh) > 0 && len(w2.SendCh) > 0 {
+		t.Fatal("игровой TCP разъехался по воркерам")
+	}
+}

@@ -95,12 +95,13 @@ func turnCredRejected(err error) bool {
 }
 
 type credCohortState struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	creds    *Credentials
-	attempts int
-	fetching bool
-	gen      int
+	mu        sync.Mutex
+	cond      *sync.Cond
+	creds     *Credentials
+	attempts  int
+	fetching  bool
+	gen       int
+	deadUntil time.Time
 }
 
 func newCredCohortState() *credCohortState {
@@ -125,8 +126,32 @@ func cohortForGroup(groupID int) *credCohortState {
 func (s *credCohortState) resetBudget() {
 	s.mu.Lock()
 	s.attempts = 0
+	s.deadUntil = time.Time{}
 	s.mu.Unlock()
 	s.cond.Broadcast()
+}
+
+// borrowLiveCohort отдаёт когорту с живым логином и наименьшим числом аллокаций.
+// Мёртвый хеш (VK 951) своих TURN-кредов не получит, воркеры садятся на чужой логин.
+func borrowLiveCohort(dead *credCohortState) *credCohortState {
+	var best *credCohortState
+	bestAttempts := int(^uint(0) >> 1)
+	credCohortStore.Range(func(_, v any) bool {
+		s := v.(*credCohortState)
+		if s == dead {
+			return true
+		}
+		s.mu.Lock()
+		ok := s.creds != nil && s.attempts < workersPerCredential && time.Now().After(s.deadUntil)
+		attempts := s.attempts
+		s.mu.Unlock()
+		if ok && attempts < bestAttempts {
+			best = s
+			bestAttempts = attempts
+		}
+		return true
+	})
+	return best
 }
 
 func resetCredentialBudgets() {
@@ -150,6 +175,10 @@ func (s *credCohortState) invalidate() {
 func (s *credCohortState) lease(fetch func() (*Credentials, error)) (*Credentials, error) {
 	s.mu.Lock()
 	for {
+		if !s.deadUntil.IsZero() && time.Now().Before(s.deadUntil) {
+			s.mu.Unlock()
+			return nil, errVKCallGone
+		}
 		if s.creds != nil && s.attempts < workersPerCredential {
 			s.attempts++
 			snap := cloneCreds(s.creds)
@@ -175,6 +204,10 @@ func (s *credCohortState) lease(fetch func() (*Credentials, error)) (*Credential
 			continue
 		}
 		if err != nil {
+			if isVKCallGone(err) {
+				s.deadUntil = time.Now().Add(10 * time.Minute)
+				err = errVKCallGone
+			}
 			s.cond.Broadcast()
 			s.mu.Unlock()
 			return nil, err
@@ -186,6 +219,21 @@ func (s *credCohortState) lease(fetch func() (*Credentials, error)) (*Credential
 		s.mu.Unlock()
 		return snap, nil
 	}
+}
+
+// leaseCached берёт уже лежащий логин и не вызывает fetch.
+// Мёртвый хеш так не подменяет чужой запрос к VK.
+func (s *credCohortState) leaseCached() (*Credentials, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.deadUntil.IsZero() && time.Now().Before(s.deadUntil) {
+		return nil, false
+	}
+	if s.creds == nil || s.attempts >= workersPerCredential {
+		return nil, false
+	}
+	s.attempts++
+	return cloneCreds(s.creds), true
 }
 
 func cloneCreds(c *Credentials) *Credentials {
@@ -290,6 +338,7 @@ func WorkerGroup(
 
 	var wg sync.WaitGroup
 	var turnURLsOnce sync.Once
+	var borrowLog sync.Once
 	var quotaBackoffUntil atomic.Int64
 	var signalOnce sync.Once
 	fireSignalReady := func() {
@@ -391,6 +440,8 @@ func WorkerGroup(
 
 			shouldGetConfig := getConfig
 			attempt := 0
+			workerCohort := cohort
+			borrowed := false
 
 			for {
 				if ctx.Err() != nil {
@@ -400,8 +451,43 @@ func WorkerGroup(
 					return
 				}
 
-				slotCreds, credErr := cohort.lease(fetchCohortCreds)
+				var slotCreds *Credentials
+				var credErr error
+				if borrowed {
+					var ok bool
+					slotCreds, ok = workerCohort.leaseCached()
+					if !ok {
+						if alt := borrowLiveCohort(cohort); alt != nil {
+							workerCohort = alt
+							continue
+						}
+						select {
+						case <-time.After(2 * time.Second):
+						case <-ctx.Done():
+							return
+						}
+						continue
+					}
+				} else {
+					slotCreds, credErr = workerCohort.lease(fetchCohortCreds)
+				}
 				if credErr != nil {
+					if isVKCallGone(credErr) {
+						if alt := borrowLiveCohort(cohort); alt != nil {
+							workerCohort = alt
+							borrowed = true
+							borrowLog.Do(func() {
+								log.Printf("[ГРУППА #%d] хеш мёртв, воркеры берут живой TURN-логин", groupID)
+							})
+							continue
+						}
+						select {
+						case <-time.After(2 * time.Second):
+						case <-ctx.Done():
+							return
+						}
+						continue
+					}
 					log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, credErr)
 					if strings.Contains(credErr.Error(), "FATAL_AUTH") || strings.Contains(credErr.Error(), "context canceled") || ctx.Err() != nil {
 						return
@@ -472,7 +558,11 @@ func WorkerGroup(
 				attempt++
 				if turnCredRejected(sessErr) {
 					log.Printf("[ВОРКЕР #%d] [TURN] STUN отверг креды, запрашиваем VK заново (попытка %d): %s", wid, attempt, errStr)
-					dropCohortCreds("stun 401/438/441")
+					if borrowed {
+						workerCohort.invalidate()
+					} else {
+						dropCohortCreds("stun 401/438/441")
+					}
 				} else if strings.Contains(errStrLower, "turn квота") ||
 					strings.Contains(errStrLower, "quota") ||
 					strings.Contains(errStrLower, "486") {
