@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestRawChunkedModeSelection(t *testing.T) {
@@ -72,8 +73,8 @@ func TestNewDispatcherModeContract(t *testing.T) {
 		wantSticky, wantMP, wantChunked   bool
 		wantReturnCap                     int
 	}{
-		{name: "raw udp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawChunkReturnChBuf},
-		{name: "raw tcp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawChunkReturnChBuf},
+		{name: "raw udp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawReturnChBuf},
+		{name: "raw tcp", rawMode: true, rawChunked: true, wantChunked: true, wantReturnCap: rawReturnChBuf},
 		{name: "raw legacy sticky", rawMode: true, wantSticky: true, wantReturnCap: rawReturnChBuf},
 		{name: "wg", wantReturnCap: returnChBuf},
 		{name: "defensive invalid pair", rawMultipath: true, wantReturnCap: returnChBuf},
@@ -116,8 +117,11 @@ func TestDispatcherRegisterChannelPolicy(t *testing.T) {
 			if (slot.PrioCh != nil) != tt.wantPrio {
 				t.Fatalf("PrioCh=%v want %v", slot.PrioCh != nil, tt.wantPrio)
 			}
-			if tt.rawChunked && cap(slot.SendCh) != rawChunkWorkerSendBuf {
-				t.Fatalf("chunk SendCh cap=%d", cap(slot.SendCh))
+			if tt.rawChunked && cap(slot.SendCh) != rawWorkerSendBuf {
+				t.Fatalf("game SendCh cap=%d", cap(slot.SendCh))
+			}
+			if tt.rawChunked && cap(slot.BulkCh) != rawChunkWorkerSendBuf {
+				t.Fatalf("bulk cap=%d", cap(slot.BulkCh))
 			}
 		})
 	}
@@ -277,5 +281,70 @@ func TestRawNonSteamGameUDPIsSticky(t *testing.T) {
 	pkt := udpGamePkt(1, 50000, 7777, 1200)
 	if !rawUDPOrICMP(pkt) {
 		t.Fatal("non-Steam game UDP must stay sticky on any port except 443")
+	}
+}
+
+func TestUDPFragmentsStayOnOneWorker(t *testing.T) {
+	d := newModeTestDispatcher(t, true, false, true)
+	w1 := &WorkerSlot{ID: 1}
+	w2 := &WorkerSlot{ID: 2}
+	d.Register(w1)
+	d.Register(w2)
+	first := udpGamePkt(1, 27015, 27036, 100)
+	binary.BigEndian.PutUint16(first[4:6], 0x1a2b)
+	binary.BigEndian.PutUint16(first[6:8], 0x2000) // MF
+	tail := udpGamePkt(1, 9, 9, 40)
+	binary.BigEndian.PutUint16(tail[4:6], 0x1a2b)
+	binary.BigEndian.PutUint16(tail[6:8], 0x0008) // offset, портов нет
+	if flowHash(first) != flowHash(tail) {
+		t.Fatal("фрагменты одной UDP-датаграммы разошлись по ключу")
+	}
+	if !rawUDPOrICMP(tail) {
+		t.Fatal("хвост фрагмента должен остаться игровым UDP")
+	}
+	d.dispatchSticky(first)
+	d.dispatchSticky(tail)
+	if len(w1.SendCh)+len(w2.SendCh) != 2 {
+		t.Fatal("фрагмент потерян")
+	}
+	if len(w1.SendCh) > 0 && len(w2.SendCh) > 0 {
+		t.Fatal("фрагменты уехали на разные TURN")
+	}
+	if len(w1.BulkCh)+len(w2.BulkCh) != 0 {
+		t.Fatal("игровой UDP попал в TCP-пачку")
+	}
+}
+
+func TestChunkedReturnDropsTCPKeepsUDP(t *testing.T) {
+	d := &Dispatcher{
+		rawChunked: true,
+		stats:      NewStats(),
+		ReturnCh:   make(chan []byte, 1),
+		ctx:        context.Background(),
+	}
+	d.ReturnCh <- []byte{1}
+	if d.deliverReturn(context.Background(), tcpPkt(1, 40000, 443)) {
+		t.Fatal("TCP при полной очереди надо дропнуть")
+	}
+	udp := udpGamePkt(1, 27015, 27036, 32)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan bool, 1)
+	go func() {
+		done <- d.deliverReturn(ctx, udp)
+	}()
+	select {
+	case <-done:
+		t.Fatal("UDP не должен дропаться, пока очередь полная")
+	case <-time.After(40 * time.Millisecond):
+	}
+	<-d.ReturnCh
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("UDP потерян")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("UDP не дождался слота")
 	}
 }

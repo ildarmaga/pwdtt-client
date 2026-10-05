@@ -34,8 +34,7 @@ func putPktBuf(b []byte) {
 const (
 	returnChBuf = 1024
 	// rawReturnChBuf — глубже downlink queue для RAW (UDP TURN иначе дропает при backpressure).
-	rawReturnChBuf      = 4096
-	rawChunkReturnChBuf = 512
+	rawReturnChBuf = 4096
 	// sendChBuf — глубина общей очереди отправки (WG work-stealing).
 	sendChBuf = 1024
 	// rawWorkerSendBuf — очередь на воркер в RAW sticky (глубже = меньше drop ACK).
@@ -51,7 +50,8 @@ const (
 
 type WorkerSlot struct {
 	ID        int
-	SendCh    chan []byte // RAW sticky: личный канал; WG/MP: nil → общий Dispatcher.SendCh
+	SendCh    chan []byte // UDP/ICMP игры: глубокая очередь. WG/MP: nil → общий Dispatcher.SendCh
+	BulkCh    chan []byte // TCP пачками по 12. Игровой UDP сюда не кладём
 	PrioCh    chan []byte // RAW chunk: ACK/маленькие пакеты
 	PathRTTMs atomic.Int64
 }
@@ -92,10 +92,8 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 	useChunked := rawMode && rawChunked && !useMP
 	retBuf := returnChBuf
 	if rawMode {
+		// Одна очередь на все воркеры. Короткая роняла UDP-снимок мира (Raft CODE 63).
 		retBuf = rawReturnChBuf
-	}
-	if useChunked {
-		retBuf = rawChunkReturnChBuf
 	}
 	d := &Dispatcher{
 		localConn:  localConn,
@@ -139,11 +137,11 @@ func (d *Dispatcher) Shutdown() {
 func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.mu.Lock()
 	if (d.rawSticky || d.rawChunked) && !d.rawMP && w.SendCh == nil {
-		size := rawWorkerSendBuf
-		if d.rawChunked {
-			size = rawChunkWorkerSendBuf
-		}
-		w.SendCh = make(chan []byte, size)
+		// Игровой UDP сидит на одном воркере. Очередь 128 дропает снимок мира (Raft CODE 63).
+		w.SendCh = make(chan []byte, rawWorkerSendBuf)
+	}
+	if d.rawChunked && w.BulkCh == nil {
+		w.BulkCh = make(chan []byte, rawChunkWorkerSendBuf)
 	}
 	if d.rawChunked && w.PrioCh == nil {
 		w.PrioCh = make(chan []byte, rawPrioBuf)
@@ -184,6 +182,13 @@ func flowHash(pkt []byte) uint32 {
 	ihl := int(pkt[0]&0x0f) * 4
 	h := binary.BigEndian.Uint32(pkt[12:16]) ^ binary.BigEndian.Uint32(pkt[16:20])
 	h ^= uint32(pkt[9]) * 0x9e3779b9
+	// Фрагменты одной UDP-датаграммы несут порты только в первом. Иначе хвост
+	// уезжает на другой TURN и Raft собирает дырявый пакет.
+	frag := binary.BigEndian.Uint16(pkt[6:8])
+	if pkt[9] == 17 && frag&0x3fff != 0 {
+		h ^= uint32(binary.BigEndian.Uint16(pkt[4:6])) * 0x85ebca6b
+		return h
+	}
 	if len(pkt) >= ihl+4 && (pkt[9] == 6 || pkt[9] == 17) {
 		a := binary.BigEndian.Uint16(pkt[ihl : ihl+2])
 		b := binary.BigEndian.Uint16(pkt[ihl+2 : ihl+4])
@@ -348,6 +353,9 @@ func rawUDPOrICMP(pkt []byte) bool {
 	case 1:
 		return true
 	case 17:
+		if len(pkt) >= 8 && binary.BigEndian.Uint16(pkt[6:8])&0x1fff != 0 {
+			return true // хвост UDP-фрагмента, портов уже нет
+		}
 		_, dst, ok := rawUDPPorts(pkt)
 		return ok && dst != rawQUICUDPPort
 	default:
@@ -394,11 +402,15 @@ func (d *Dispatcher) dispatchChunked(pkt []byte) {
 			default:
 			}
 		}
-		if w.SendCh == nil {
+		ch := w.BulkCh
+		if ch == nil {
+			ch = w.SendCh
+		}
+		if ch == nil {
 			continue
 		}
 		select {
-		case w.SendCh <- pkt:
+		case ch <- pkt:
 			d.noteBatchSend(idx, n)
 			atomic.AddInt64(&d.stats.TotalBytesUp, int64(len(pkt)))
 			return
@@ -461,6 +473,27 @@ func (d *Dispatcher) readLoop() {
 		default:
 			putPktBuf(pkt)
 		}
+	}
+}
+
+// deliverReturn отдаёт пакет в TUN. TCP при полной очереди дропается, чтобы
+// один медленный путь не стопорил спидтест. UDP и ICMP ждут слот: дроп рвёт Raft.
+func (d *Dispatcher) deliverReturn(ctx context.Context, pkt []byte) bool {
+	if d.rawChunked && !rawUDPOrICMP(pkt) {
+		select {
+		case d.ReturnCh <- pkt:
+			return true
+		default:
+			putPktBuf(pkt)
+			return false
+		}
+	}
+	select {
+	case d.ReturnCh <- pkt:
+		return true
+	case <-ctx.Done():
+		putPktBuf(pkt)
+		return false
 	}
 }
 

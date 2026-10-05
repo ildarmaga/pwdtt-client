@@ -599,22 +599,21 @@ func RunSession(
 	}()
 
 	// Writer: очередь → DTLS. Без per-packet WriteDeadline (hot path).
+	// Игровой UDP, ACK и TCP-пачка читаются наравне. Иначе ACK в PrioCh
+	// не выпускает Raft, а пачка TCP держит UDP позади себя.
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
 		for {
 			var pkt []byte
 			var ok bool
-			if slot.PrioCh != nil {
+			if slot.PrioCh != nil || slot.BulkCh != nil {
 				select {
+				case <-sessCtx.Done():
+					return
+				case pkt, ok = <-sendCh:
 				case pkt, ok = <-slot.PrioCh:
-				default:
-					select {
-					case <-sessCtx.Done():
-						return
-					case pkt, ok = <-slot.PrioCh:
-					case pkt, ok = <-sendCh:
-					}
+				case pkt, ok = <-slot.BulkCh:
 				}
 			} else {
 				select {
@@ -714,18 +713,7 @@ func RunSession(
 			if rawPrimaryIP != nil {
 				_ = rewriteIPv4DstInPlace(pkt, rawPrimaryIP)
 			}
-			if d.rawChunked {
-				select {
-				case d.ReturnCh <- pkt:
-				default:
-					putPktBuf(pkt)
-				}
-				continue
-			}
-			select {
-			case d.ReturnCh <- pkt:
-			case <-sessCtx.Done():
-				putPktBuf(pkt)
+			if !d.deliverReturn(sessCtx, pkt) && sessCtx.Err() != nil {
 				return
 			}
 		}
