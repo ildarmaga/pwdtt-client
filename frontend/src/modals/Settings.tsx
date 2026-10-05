@@ -543,14 +543,17 @@ export default function Settings({ onClose }: Props) {
           </div>
 
           {settings.tunnelMode === 'csqtt' && (
-            <div className={`st-row${locked ? ' st-locked' : ''}`}>
-              <span>CSQTT порт</span>
-              <NumberStepper
-                value={settings.csqttPort || 46000}
-                min={1} max={65535} step={1}
-                disabled={locked}
-                onChange={v => update('csqttPort', v)}
-              />
+            <div className={`st-row st-row--stack${locked ? ' st-locked' : ''}`}>
+              <div className="st-row-head">
+                <span>CSQTT порт</span>
+                <NumberStepper
+                  value={settings.csqttPort || 46000}
+                  min={1} max={65535} step={1}
+                  disabled={locked}
+                  onChange={v => update('csqttPort', v)}
+                />
+              </div>
+              <div className="st-row-hint">Принимает только наши ссылки: wdtt:// и подписка.</div>
             </div>
           )}
 

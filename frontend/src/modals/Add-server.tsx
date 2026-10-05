@@ -24,6 +24,10 @@ export default function AddServer({ onClose, onAdd }: Props) {
     setParsed(null);
     const trimmed = raw.trim().split('?')[0];
     if (!trimmed) return;
+    if (trimmed.toLowerCase().startsWith('csqtt://')) {
+      toastStore.show('CSQTT принимает только ссылку wdtt:// или подписку панели', 4500);
+      return;
+    }
     if (!isPanelSubUrl(trimmed) && !trimmed.startsWith('wdtt://')) {
       toastStore.show('Вставьте ссылку подписки панели или wdtt:// ссылку', 4500);
       return;

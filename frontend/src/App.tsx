@@ -28,6 +28,11 @@ function useWdttPaste() {
       if (isPasteTargetEditable(e.target)) return;
       const text = e.clipboardData?.getData('text') ?? '';
       const trimmed = text.trim();
+      if (trimmed.toLowerCase().startsWith('csqtt://')) {
+        e.preventDefault();
+        toastStore.show('CSQTT принимает только ссылку wdtt:// или подписку панели');
+        return;
+      }
       if (!isImportableInput(trimmed)) return;
       e.preventDefault();
       void (async () => {
