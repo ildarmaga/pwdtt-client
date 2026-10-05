@@ -240,7 +240,8 @@ func EnsureTurnDirectRoutes(turnIPs []string) {
 }
 
 func teardownWG() {
-	stopRawBridge()
+	ifaceMu.Lock()
+	defer ifaceMu.Unlock()
 
 	activeRoutesMu.Lock()
 	routes := activeRoutes
@@ -255,12 +256,15 @@ func teardownWG() {
 			_ = run("ip", "route", "del", entry)
 		}
 	}
-	if activeRawTun != nil {
-		_ = activeRawTun.Close()
-		activeRawTun = nil
-	} else {
-		_ = run("ip", "link", "del", wgIface)
-	}
+	tunDev := activeRawTun
+	activeRawTun = nil
+	stopRawBridgeClosing(func() {
+		if tunDev != nil {
+			_ = tunDev.Close()
+		} else {
+			_ = run("ip", "link", "del", wgIface)
+		}
+	})
 	clearActiveRawPrimaryIP()
 	clearWGRouteState()
 }

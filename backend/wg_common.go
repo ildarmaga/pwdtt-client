@@ -8,7 +8,10 @@ import (
 	"sync/atomic"
 )
 
-var softReconnectPreserve atomic.Bool
+var (
+	softReconnectPreserve atomic.Bool
+	ifaceMu               sync.Mutex
+)
 var activeRawPrimaryIP atomic.Value // string — IP TUN в RAW (для soft-reconnect rewrite)
 
 // SetSoftReconnectPreserve — soft-reconnect: не сносить wg-turn/маршруты.

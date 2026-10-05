@@ -74,7 +74,12 @@ func (c *obfsDirectConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (c *obfsDirectConn) Close() error                       { return nil }
+func (c *obfsDirectConn) Close() error {
+	if c == nil || c.relay == nil {
+		return nil
+	}
+	return c.relay.Close()
+}
 func (c *obfsDirectConn) LocalAddr() net.Addr                { return c.relay.LocalAddr() }
 func (c *obfsDirectConn) RemoteAddr() net.Addr               { return c.peer }
 func (c *obfsDirectConn) SetDeadline(t time.Time) error      { return c.relay.SetDeadline(t) }
@@ -523,6 +528,7 @@ func RunSession(
 
 	stopDTLS := context.AfterFunc(sessCtx, func() {
 		_ = activeConn.SetDeadline(time.Now())
+		_ = activeConn.Close()
 	})
 	defer stopDTLS()
 
@@ -651,6 +657,10 @@ func RunSession(
 		defer sessCancel()
 		for {
 			pkt := getPktBuf(2048)
+			if sessCtx.Err() != nil {
+				putPktBuf(pkt)
+				return
+			}
 			_ = activeConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
 			n, readErr := activeConn.Read(pkt)
 			if readErr != nil {

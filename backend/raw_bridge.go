@@ -20,7 +20,10 @@ var (
 	rawBridgeUDP  *net.UDPConn
 )
 
-func stopRawBridge() {
+// beginStopRawBridge signals the bridge goroutines and closes the UDP socket.
+// It does not wait: the TUN read blocks until the device is closed or a packet
+// arrives, so the caller must close the adapter before finishStopRawBridge.
+func beginStopRawBridge() {
 	rawBridgeMu.Lock()
 	stopCh := rawBridgeStop
 	uc := rawBridgeUDP
@@ -33,7 +36,24 @@ func stopRawBridge() {
 	if uc != nil {
 		_ = uc.Close()
 	}
+}
+
+func finishStopRawBridge() {
 	rawBridgeWG.Wait()
+}
+
+// stopRawBridgeClosing unblocks an idle wintun/TUN read by closing the device
+// before waiting for the bridge. Waiting first deadlocks until the next packet.
+func stopRawBridgeClosing(closeTun func()) {
+	beginStopRawBridge()
+	if closeTun != nil {
+		closeTun()
+	}
+	finishStopRawBridge()
+}
+
+func stopRawBridge() {
+	stopRawBridgeClosing(nil)
 }
 
 // rebindRawBridgeSoft — после SoftReconnect core слушает новый UDP :9000,
@@ -55,6 +75,8 @@ func rebindRawBridgeSoft(listenPort string) error {
 
 // startRawBridge pipes IPv4 packets between TUN and local UDP dispatcher (127.0.0.1:listenPort).
 func startRawBridge(tunDev tun.Device, listenPort string) error {
+	ifaceMu.Lock()
+	defer ifaceMu.Unlock()
 	stopRawBridge()
 	if listenPort == "" {
 		listenPort = "9000"

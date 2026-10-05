@@ -315,8 +315,33 @@ func EnsureTurnDirectRoutes(turnIPs []string) {
 	_ = installVKTransportRoutes(gw)
 }
 
+func dropSplitDefaultRoutes() {
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		_ = run("netsh", "interface", "ipv4", "delete", "route",
+			"prefix="+cidr, "interface="+wgIface)
+	}
+}
+
 func teardownWG() {
-	stopRawBridge()
+	ifaceMu.Lock()
+	defer ifaceMu.Unlock()
+
+	// Split-default держит весь IPv4 на адаптере. Снять его до Close, иначе
+	// простаивающий Read wintun не вернётся и маршруты висят минутами.
+	dropSplitDefaultRoutes()
+
+	dev := activeDevice
+	tdev := activeTun
+	activeDevice = nil
+	activeTun = nil
+	stopRawBridgeClosing(func() {
+		if dev != nil {
+			dev.Close()
+		}
+		if tdev != nil {
+			_ = tdev.Close()
+		}
+	})
 
 	for _, cidr := range activeExcludeRoutes {
 		ip, _, _ := parseCIDR(cidr)
@@ -326,15 +351,6 @@ func teardownWG() {
 	}
 	activeExcludeRoutes = nil
 	clearWGRouteState()
-
-	if activeDevice != nil {
-		activeDevice.Close()
-		activeDevice = nil
-	}
-	if activeTun != nil {
-		activeTun.Close()
-		activeTun = nil
-	}
 	clearActiveRawPrimaryIP()
 }
 

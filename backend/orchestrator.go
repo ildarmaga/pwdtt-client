@@ -1197,6 +1197,11 @@ func (o *Orchestrator) stopCoreSession(fullTeardown bool) {
 	}
 	sess := o.sess
 	o.mu.Unlock()
+	if fullTeardown {
+		// TUN и split-default снимаются сразу. Иначе UI ждёт, пока 18 TURN-сессий
+		// умрут, а мост ещё и блокируется в Read простаивающего wintun.
+		teardownWG()
+	}
 	if sess == nil || sess.c == nil {
 		return
 	}
