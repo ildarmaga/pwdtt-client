@@ -27,17 +27,18 @@ type SubTrafficStats struct {
 }
 
 type SubImportResult struct {
-	IP       string           `json:"ip"`
-	DtlsPort string           `json:"dtlsPort"`
-	RawPort  string           `json:"rawPort,omitempty"`
-	Password string           `json:"password"`
-	Name     string           `json:"name"`
-	VpnName  string           `json:"vpnName,omitempty"`
-	Hashes   []string         `json:"hashes"`
-	SubURL   string           `json:"subUrl"`
-	DeviceID string           `json:"deviceId,omitempty"`
-	WbRoom   string           `json:"wbRoom,omitempty"`
-	Stats    *SubTrafficStats `json:"stats,omitempty"`
+	IP        string           `json:"ip"`
+	DtlsPort  string           `json:"dtlsPort"`
+	RawPort   string           `json:"rawPort,omitempty"`
+	CSQTTPort string           `json:"csqttPort,omitempty"`
+	Password  string           `json:"password"`
+	Name      string           `json:"name"`
+	VpnName   string           `json:"vpnName,omitempty"`
+	Hashes    []string         `json:"hashes"`
+	SubURL    string           `json:"subUrl"`
+	DeviceID  string           `json:"deviceId,omitempty"`
+	WbRoom    string           `json:"wbRoom,omitempty"`
+	Stats     *SubTrafficStats `json:"stats,omitempty"`
 }
 
 func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
@@ -86,17 +87,18 @@ func (a *App) FetchSubscriptionURL(rawURL string) (*SubImportResult, error) {
 		}
 	}
 	return &SubImportResult{
-		IP:       parsed.IP,
-		DtlsPort: parsed.DtlsPort,
-		RawPort:  parsed.RawPort,
-		Password: parsed.Password,
-		Name:     name,
-		VpnName:  vpnName,
-		Hashes:   parsed.Hashes,
-		SubURL:   strings.Split(rawURL, "?")[0],
-		DeviceID: parsed.DeviceID,
-		WbRoom:   wbRoom,
-		Stats:    stats,
+		IP:        parsed.IP,
+		DtlsPort:  parsed.DtlsPort,
+		RawPort:   parsed.RawPort,
+		CSQTTPort: parsed.CSQTTPort,
+		Password:  parsed.Password,
+		Name:      name,
+		VpnName:   vpnName,
+		Hashes:    parsed.Hashes,
+		SubURL:    strings.Split(rawURL, "?")[0],
+		DeviceID:  parsed.DeviceID,
+		WbRoom:    wbRoom,
+		Stats:     stats,
 	}, nil
 }
 
@@ -265,16 +267,17 @@ func parseSubUserInfo(header string) *SubTrafficStats {
 }
 
 type wdttLinkParsed struct {
-	IP       string
-	DtlsPort string
-	RawPort  string
-	Password string
-	Name     string
-	VpnName  string
-	Hashes   []string
-	SubURL   string
-	DeviceID string
-	WbRoom   string
+	IP        string
+	DtlsPort  string
+	RawPort   string
+	CSQTTPort string
+	Password  string
+	Name      string
+	VpnName   string
+	Hashes    []string
+	SubURL    string
+	DeviceID  string
+	WbRoom    string
 }
 
 func decodeSubBody(body string) string {
@@ -385,6 +388,13 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 	case json.Number:
 		rawPort, _ = v.Int64()
 	}
+	csqttPort := int64(0)
+	switch v := raw["csqtt"].(type) {
+	case float64:
+		csqttPort = int64(v)
+	case json.Number:
+		csqttPort, _ = v.Int64()
+	}
 	if ip == "" || pass == "" || dtls <= 0 {
 		return wdttLinkParsed{}, fmt.Errorf("incomplete json wdtt link")
 	}
@@ -402,17 +412,22 @@ func parseJSONWdtt(payload string) (wdttLinkParsed, error) {
 	if rawPort > 0 {
 		rawPortStr = strconv.FormatInt(rawPort, 10)
 	}
+	csqttPortStr := ""
+	if csqttPort > 0 && csqttPort <= 65535 {
+		csqttPortStr = strconv.FormatInt(csqttPort, 10)
+	}
 	return wdttLinkParsed{
-		IP:       ip,
-		DtlsPort: strconv.FormatInt(dtls, 10),
-		RawPort:  rawPortStr,
-		Password: pass,
-		Name:     name,
-		VpnName:  vpnName,
-		Hashes:   hashes,
-		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
-		DeviceID: deviceID,
-		WbRoom:   wbRoom,
+		IP:        ip,
+		DtlsPort:  strconv.FormatInt(dtls, 10),
+		RawPort:   rawPortStr,
+		CSQTTPort: csqttPortStr,
+		Password:  pass,
+		Name:      name,
+		VpnName:   vpnName,
+		Hashes:    hashes,
+		SubURL:    normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
+		DeviceID:  deviceID,
+		WbRoom:    wbRoom,
 	}, nil
 }
 

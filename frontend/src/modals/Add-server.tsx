@@ -70,6 +70,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
     const h4: [string, string, string, string] = [hashes[0] ?? '', hashes[1] ?? '', hashes[2] ?? '', hashes[3] ?? ''];
 
     const rawPortNum = parsed.rawPort ? Number(parsed.rawPort) : 0;
+    const csqttPortNum = parsed.csqttPort ? Number(parsed.csqttPort) : 0;
     onAdd({
       name,
       vpnName: parsed.vpnName,
@@ -80,6 +81,7 @@ export default function AddServer({ onClose, onAdd }: Props) {
       wbRoom: parsed.wbRoom,
       subUrl: parsed.subUrl,
       rawPort: rawPortNum > 0 ? rawPortNum : undefined,
+      csqttPort: csqttPortNum > 0 ? csqttPortNum : undefined,
       linkManaged: true,
     });
     onClose();

@@ -139,7 +139,7 @@ func WorkerGroup(
 	if !getConfig {
 		configSent = 1
 		// Не трогаем shared RAW gate: иначе группа #2 пометит sent до RAWCONF группы #1.
-		if cfgGate != nil && cfgGate.tunnelMode != "raw" {
+		if cfgGate != nil && cfgGate.tunnelMode != "raw" && cfgGate.tunnelMode != "csqtt" {
 			cfgGate.sent.Store(1)
 		}
 	}

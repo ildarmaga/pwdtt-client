@@ -183,7 +183,8 @@ type ProfileData struct {
 	TurnHost      string   `json:"turn,omitempty"`
 	TurnPort      string   `json:"port,omitempty"`
 	DeviceID      string   `json:"device_id,omitempty"`
-	RawDirectPort int      `json:"raw_port,omitempty"` // 0 = DTLS+3
+	RawDirectPort int      `json:"raw_port,omitempty"`   // 0 = DTLS+3
+	CSQTTPeerPort int      `json:"csqtt_port,omitempty"` // 0 = 46000, из подписки
 }
 
 // ConnectParams — runtime параметры от UI.
@@ -224,15 +225,15 @@ type coreSession struct {
 // Orchestrator — тонкий прокси между Wails UI и core.
 // Два состояния: sess != nil / nil.
 type Orchestrator struct {
-	appCtx        context.Context
-	mu            sync.Mutex
-	sess          *coreSession
-	prevLogWriter io.Writer
-	onTray        func(connected bool, rx, tx int64, workers int32)
-	internetMu    sync.RWMutex
-	internetRTTMs float64
-	pingStop      chan struct{}
-	lastParams    ConnectParams
+	appCtx               context.Context
+	mu                   sync.Mutex
+	sess                 *coreSession
+	prevLogWriter        io.Writer
+	onTray               func(connected bool, rx, tx int64, workers int32)
+	internetMu           sync.RWMutex
+	internetRTTMs        float64
+	pingStop             chan struct{}
+	lastParams           ConnectParams
 	tunnelUp             bool
 	workersZeroAt        time.Time
 	workersLostAt        bool
@@ -425,7 +426,7 @@ func (o *Orchestrator) SoftReconnect() error {
 	}
 	// RAW: core уже слушает новый :9000 — сразу переподключить bridge,
 	// не ждать raw_config (иначе TUN жив, а пакеты в никуда).
-	if canPreserve && params.TunnelMode == "raw" {
+	if canPreserve && (params.TunnelMode == "raw" || params.TunnelMode == "csqtt") {
 		if rerr := rebindRawBridgeSoft("9000"); rerr != nil {
 			runtime.EventsEmit(o.appCtx, "log", "WARN", fmt.Sprintf("[RAW] Soft bridge rebind: %v", rerr))
 		}
@@ -949,7 +950,10 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 	default:
 		tunnelMode = "wg"
 	}
-	csqttPort := p.CSQTTPeerPort
+	csqttPort := prof.CSQTTPeerPort
+	if p.CSQTTPeerPort > 0 {
+		csqttPort = p.CSQTTPeerPort
+	}
 	if tunnelMode == "csqtt" && csqttPort <= 0 {
 		csqttPort = 46000
 	}
@@ -1051,6 +1055,9 @@ func (o *Orchestrator) forwardEvents(sess *coreSession) {
 				var applyErr error
 				if ev.Name == "raw_config" {
 					tag = "RAW"
+					if o.lastParams.TunnelMode == "csqtt" {
+						tag = "CSQTT"
+					}
 					applyErr = applyRawConfig(ev.Data, turnIPs)
 				} else {
 					applyErr = applyWGConfig(ev.Data, turnIPs)

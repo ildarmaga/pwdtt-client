@@ -25,7 +25,7 @@ type Config struct {
 	CaptchaMode     string   // -captcha-mode
 	MTU             int      // 0 = default 1380
 	ObfsMode        string   // audio|video — RTP маскировка (PT 111 / 96)
-	TunnelMode      string   // wg|raw|csqtt — raw = IP без WireGuard; csqtt = WG через CSQTT-WRAP-v1
+	TunnelMode      string   // wg|raw|csqtt — raw и csqtt = IP без WireGuard и без DTLS
 	TurnTransport   string   // tcp|udp — канал клиент↔TURN (default tcp)
 	RawPrimaryIP    string   // soft-reconnect: IP сохранённого TUN для rewrite
 	RawDirectPort   int      // 0 = peer DTLS+3; иначе явный UDP порт RAW
@@ -358,8 +358,8 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	// RAW: пачки по 12 + CHUNK1 (сервер спреит downlink по воркерам).
-	rawMode := tunnelMode == "raw"
+	// RAW и CSQTT: IP-пакеты без WireGuard. CHUNK1 только у RAW.
+	rawMode := tunnelMode == "raw" || tunnelMode == "csqtt"
 	disp := NewDispatcher(
 		ctx,
 		localConn,
@@ -373,8 +373,8 @@ func (c *Core) Start() (<-chan Event, error) {
 	// RAW: один gate на все группы — иначе группа #2 без configCh → nil gate →
 	// воркеры без RAWCONF идут как WG-прокси, sticky шлёт туда TCP → трафик мёртв.
 	var sharedRawGate *wgConfigGate
-	if tunnelMode == "raw" {
-		sharedRawGate = newWGConfigGate(configCh, "raw", mtu, c.cfg.RawPrimaryIP, true, c.cfg.ObfsMode)
+	if tunnelMode == "raw" || tunnelMode == "csqtt" {
+		sharedRawGate = newWGConfigGate(configCh, tunnelMode, mtu, c.cfg.RawPrimaryIP, tunnelMode == "raw", c.cfg.ObfsMode)
 	}
 
 	go func() {
@@ -383,7 +383,7 @@ func (c *Core) Start() (<-chan Event, error) {
 			if !ok || rawConf == "" {
 				return
 			}
-			if tunnelMode == "raw" {
+			if tunnelMode == "raw" || tunnelMode == "csqtt" {
 				c.emit(Event{Type: EventEvent, Name: "raw_config", Data: rawConf})
 				return
 			}

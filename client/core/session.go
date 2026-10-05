@@ -320,13 +320,15 @@ func RunSession(
 	if tp.TunnelMode == "raw" && !useWrap {
 		return false, fmt.Errorf("RAW требует WRAP (direct DTLS+3), старый RAW-over-DTLS удалён")
 	}
-	useDirectRaw := tp.TunnelMode == "raw" && useWrap
+	useDirectWrap := useWrap && (tp.TunnelMode == "raw" || tp.TunnelMode == "csqtt")
 	var activeConn net.Conn
 	var pipeA, pipeB *connutil.PacketPipe
 	var relayWg sync.WaitGroup
-	if useDirectRaw {
+	if useDirectWrap {
 		obfsCfg := NewObfsConfig(tp.ObfsMode)
-		obfsCfg.PaddingMax = 0
+		if tp.TunnelMode == "raw" {
+			obfsCfg.PaddingMax = 0
+		}
 		activeConn = &obfsDirectConn{
 			relay:      relay,
 			peer:       peer,
@@ -334,7 +336,12 @@ func RunSession(
 			cfg:        obfsCfg,
 			writeState: NewObfsState(),
 		}
-		log.Printf("[ВОРКЕР #%d] [DIRECT RAW] RTP/WRAP AEAD без DTLS ✓", sessionID)
+		if tp.TunnelMode == "csqtt" {
+			log.Printf("[ВОРКЕР #%d] [CSQTT] RTP/WRAP без DTLS ✓", sessionID)
+		} else {
+			log.Printf("[ВОРКЕР #%d] [DIRECT RAW] RTP/WRAP AEAD без DTLS ✓", sessionID)
+		}
+		recordRelayPathRTT(turnAddr, float64(time.Since(allocStart).Milliseconds()))
 	} else {
 		// WG path: DTLS through RTP/WRAP packet pipe.
 		pipeA, pipeB = connutil.AsyncPacketPipe()
@@ -480,14 +487,14 @@ func RunSession(
 		if delivered {
 			configDelivered = true
 			rawWorkerIP = workerIP
-		} else if configGate.tunnelMode == "raw" {
-			return false, fmt.Errorf("RAW: пропуск воркера без RAWCONF")
+		} else if configGate.tunnelMode == "raw" || configGate.tunnelMode == "csqtt" {
+			return false, fmt.Errorf("пропуск воркера без конфига")
 		}
 	}
-	if configGate != nil && configGate.tunnelMode == "raw" {
+	if configGate != nil && (configGate.tunnelMode == "raw" || configGate.tunnelMode == "csqtt") {
 		rawPrimaryIP = configGate.PrimaryIP()
 		if rawWorkerIP == nil || rawPrimaryIP == nil {
-			return false, fmt.Errorf("RAW: нет IP воркера/primary для rewrite")
+			return false, fmt.Errorf("нет IP воркера/primary для rewrite")
 		}
 	}
 
@@ -528,7 +535,7 @@ func RunSession(
 	lastOutbound.Store(now)
 	var dtlsWriteMu sync.Mutex
 	writeDTLS := func(payload []byte) (int, error) {
-		if tp.TunnelMode != "raw" {
+		if tp.TunnelMode != "raw" && tp.TunnelMode != "csqtt" {
 			return activeConn.Write(payload)
 		}
 		dtlsWriteMu.Lock()
@@ -536,7 +543,7 @@ func RunSession(
 		return activeConn.Write(payload)
 	}
 	pingInterval := keepaliveInterval
-	if tp.TunnelMode == "raw" {
+	if tp.TunnelMode == "raw" || tp.TunnelMode == "csqtt" {
 		// Сервер исключает RAW allocation без uplink/keepalive через 25s.
 		pingInterval = 3 * time.Second
 	}

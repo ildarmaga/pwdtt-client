@@ -26,9 +26,43 @@ func csqttGetconfPayload(localPort, deviceID, password, obfs string) string {
 	return fmt.Sprintf("GETCONF:%s|%s|%s|0|%s", localPort, deviceID, password, extra)
 }
 
-// RequestCSQTTConfig запрашивает WireGuard-конфиг у CSQTT (соль CSQTT-WRAP-v1 уже на канале).
-func RequestCSQTTConfig(conn net.Conn, localPort, deviceID, password, obfs string) (string, error) {
-	return requestConfigPayload(conn, csqttGetconfPayload(localPort, deviceID, password, obfs))
+// RequestCSQTTConfig шлёт GETCONF внутри WRAP (без DTLS) и переводит TUNCONF в RAW-конфиг.
+func RequestCSQTTConfig(conn net.Conn, localPort, deviceID, password, obfs string, mtu int) (string, error) {
+	resp, err := requestConfigPayload(conn, csqttGetconfPayload(localPort, deviceID, password, obfs))
+	if err != nil || resp == "" {
+		return resp, err
+	}
+	ip, dns, ok := parseTUNCONF(resp)
+	if !ok {
+		return "", fmt.Errorf("неожиданный ответ CSQTT (нет TUNCONF): %q", trimProtoPreview(resp, 64))
+	}
+	return formatCSQTTRawConfig(ip, dns, mtu), nil
+}
+
+// parseTUNCONF разбирает TUNCONF:ip:dns:port. У CSQTT нет DTLS и нет WireGuard-конфига.
+func parseTUNCONF(resp string) (ip, dns string, ok bool) {
+	const prefix = "TUNCONF:"
+	s := strings.TrimSpace(resp)
+	if !strings.HasPrefix(s, prefix) {
+		return "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(s, prefix), ":")
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	ip = strings.TrimSpace(parts[0])
+	dns = strings.TrimSpace(parts[1])
+	if net.ParseIP(ip) == nil || net.ParseIP(dns) == nil {
+		return "", "", false
+	}
+	return ip, dns, true
+}
+
+func formatCSQTTRawConfig(ip, dns string, mtu int) string {
+	if mtu < 576 {
+		mtu = 1280
+	}
+	return fmt.Sprintf("IP = %s\nDNS = %s\nMTU = %d\n", ip, dns, mtu)
 }
 
 // RequestConfig запрашивает WireGuard конфиг через DTLS-соединение.

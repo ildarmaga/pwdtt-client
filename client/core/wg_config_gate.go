@@ -27,11 +27,11 @@ func newWGConfigGate(ch chan<- string, tunnelMode string, mtu int, primaryHint s
 	}
 	// WG без канала = нет GETCONF. RAW: ch может быть nil у вторичных групп,
 	// но gate всё равно нужен — каждый воркер шлёт свой RAWCONF.
-	if ch == nil && tunnelMode != "raw" {
+	if ch == nil && tunnelMode != "raw" && tunnelMode != "csqtt" {
 		return nil
 	}
 	g := &wgConfigGate{ch: ch, tunnelMode: tunnelMode, obfsMode: obfsMode, mtu: mtu, requireChunk: requireChunk}
-	if tunnelMode == "raw" {
+	if tunnelMode == "raw" || tunnelMode == "csqtt" {
 		if ip := net.ParseIP(strings.TrimSpace(primaryHint)); ip != nil {
 			if ip4 := ip.To4(); ip4 != nil {
 				g.primaryIP.Store(append(net.IP(nil), ip4...))
@@ -59,7 +59,7 @@ func (g *wgConfigGate) needsConfig() bool {
 	if g == nil {
 		return false
 	}
-	if g.tunnelMode == "raw" {
+	if g.tunnelMode == "raw" || g.tunnelMode == "csqtt" {
 		return true
 	}
 	return !g.delivered()
@@ -72,7 +72,7 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 	if g == nil {
 		return false, nil, nil
 	}
-	if g.tunnelMode != "raw" && g.delivered() {
+	if g.tunnelMode != "raw" && g.tunnelMode != "csqtt" && g.delivered() {
 		return false, nil, nil
 	}
 
@@ -116,12 +116,7 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 	}
 
 	if g.tunnelMode == "csqtt" {
-		if !g.inFlight.CompareAndSwap(0, 1) {
-			return false, nil, nil
-		}
-		defer g.inFlight.Store(0)
-
-		conf, err := RequestCSQTTConfig(conn, localPort, deviceID, password, g.obfsMode)
+		conf, err := RequestCSQTTConfig(conn, localPort, deviceID, password, g.obfsMode, g.mtu)
 		if err != nil {
 			if strings.Contains(err.Error(), "FATAL_AUTH") {
 				return false, nil, err
@@ -130,18 +125,28 @@ func (g *wgConfigGate) tryDeliver(sessionID int, conn net.Conn, localPort, devic
 			return false, nil, nil
 		}
 		if conf == "" {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал CSQTT-конфиг, повторим позже", sessionID)
+			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал CSQTT TUNCONF, повторим позже", sessionID)
+			return false, nil, nil
+		}
+		workerIP := parseRawConfIP(conf)
+		if workerIP == nil {
+			log.Printf("[ВОРКЕР #%d] CSQTT TUNCONF без IP: %q", sessionID, trimProtoPreview(conf, 64))
 			return false, nil, nil
 		}
 		if g.sent.CompareAndSwap(0, 1) {
-			select {
-			case g.ch <- conf:
-				log.Printf("[ВОРКЕР #%d] CSQTT-конфиг получен", sessionID)
-			default:
-				log.Printf("[ВОРКЕР #%d] CSQTT-конфиг уже был доставлен другим воркером", sessionID)
+			if g.PrimaryIP() == nil {
+				g.primaryIP.Store(append(net.IP(nil), workerIP...))
+			}
+			if g.ch != nil {
+				select {
+				case g.ch <- conf:
+					log.Printf("[ВОРКЕР #%d] CSQTT TUNCONF получен (ip=%s)", sessionID, workerIP)
+				default:
+					log.Printf("[ВОРКЕР #%d] CSQTT TUNCONF уже доставлен", sessionID)
+				}
 			}
 		}
-		return true, nil, nil
+		return true, append(net.IP(nil), workerIP...), nil
 	}
 
 	// WG: один GETCONF

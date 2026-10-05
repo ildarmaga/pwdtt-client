@@ -19,6 +19,8 @@ export interface Server {
   vpnName?: string;
   /** Direct RAW UDP (WRAP); пусто = host DTLS+3 */
   rawPort?: number;
+  /** UDP-порт CSQTT из подписки. Пусто = 46000 */
+  csqttPort?: number;
   /** Сервер добавлен по ссылке подписки панели — поля подключения не редактируются */
   linkManaged?: boolean;
 }
@@ -58,10 +60,8 @@ export interface AppSettings {
   tunnelProtocol: TunnelProtocol;
   /** RTP-маскировка: аудио или видео. Одинаково для WG, RAW и CSQTT. */
   obfsMode: ObfsMode;
-  /** wg = WireGuard поверх TURN; raw = IP без WireGuard; csqtt = WireGuard через CSQTT-WRAP-v1 */
+  /** wg = WireGuard поверх TURN; raw = IP без WireGuard; csqtt = IP через CSQTT-WRAP-v1, без DTLS */
   tunnelMode: 'wg' | 'raw' | 'csqtt';
-  /** UDP-порт CSQTT на хосте профиля. 46000 — порт панели по умолчанию. */
-  csqttPort: number;
   /** Канал клиент↔VK TURN: tcp (по умолчанию, как qWDTT 1.4) или udp */
   turnTransport: 'tcp' | 'udp';
   /** WB: dual-track (экран + камера) */
@@ -99,7 +99,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tunnelProtocol: 'vk',
   obfsMode: 'audio',
   tunnelMode: 'wg',
-  csqttPort: 46000,
   turnTransport: 'tcp',
   // RelayBridge (kulikov0): dual-track off by default — SFU often drops
   // screenshare shards and SOCKS stalls. Enable for extra uplink capacity.

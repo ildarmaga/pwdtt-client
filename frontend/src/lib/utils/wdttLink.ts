@@ -24,6 +24,7 @@ export interface WdttLink {
   ip: string;
   dtlsPort: string;
   rawPort?: string;
+  csqttPort?: string;
   password: string;
   hashes: string[];
   name: string;
@@ -108,6 +109,7 @@ function subResultToLink(r: backend.SubImportResult): WdttLink {
     ip: r.ip,
     dtlsPort: r.dtlsPort,
     rawPort: r.rawPort || undefined,
+    csqttPort: r.csqttPort || undefined,
     password: r.password,
     name,
     vpnName,
@@ -179,6 +181,7 @@ export async function resolveWdttImport(raw: string): Promise<WdttLink | null> {
           ip: inline.ip,
           dtlsPort: inline.dtlsPort,
           rawPort: inline.rawPort || fromPanel.rawPort,
+          csqttPort: inline.csqttPort || fromPanel.csqttPort,
           password: inline.password,
           hashes: inline.hashes.length > 0 ? inline.hashes : fromPanel.hashes,
           name: inline.name !== 'Server' ? inline.name : fromPanel.name,
@@ -222,6 +225,7 @@ export async function syncServerFromSubscription(server: Server): Promise<Server
       wbRoom: link.wbRoom ?? server.wbRoom,
       hashes: hashes ?? server.hashes,
       deviceId: link.deviceId ?? server.deviceId,
+      csqttPort: link.csqttPort ? Number(link.csqttPort) || server.csqttPort : server.csqttPort,
     };
   } catch {
     return server;
@@ -298,6 +302,9 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const dtlsPort = dtls != null ? String(dtls) : '';
     const rawField = json.raw ?? json.Raw;
     const rawPort = rawField != null && Number(rawField) > 0 ? String(rawField) : undefined;
+    const csqttField = json.csqtt ?? json.CSQTT;
+    const csqttNum = Number(csqttField);
+    const csqttPort = Number.isFinite(csqttNum) && csqttNum > 0 && csqttNum <= 65535 ? String(csqttNum) : undefined;
     const userName = String(json.name ?? json.ps ?? json.remark ?? json.email ?? name).trim() || name;
     const vpnName = String(json.vpn ?? json.VPN ?? '').trim() || undefined;
     const hashRaw = json.hash ?? json.vk_hash ?? '';
@@ -309,7 +316,7 @@ export function parseWdttFromSubBody(raw: string): WdttLink | null {
     const subUrl = subRaw && /^https?:\/\//i.test(subRaw) ? subRaw.split('?')[0] : undefined;
     const wbRoom = String(json.wb_room ?? json.wbRoom ?? json.room ?? '').trim() || undefined;
     if (!ip || !dtlsPort || !pass) return null;
-    return { ip, dtlsPort, rawPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl, wbRoom };
+    return { ip, dtlsPort, rawPort, csqttPort, password: pass, hashes, name: userName, vpnName, deviceId, subUrl, wbRoom };
   } catch {
     return null;
   }

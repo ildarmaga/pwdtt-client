@@ -241,6 +241,8 @@ export default function Connect() {
         let s: Server;
         const rawPortNum = consumed.rawPort ? Number(consumed.rawPort) : 0;
         const rawPort = rawPortNum > 0 ? rawPortNum : undefined;
+        const csqttPortNum = consumed.csqttPort ? Number(consumed.csqttPort) : 0;
+        const csqttPort = csqttPortNum > 0 ? csqttPortNum : undefined;
         if (existing) {
           s = {
             ...existing,
@@ -252,6 +254,7 @@ export default function Connect() {
             hashes: consumed.hashes.length > 0 ? padded : existing.hashes,
             wbRoom: consumed.wbRoom ?? existing.wbRoom,
             rawPort: rawPort ?? existing.rawPort,
+            csqttPort: csqttPort ?? existing.csqttPort,
             linkManaged: true,
           };
           serverStore.update(s);
@@ -266,6 +269,7 @@ export default function Connect() {
             hashes: consumed.hashes.length > 0 ? padded : undefined,
             wbRoom: consumed.wbRoom,
             rawPort,
+            csqttPort,
             linkManaged: true,
           });
         }
@@ -440,7 +444,6 @@ export default function Connect() {
         obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
         tunnelMode: mode,
         turnTransport: turnTr,
-        csqttPeerPort: mode === 'csqtt' ? (s.csqttPort || 46000) : 0,
       });
     } catch (e) {
       tunnelStore.set('idle');
@@ -578,7 +581,7 @@ export default function Connect() {
   const latencyRows = isVkProtocol
     ? [
         { label: 'TURN', value: turnDisplay, title: 'TURN Allocate RTT' },
-        { label: 'DTLS', value: dtlsDisplay, title: 'DTLS Handshake' },
+        ...(tunnelMode === 'csqtt' ? [] : [{ label: 'DTLS', value: dtlsDisplay, title: 'DTLS Handshake' }]),
         { label: 'Интернет', value: netDisplay, title: 'TCP до 1.1.1.1' },
       ]
     : [

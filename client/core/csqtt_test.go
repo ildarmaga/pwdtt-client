@@ -40,6 +40,20 @@ func TestCSQTTPeerAddrReplacesPort(t *testing.T) {
 	}
 }
 
+func TestCSQTTTunconfBecomesRawConfig(t *testing.T) {
+	ip, dns, ok := parseTUNCONF("TUNCONF:10.70.1.8:1.1.1.1:9000")
+	if !ok || ip != "10.70.1.8" || dns != "1.1.1.1" {
+		t.Fatalf("parse %q %q %v", ip, dns, ok)
+	}
+	if _, _, ok = parseTUNCONF("DTLS"); ok {
+		t.Fatal("DTLS is not a CSQTT config")
+	}
+	got := formatCSQTTRawConfig(ip, dns, 1280)
+	if got != "IP = 10.70.1.8\nDNS = 1.1.1.1\nMTU = 1280\n" {
+		t.Fatalf("raw config %q", got)
+	}
+}
+
 func TestCSQTTGetconfNamesTheMask(t *testing.T) {
 	if got := csqttGetconfPayload("9000", "dev", "secret", "audio"); got != "GETCONF:9000|dev|secret|0|Audio" {
 		t.Fatalf("audio: %s", got)
