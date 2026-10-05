@@ -223,6 +223,8 @@ func RunSession(
 	}
 	// Уводим воркеры с «дохлых» VK-relay на более стабильные (см. relay_health.go).
 	selectedURL := pickHealthyTurnURL(creds.TurnURLs, sessionID)
+	noteRelayLive(selectedURL, 1)
+	defer noteRelayLive(selectedURL, -1)
 	relayHost := relayHostKey(selectedURL)
 	sessStart := time.Now()
 	var becameReady bool

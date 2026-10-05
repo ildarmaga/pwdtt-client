@@ -184,6 +184,14 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		if err := installVKTransportRoutes(gw); err == nil {
 			markTransportDirectInstalled()
 		}
+		if !VKThroughTunnel() {
+			for _, cidr := range vkWebCIDRs {
+				if run("ip", "route", "add", cidr, "via", gw) == nil {
+					routes = append(routes, cidr)
+				}
+			}
+			markVKWebDirect()
+		}
 		for _, dns := range localDNSServers() {
 			cidr := dns + "/32"
 			if run("ip", "route", "add", cidr, "via", gw) == nil {

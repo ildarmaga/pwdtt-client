@@ -116,7 +116,7 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats, 
 		d.rawFrameCh = make(chan rawFramePacket, rawReturnChBuf)
 		log.Printf("[ДИСП] RAW multipath (RA-frame reorder)")
 	} else if d.rawChunked {
-		log.Printf("[ДИСП] RAW пачки по 12, UDP кроме :443 sticky")
+		log.Printf("[ДИСП] пачки по 12, UDP кроме :443 sticky")
 	} else if d.rawSticky {
 		log.Printf("[ДИСП] RAW sticky")
 	}

@@ -8,6 +8,7 @@ import (
 func resetRelayHealth() {
 	relayHealthMu.Lock()
 	relayHealthMap = map[string]*relayHealth{}
+	relayLive = map[string]int{}
 	relayHealthMu.Unlock()
 }
 
@@ -93,7 +94,7 @@ func TestPickHealthyTurnURLAvoidsHotDead(t *testing.T) {
 
 	// Оба неизвестны, но a только что сдох → должен выбираться b.
 	recordRelaySession(a, 5*time.Second, true) // ставит lastDeath = now
-	got := pickHealthyTurnURL(urls, 0)          // база на a (idx 0)
+	got := pickHealthyTurnURL(urls, 0)         // база на a (idx 0)
 	if got != b {
 		t.Fatalf("pick = %q, ожидался %q (a только что сдох)", got, a)
 	}
@@ -121,6 +122,21 @@ func TestPickHealthyTurnURLSpreadUnknown(t *testing.T) {
 		if counts[u] == 0 {
 			t.Fatalf("relay %q ни разу не выбран при равном здоровье (нет spread): %v", u, counts)
 		}
+	}
+}
+
+func TestPickHealthyTurnURLStopsPilingOnOneHost(t *testing.T) {
+	resetRelayHealth()
+	best := "9.9.9.9:19302"
+	other := "9.9.9.10:19302"
+	for i := 0; i < 5; i++ {
+		recordRelaySession(best, 4*time.Minute, true)
+	}
+	for i := 0; i < maxLivePerRelayHost; i++ {
+		noteRelayLive(best, 1)
+	}
+	if got := pickHealthyTurnURL([]string{best, other}, 0); got != other {
+		t.Fatalf("pick = %q, хост с %d живыми аллокациями надо пропустить", got, maxLivePerRelayHost)
 	}
 }
 

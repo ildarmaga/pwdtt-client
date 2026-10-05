@@ -88,7 +88,10 @@ func rawMultipathEnabled(tunnelMode, turnTransport string) bool {
 }
 
 func rawChunkedEnabled(tunnelMode, turnTransport string) bool {
-	return tunnelMode == "raw" && (turnTransport == "udp" || turnTransport == "tcp")
+	if tunnelMode != "raw" && tunnelMode != "csqtt" {
+		return false
+	}
+	return turnTransport == "udp" || turnTransport == "tcp"
 }
 
 const rawDirectPortOffset = 3
@@ -336,8 +339,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		localPort = "9000"
 	}
 
-	numGroups := n / workersPerGroup
-	perGroup := workersPerGroup
+	groupSizes := planWorkerGroups(n, len(c.cfg.Hashes))
 
 	stats := NewStats()
 	emitCaptchaRequest := func(mode, redirectURI, sessionToken string) {
@@ -358,7 +360,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	// RAW и CSQTT: IP-пакеты без WireGuard. CHUNK1 только у RAW.
+	// RAW и CSQTT: IP-пакеты без WireGuard. Пачки по 12 у обоих, RA-кадры не используем.
 	rawMode := tunnelMode == "raw" || tunnelMode == "csqtt"
 	disp := NewDispatcher(
 		ctx,
@@ -409,8 +411,11 @@ func (c *Core) Start() (<-chan Event, error) {
 		var wg sync.WaitGroup
 		workerIDCounter := 1
 		var prevWaitReady <-chan struct{}
+		// Бюджет аллокаций — на эту сессию. Логин прошлой сессии остаётся,
+		// иначе следующий коннект сразу лезет в VK уже сквозь поднимающийся TUN.
+		resetCredentialBudgets()
 
-		for g := 0; g < numGroups; g++ {
+		for g, perGroup := range groupSizes {
 			isFirst := g == 0
 			var myWaitReady <-chan struct{}
 			var mySignalReady chan<- struct{}
@@ -418,7 +423,7 @@ func (c *Core) Start() (<-chan Event, error) {
 			if g > 0 {
 				myWaitReady = prevWaitReady
 			}
-			if g < numGroups-1 {
+			if g < len(groupSizes)-1 {
 				ch := make(chan struct{})
 				mySignalReady = ch
 				prevWaitReady = ch

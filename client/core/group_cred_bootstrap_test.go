@@ -143,3 +143,50 @@ func TestCredCohortSingleflight(t *testing.T) {
 		t.Fatalf("parallel leases fetched %d times", n)
 	}
 }
+
+func TestPlanWorkerGroupsUsesEveryHash(t *testing.T) {
+	sizes := planWorkerGroups(18, 4)
+	if len(sizes) != 4 {
+		t.Fatalf("groups=%v want 4", sizes)
+	}
+	sum := 0
+	for _, n := range sizes {
+		if n < 1 {
+			t.Fatalf("empty group in %v", sizes)
+		}
+		sum += n
+	}
+	if sum != 18 {
+		t.Fatalf("sum=%d sizes=%v", sum, sizes)
+	}
+	one := planWorkerGroups(9, 1)
+	if len(one) != 1 || one[0] != 9 {
+		t.Fatalf("single hash: %v", one)
+	}
+	two := planWorkerGroups(18, 2)
+	if len(two) != 2 || two[0] != 9 || two[1] != 9 {
+		t.Fatalf("two hashes: %v", two)
+	}
+}
+
+func TestResetBudgetKeepsLogin(t *testing.T) {
+	cohort := newCredCohortState()
+	n := 0
+	fetch := func() (*Credentials, error) {
+		n++
+		return &Credentials{User: "kept", Pass: "p", TurnURLs: []string{"t"}}, nil
+	}
+	for i := 0; i < workersPerCredential; i++ {
+		if _, err := cohort.lease(fetch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cohort.resetBudget()
+	cred, err := cohort.lease(fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || cred.User != "kept" {
+		t.Fatalf("fetches=%d user=%q, бюджет должен сброситься без нового VK", n, cred.User)
+	}
+}

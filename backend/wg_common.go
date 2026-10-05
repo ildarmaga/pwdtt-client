@@ -107,6 +107,18 @@ func markVKExcludeInstalled() {
 	vkRouteMu.Unlock()
 }
 
+// markVKWebDirect — веб/API VK идут мимо туннеля. Ставить до split-default,
+// иначе api.vk.me уходит в ещё пустой TUN и следующий хеш не получает креды.
+func markVKWebDirect() {
+	if VKThroughTunnel() {
+		return
+	}
+	vkRouteMu.Lock()
+	vkExcludeInstalled = true
+	vkWebDirect = true
+	vkRouteMu.Unlock()
+}
+
 // markTransportDirectInstalled — только TURN/transport напрямую, веб через туннель.
 func markTransportDirectInstalled() {
 	vkRouteMu.Lock()

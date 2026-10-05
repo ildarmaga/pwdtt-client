@@ -18,6 +18,29 @@ const WorkersPerGroup = workersPerGroup
 
 const maxWorkers = 108
 
+// planWorkerGroups делит воркеров по хешам: каждый хеш — свой TURN-логин.
+// 18 воркеров и 4 хеша дают четыре группы, а не две по 9 на первых двух хешах.
+func planWorkerGroups(workers, hashes int) []int {
+	n := NormalizeWorkers(workers)
+	if hashes < 1 {
+		hashes = 1
+	}
+	groups := hashes
+	if groups > n {
+		groups = n
+	}
+	base := n / groups
+	extra := n % groups
+	sizes := make([]int, groups)
+	for i := range sizes {
+		sizes[i] = base
+		if i < extra {
+			sizes[i]++
+		}
+	}
+	return sizes
+}
+
 // NormalizeWorkers rounds the requested worker count to a valid group size (9…108).
 func NormalizeWorkers(workers int) int {
 	n := workers
@@ -96,6 +119,21 @@ func cohortForGroup(groupID int) *credCohortState {
 	fresh := newCredCohortState()
 	actual, _ := credCohortStore.LoadOrStore(id, fresh)
 	return actual.(*credCohortState)
+}
+
+// resetBudget обнуляет счётчик аллокаций, логин не трогает.
+func (s *credCohortState) resetBudget() {
+	s.mu.Lock()
+	s.attempts = 0
+	s.mu.Unlock()
+	s.cond.Broadcast()
+}
+
+func resetCredentialBudgets() {
+	credCohortStore.Range(func(_, v any) bool {
+		v.(*credCohortState).resetBudget()
+		return true
+	})
 }
 
 func (s *credCohortState) invalidate() {

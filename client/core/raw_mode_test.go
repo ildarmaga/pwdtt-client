@@ -16,6 +16,8 @@ func TestRawChunkedModeSelection(t *testing.T) {
 	}{
 		{name: "raw udp", tunnel: "raw", transport: "udp", want: true},
 		{name: "raw tcp", tunnel: "raw", transport: "tcp", want: true},
+		{name: "csqtt udp", tunnel: "csqtt", transport: "udp", want: true},
+		{name: "csqtt tcp", tunnel: "csqtt", transport: "tcp", want: true},
 		{name: "wg udp unchanged", tunnel: "wg", transport: "udp", want: false},
 		{name: "wg tcp unchanged", tunnel: "wg", transport: "tcp", want: false},
 		{name: "invalid tunnel", tunnel: "other", transport: "udp", want: false},

@@ -17,12 +17,14 @@ import (
 // avgRttMs — EWMA времени TURN Allocate + DTLS handshake; ниже RTT → выше score.
 
 const (
-	relayShortLifeSec = 50.0
-	relayEWMAAlpha    = 0.4
-	relayRttEWMAAlpha = 0.35
-	relayHotDeadWindow = 25 * time.Second
-	relayRttBonusCap   = 150.0
+	relayShortLifeSec    = 50.0
+	relayEWMAAlpha       = 0.4
+	relayRttEWMAAlpha    = 0.35
+	relayHotDeadWindow   = 25 * time.Second
+	relayRttBonusCap     = 150.0
 	relayRttPenaltyFloor = -100.0
+	// VK не складывает скорость девяти аллокаций на одном адресе и режет квотой.
+	maxLivePerRelayHost = 8
 )
 
 type relayHealth struct {
@@ -36,6 +38,7 @@ type relayHealth struct {
 var (
 	relayHealthMu  sync.Mutex
 	relayHealthMap = map[string]*relayHealth{}
+	relayLive      = map[string]int{}
 )
 
 func relayHostKey(turnURL string) string {
@@ -117,6 +120,16 @@ func relayScore(turnURL string, now time.Time) float64 {
 	return score
 }
 
+func noteRelayLive(turnURL string, delta int) {
+	key := relayHostKey(turnURL)
+	relayHealthMu.Lock()
+	relayLive[key] += delta
+	if relayLive[key] <= 0 {
+		delete(relayLive, key)
+	}
+	relayHealthMu.Unlock()
+}
+
 func pickHealthyTurnURL(urls []string, sessionID int) string {
 	if len(urls) == 0 {
 		return ""
@@ -129,17 +142,30 @@ func pickHealthyTurnURL(urls []string, sessionID int) string {
 	defer relayHealthMu.Unlock()
 
 	now := time.Now()
-	bestIdx, bestScore := -1, -1e18
 	n := len(urls)
-	for i := 0; i < n; i++ {
-		idx := (sessionID + i) % n
-		score := relayScore(urls[idx], now)
-		if i == 0 {
-			score += 0.5
+	choose := func(allowOverCap bool) (int, bool) {
+		bestIdx, bestScore := -1, -1e18
+		for i := 0; i < n; i++ {
+			idx := (sessionID + i) % n
+			if !allowOverCap && relayLive[relayHostKey(urls[idx])] >= maxLivePerRelayHost {
+				continue
+			}
+			score := relayScore(urls[idx], now)
+			if i == 0 {
+				score += 0.5
+			}
+			if score > bestScore {
+				bestScore, bestIdx = score, idx
+			}
 		}
-		if score > bestScore {
-			bestScore, bestIdx = score, idx
-		}
+		return bestIdx, bestIdx >= 0
 	}
-	return urls[bestIdx]
+	if idx, ok := choose(false); ok {
+		return urls[idx]
+	}
+	idx, _ := choose(true)
+	if idx < 0 {
+		return urls[sessionID%n]
+	}
+	return urls[idx]
 }

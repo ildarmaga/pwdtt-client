@@ -235,6 +235,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 			log.Printf("[RAW] transport excludes: %v", err)
 		}
 		markTransportDirectInstalled()
+		if !VKThroughTunnel() {
+			_ = addVKRoutes(gw, vkWebCIDRs)
+			markVKWebDirect()
+		}
 	} else {
 		log.Printf("[RAW] WARN: нет default gateway — TURN excludes не установлены")
 	}
@@ -258,6 +262,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if gw != "" {
 		installTurnHostRoutes(gw, turnIPs)
 		_ = installVKTransportRoutes(gw)
+		if !VKThroughTunnel() {
+			_ = addVKRoutes(gw, vkWebCIDRs)
+			markVKWebDirect()
+		}
 	}
 
 	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
