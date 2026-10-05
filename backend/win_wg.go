@@ -223,6 +223,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return err
 	}
+	mtu = clampRawIfaceMTU(mtu)
 	addr := ip + "/16"
 
 	// Excludes ДО CreateTUN: иначе split-default ловит TURN (особенно 91.231/16).
@@ -275,6 +276,10 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err := startRawBridge(tunDev, "9000"); err != nil {
 		teardownWG()
 		return fmt.Errorf("raw bridge: %w", err)
+	}
+
+	if names := desktoptun.DisableIPv6ExceptTunnel(wgIface); len(names) > 0 {
+		log.Printf("[RAW] IPv6 выключен на %v, Steam не обходит туннель", names)
 	}
 
 	log.Printf("[RAW] Туннель %s поднят (ip=%s mtu=%d, без WireGuard)", wgIface, ip, mtu)
@@ -331,6 +336,7 @@ func dropSplitDefaultRoutes() {
 }
 
 func teardownWG() {
+	desktoptun.RestoreIPv6Bindings()
 	ifaceMu.Lock()
 	defer ifaceMu.Unlock()
 

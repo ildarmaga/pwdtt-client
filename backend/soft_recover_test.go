@@ -99,6 +99,15 @@ func TestSoftRecoverBusy(t *testing.T) {
 	}
 }
 
+func TestClampRawIfaceMTU(t *testing.T) {
+	if clampRawIfaceMTU(1280) != 1400 || clampRawIfaceMTU(1160) != 1400 {
+		t.Fatal("client TUN must accept 1400-byte game datagrams")
+	}
+	if clampRawIfaceMTU(1500) != 1500 {
+		t.Fatal("larger MTU must stay")
+	}
+}
+
 func TestLoginPrefixesStartDirect(t *testing.T) {
 	have := map[string]bool{}
 	for _, c := range vkWebCIDRs {

@@ -147,6 +147,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 	if err != nil {
 		return err
 	}
+	mtu = clampRawIfaceMTU(mtu)
 
 	tunDev, err := tun.CreateTUN(wgIface, mtu)
 	if err != nil {

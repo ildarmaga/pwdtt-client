@@ -297,20 +297,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	}
 
 	n := NormalizeWorkers(c.cfg.Workers)
-	mtu := c.cfg.MTU
-	if mtu <= 0 {
-		mtu = 1280
-	}
-
 	turnTransport := c.cfg.TurnTransport
 	if turnTransport != "udp" {
 		turnTransport = "tcp"
 	}
-	// RAW·UDP: запас под DTLS+WRAP(RTP+AEAD)+TURN ChannelData на datagram path.
-	// 1280 часто не проходит → bulk download мрёт после мелких запросов (ipify ок, CF нет).
-	if tunnelMode == "raw" && turnTransport == "udp" && mtu > 1160 {
-		mtu = 1160
-	}
+	mtu := tunnelMTU(tunnelMode, c.cfg.MTU)
 
 	tp := &TurnParams{
 		Host:          c.cfg.TurnHost,

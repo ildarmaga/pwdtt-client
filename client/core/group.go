@@ -13,6 +13,20 @@ import (
 
 const workersPerGroup = 9
 
+// rawDatagramMTU совпадает с серверным TUN. Ниже 1400 Linux на сервере
+// отдаёт целый пакет, а wintun 1280 его выбрасывает — Raft обрывает вход.
+const rawDatagramMTU = 1400
+
+func tunnelMTU(mode string, requested int) int {
+	if mode == "raw" || mode == "csqtt" {
+		return rawDatagramMTU
+	}
+	if requested <= 0 {
+		return 1280
+	}
+	return requested
+}
+
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
 const WorkersPerGroup = workersPerGroup
 

@@ -18,6 +18,14 @@ var (
 // adapter except the wintun tunnel. Chrome and other browsers otherwise prefer
 // IPv6 default routes on Wi‑Fi/Ethernet and bypass the IPv4-only split tunnel.
 // Returns adapter names where IPv6 was disabled.
+// DisableIPv6ExceptTunnel отключает IPv6 на физических адаптерах, кроме туннеля.
+func DisableIPv6ExceptTunnel(tunnelAdapter string) []string {
+	return disableIPv6ExceptTunnel(tunnelAdapter)
+}
+
+// RestoreIPv6Bindings возвращает IPv6, снятый на время сессии.
+func RestoreIPv6Bindings() { restoreIPv6Bindings() }
+
 func disableIPv6ExceptTunnel(tunnelAdapter string) []string {
 	ipv6Mu.Lock()
 	defer ipv6Mu.Unlock()

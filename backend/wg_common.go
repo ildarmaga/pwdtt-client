@@ -43,6 +43,17 @@ func ActiveRawPrimaryIP() string {
 
 const wgIface = "wg-turn"
 
+// rawIfaceMTU — серверный wdtt-raw поднят на 1400. Меньший wintun выбрасывает
+// игровой UDP, который в этот MTU ещё влезает.
+const rawIfaceMTU = 1400
+
+func clampRawIfaceMTU(mtu int) int {
+	if mtu < rawIfaceMTU {
+		return rawIfaceMTU
+	}
+	return mtu
+}
+
 // vkTransportCIDRs — подсети VK TURN/WebRTC, на которых держится САМ транспорт туннеля
 // (воркеры релеят WG-трафик через эти сервера). ВСЕГДА напрямую — иначе петля
 // маршрутизации (туннель пошёл бы сам в себя) и соединение не поднимется.

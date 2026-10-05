@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+func TestTunnelMTUMatchesServerDatagram(t *testing.T) {
+	if tunnelMTU("csqtt", 1280) != 1400 || tunnelMTU("raw", 1160) != 1400 {
+		t.Fatal("RAW/CSQTT must use the server datagram MTU")
+	}
+	if tunnelMTU("wg", 1280) != 1280 || tunnelMTU("wg", 0) != 1280 {
+		t.Fatal("WG keeps its own MTU")
+	}
+}
+
 func TestRawChunkedModeSelection(t *testing.T) {
 	tests := []struct {
 		name      string
