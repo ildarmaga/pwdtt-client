@@ -539,6 +539,7 @@ func (o *Orchestrator) noteWorkerStats(workers int32) {
 		// Verify НЕ закрываем по workers alone — нужен трафик / MarkSoftProbeOK.
 		o.mu.Unlock()
 		o.finishSoftRecoverVK()
+		releaseBlockedVKToTunnel()
 		return
 	}
 	o.mu.Lock()

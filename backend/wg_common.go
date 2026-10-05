@@ -67,6 +67,16 @@ var vkWebCIDRs = []string{
 	"195.82.146.0/23", // VK
 }
 
+// vkLoginViaTunnelCIDRs — login/id/queue. На части сетей TCP есть, TLS режется.
+// Пока воркеров нет, префиксы прямые (креды не уходят в пустой TUN).
+// Когда туннель живой, их снимаем: с сервера login.vk.ru открывается.
+var vkLoginViaTunnelCIDRs = []string{
+	"93.186.224.0/19",
+	"95.213.0.0/18",
+}
+
+var vkLoginReleased atomic.Bool
+
 // vkExcludeCIDRs — всё, что по умолчанию идёт напрямую при подключении (транспорт + веб).
 var vkExcludeCIDRs = append(append([]string{}, vkTransportCIDRs...), vkWebCIDRs...)
 
@@ -96,6 +106,23 @@ func clearWGRouteState() {
 	vkExcludeInstalled = false
 	vkWebDirect = false
 	vkRouteMu.Unlock()
+	vkLoginReleased.Store(false)
+}
+
+// releaseBlockedVKToTunnel уводит login/id в туннель после подъёма воркеров.
+func releaseBlockedVKToTunnel() {
+	if vkThroughTunnel.Load() {
+		return
+	}
+	if !vkLoginReleased.CompareAndSwap(false, true) {
+		return
+	}
+	if err := delVKRoutes(vkLoginViaTunnelCIDRs); err != nil {
+		vkLoginReleased.Store(false)
+		log.Printf("[VK] не удалось отдать login в туннель: %v", err)
+		return
+	}
+	log.Printf("[VK] login/id через туннель")
 }
 
 // markVKExcludeInstalled — после установки полных exclude (transport+web).

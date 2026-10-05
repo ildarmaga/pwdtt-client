@@ -99,6 +99,21 @@ func TestSoftRecoverBusy(t *testing.T) {
 	}
 }
 
+func TestLoginPrefixesStartDirect(t *testing.T) {
+	have := map[string]bool{}
+	for _, c := range vkWebCIDRs {
+		have[c] = true
+	}
+	for _, c := range vkLoginViaTunnelCIDRs {
+		if !have[c] {
+			t.Fatalf("%s must be direct until workers are up", c)
+		}
+	}
+	if !have["87.240.128.0/18"] {
+		t.Fatal("vk.com prefix must stay direct")
+	}
+}
+
 func TestShouldRestoreVKThroughTunnel(t *testing.T) {
 	if shouldRestoreVKThroughTunnel(0, true, false) {
 		t.Fatal("must stay off tunnel")
