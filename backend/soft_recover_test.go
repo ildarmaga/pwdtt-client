@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,8 +104,16 @@ func TestClampRawIfaceMTU(t *testing.T) {
 	if clampRawIfaceMTU(1280) != 1400 || clampRawIfaceMTU(1160) != 1400 {
 		t.Fatal("client TUN must accept 1400-byte game datagrams")
 	}
-	if clampRawIfaceMTU(1500) != 1500 {
-		t.Fatal("larger MTU must stay")
+	if clampRawIfaceMTU(1500) != 1400 {
+		t.Fatal("1500 inner + RTP/AEAD/TURN does not fit a 1500 underlay")
+	}
+}
+
+func TestIfaceMTUArgsSetsAdapter(t *testing.T) {
+	got := strings.Join(ifaceMTUArgs("wg-turn", 1400), " ")
+	want := "interface ipv4 set subinterface wg-turn mtu=1400 store=active"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }
 

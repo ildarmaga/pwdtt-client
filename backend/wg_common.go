@@ -3,6 +3,7 @@ package backend
 import (
 	"bufio"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,15 +44,19 @@ func ActiveRawPrimaryIP() string {
 
 const wgIface = "wg-turn"
 
-// rawIfaceMTU — серверный wdtt-raw поднят на 1400. Меньший wintun выбрасывает
-// игровой UDP, который в этот MTU ещё влезает.
+// rawIfaceMTU — серверный wdtt-raw поднят на 1400. Больше нельзя: 1500 внутри
+// плюс RTP/AEAD/TURN не влезает в 1500 снаружи.
 const rawIfaceMTU = 1400
 
-func clampRawIfaceMTU(mtu int) int {
-	if mtu < rawIfaceMTU {
-		return rawIfaceMTU
-	}
-	return mtu
+func clampRawIfaceMTU(int) int {
+	return rawIfaceMTU
+}
+
+// ifaceMTUArgs — wintun не применяет MTU из CreateTUN, адаптер остаётся 65535.
+// Тогда Windows не режет крупный UDP, и такой пакет в туннеле теряется.
+func ifaceMTUArgs(name string, mtu int) []string {
+	return []string{"interface", "ipv4", "set", "subinterface", name,
+		"mtu=" + strconv.Itoa(mtu), "store=active"}
 }
 
 // vkTransportCIDRs — подсети VK TURN/WebRTC, на которых держится САМ транспорт туннеля

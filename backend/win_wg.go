@@ -158,6 +158,7 @@ func applyWGConfig(conf string, turnIPs []string) error {
 				"name="+wgIface, "source=static", host, mask)
 		}
 	}
+	setIfaceMTU("WG", mtu)
 
 	// Exclude routes BEFORE adding tunnel routes
 	gw := defaultGateway()
@@ -258,6 +259,7 @@ func applyRawConfig(conf string, turnIPs []string) error {
 		"name="+wgIface, "source=static", host, mask); err != nil {
 		log.Printf("[RAW] netsh address: %v", err)
 	}
+	setIfaceMTU("RAW", mtu)
 
 	// Повтор после churn интерфейса.
 	if gw != "" {
@@ -431,6 +433,12 @@ func toHex(b64 string) string {
 		return b64 // already hex or garbage — return as-is
 	}
 	return hex.EncodeToString(raw)
+}
+
+func setIfaceMTU(tag string, mtu int) {
+	if err := run("netsh", ifaceMTUArgs(wgIface, mtu)...); err != nil {
+		log.Printf("[%s] MTU %d на %s не выставлен: %v", tag, mtu, wgIface, err)
+	}
 }
 
 func run(name string, args ...string) error {
