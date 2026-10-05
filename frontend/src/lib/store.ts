@@ -53,7 +53,7 @@ export const settingsStore = {
     if (merged.tunnelProtocol !== 'vk' && merged.tunnelProtocol !== 'wb') {
       merged.tunnelProtocol = DEFAULT_SETTINGS.tunnelProtocol;
     }
-    if (merged.obfsMode !== 'audio' && merged.obfsMode !== 'video' && merged.obfsMode !== 'vkquic') {
+    if (merged.obfsMode !== 'audio' && merged.obfsMode !== 'video') {
       merged.obfsMode = DEFAULT_SETTINGS.obfsMode;
     }
     if (merged.tunnelMode !== 'wg' && merged.tunnelMode !== 'raw') {

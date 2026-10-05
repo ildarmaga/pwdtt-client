@@ -9,6 +9,8 @@ interface Props {
   tunnelMode?: 'wg' | 'raw';
   /** Только для VK: TURN tcp|udp */
   turnTransport?: 'tcp' | 'udp';
+  /** Только для VK: RTP-маскировка */
+  obfsMode?: 'audio' | 'video';
 }
 
 const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accent: string }> = {
@@ -16,11 +18,11 @@ const PROTOCOL_META: Record<TunnelProtocol, { label: string; hint: string; accen
   wb: { label: 'WB', hint: 'WB Stream · WebRTC', accent: '#6d6aac' },
 };
 
-export default function ProtocolSelector({ value, onChange, locked, tunnelMode = 'wg', turnTransport = 'tcp' }: Props) {
+export default function ProtocolSelector({ value, onChange, locked, tunnelMode = 'wg', turnTransport = 'tcp', obfsMode = 'audio' }: Props) {
   const meta = PROTOCOL_META[value];
   const hint =
     value === 'vk'
-      ? `VK Calls · ${tunnelMode === 'raw' ? 'RAW' : 'WG'} · ${turnTransport === 'udp' ? 'UDP' : 'TCP'}`
+      ? `VK Calls · ${tunnelMode === 'raw' ? 'RAW' : 'WG'} · ${turnTransport === 'udp' ? 'UDP' : 'TCP'} · ${obfsMode === 'video' ? 'Видео' : 'Аудио'}`
       : meta.hint;
 
   return (

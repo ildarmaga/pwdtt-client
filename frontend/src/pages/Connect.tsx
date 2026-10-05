@@ -182,6 +182,7 @@ export default function Connect() {
   const [tunnelProtocol, setTunnelProtocol] = useState<TunnelProtocol>(() => settingsStore.get().tunnelProtocol);
   const [tunnelMode, setTunnelMode] = useState<'wg' | 'raw'>(() => settingsStore.get().tunnelMode === 'raw' ? 'raw' : 'wg');
   const [turnTransport, setTurnTransport] = useState<'tcp' | 'udp'>(() => settingsStore.get().turnTransport === 'udp' ? 'udp' : 'tcp');
+  const [obfsMode, setObfsMode] = useState<'audio' | 'video'>(() => settingsStore.get().obfsMode === 'video' ? 'video' : 'audio');
   const [socksEp, setSocksEp] = useState<WBSocksEndpoint | null>(() => wbSocksStore.get());
   const [socksOpen, setSocksOpen] = useState(false);
   useEffect(() => settingsStore.subscribe(s => {
@@ -189,6 +190,7 @@ export default function Connect() {
     setTunnelProtocol(s.tunnelProtocol);
     setTunnelMode(s.tunnelMode === 'raw' ? 'raw' : 'wg');
     setTurnTransport(s.turnTransport === 'udp' ? 'udp' : 'tcp');
+    setObfsMode(s.obfsMode === 'video' ? 'video' : 'audio');
   }), []);
   useEffect(() => tunnelStatsStore.subscribe(setSessionStats), []);
   useEffect(() => wbSocksStore.subscribe(setSocksEp), []);
@@ -432,7 +434,7 @@ export default function Connect() {
         mtu: s.mtu || 1280,
         hashes,
         vkThroughTunnel: false,
-        obfsMode: s.obfsMode === 'video' || s.obfsMode === 'vkquic' ? s.obfsMode : 'audio',
+        obfsMode: s.obfsMode === 'video' ? 'video' : 'audio',
         tunnelMode: mode,
         turnTransport: turnTr,
       });
@@ -882,6 +884,7 @@ export default function Connect() {
           value={tunnelProtocol}
           tunnelMode={tunnelMode}
           turnTransport={turnTransport}
+          obfsMode={obfsMode}
           locked={selectionLocked}
           onChange={p => {
             settingsStore.patch({ tunnelProtocol: p });

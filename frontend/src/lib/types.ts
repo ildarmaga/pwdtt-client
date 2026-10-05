@@ -30,8 +30,8 @@ export function isLinkManagedServer(s: Server): boolean {
 /** Протокол туннеля на экране подключения. VK — TURN/VK Calls; WB — WB Stream WebRTC. */
 export type TunnelProtocol = 'vk' | 'wb';
 
-/** Маскировка RTP: audio=Простая (OPUS PT111), video=Средняя (PT96), vkquic=CSQTT Сложная. */
-export type ObfsMode = 'audio' | 'video' | 'vkquic';
+/** Маскировка RTP у всех протоколов: audio = OPUS PT111, video = PT96. */
+export type ObfsMode = 'audio' | 'video';
 
 /** In-app update download progress (EventsOn update_progress). */
 export interface UpdateProgressEvent {
@@ -56,7 +56,7 @@ export interface AppSettings {
   vkThroughTunnel: boolean;
   /** Выбранный протокол на главном экране */
   tunnelProtocol: TunnelProtocol;
-  /** VK TURN / CSQTT: Простая (audio), Средняя (video), Сложная (vkquic) */
+  /** RTP-маскировка: аудио или видео. Одинаково для WG, RAW и CSQTT. */
   obfsMode: ObfsMode;
   /** wg = WireGuard поверх TURN; raw = IP поверх DTLS без WireGuard (нужен сервер с RAW) */
   tunnelMode: 'wg' | 'raw';
