@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DiscoverTURNRelays, GetTURNSettings, ProbeTURNRelays, SaveTURNSelection } from '../../wailsjs/go/backend/App';
+import { DiscoverTURNRelays, GetTURNSettings, GetActiveTURNWorkers, ProbeTURNRelays, SaveTURNSelection } from '../../wailsjs/go/backend/App';
 import { serverStore, settingsStore } from '../lib/store';
 import { selectedServerStore } from '../lib/stores/selectedServerStore';
 
@@ -25,6 +25,26 @@ export default function TurnSettings() {
   const [results, setResults] = useState<Probe[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [active, setActive] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let alive = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const workers = await GetActiveTURNWorkers();
+        if (alive) {
+          setActive(workers ?? {});
+          setRelays(old => [...new Set([...old, ...Object.keys(workers ?? {})])].sort());
+        }
+      } catch { if (alive) setMessage('Не удалось обновить подключённые TURN-серверы'); }
+      finally { pending = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
   useEffect(() => {
     let alive = true;
     setBusy(true);
@@ -47,25 +67,39 @@ export default function TurnSettings() {
     try { await SaveTURNSelection(preferred); setMessage('Сохранено · применится после переподключения'); }
     catch (e) { setMessage(String(e)); } finally { setBusy(false); }
   };
-  const pools = [...new Set(relays.map(url => poolOf(url.split(':')[0])))];
+  const pools = [...new Set([...knownPools, ...relays.map(url => poolOf(url.split(':')[0]))])];
   return <div className="st-vk-block">
     <div className="st-section-title">TURN-подсети</div>
+    <div className="turn-list">
     {pools.map(pool => {
       const addresses = relays.filter(url => poolOf(url.split(':')[0]) === pool);
       const measurements = results.filter(r => addresses.includes(r.address) && r.replies > 0);
       const replies = measurements.reduce((sum, r) => sum + r.replies, 0);
       const average = replies ? measurements.reduce((sum, r) => sum + r.averageMs * r.replies, 0) / replies : 0;
       const probes = results.filter(r => addresses.includes(r.address)).reduce((sum, r) => sum + r.probes, 0);
-      const selected = preferred.includes(pool) || addresses.some(url => preferred.includes(url.split(':')[0]));
-      return <div className="st-row" key={pool}>
+      const selected = preferred.includes(pool);
+      return <section className="turn-pool" key={pool}>
+        <div className="st-row">
         <div><span>{pool}</span><div style={{fontSize:12,color:'var(--text-3)'}}>{addresses.length} адресов от VK</div></div>
-        <span style={{fontSize:12}}>{replies ? `${Math.round(average)} мс · ${replies}/${probes}` : results.length ? 'Нет ответа' : '—'}</span>
+        <span style={{fontSize:12}}>{!addresses.length ? 'Не выдан VK' : replies ? `${Math.round(average)} мс · ${replies}/${probes}` : results.length ? 'Нет ответа' : '—'}</span>
         <button type="button" role="switch" aria-checked={selected} aria-label={pool} disabled={busy} className={`st-toggle st-toggle--${selected ? 'on' : 'off'}`} onClick={() => setPreferred(old => {
           const remaining = old.filter(x => x !== pool && !addresses.some(url => url.split(':')[0] === x));
           return selected ? remaining : [...remaining, pool];
         })}/>
-      </div>;
+        </div>
+        {addresses.map(address => {
+          const result = results.find(r => r.address === address);
+          const host = address.split(':')[0];
+          return <label className="turn-address" key={address}>
+            <span>{address}</span>
+            {!!active[address] && <span className="turn-connected" title="Фактически подключённые воркеры">Подключено · {active[address]}</span>}
+            <span>{result ? result.replies ? `${Math.round(result.averageMs)} мс · ${Math.round(result.minMs)}–${Math.round(result.maxMs)}` : 'Нет ответа' : '—'}</span>
+            <input type="checkbox" aria-label={`Предпочитать ${host}`} title={selected ? 'Выбор адресов доступен при выключенной подсети' : host} disabled={busy || selected} checked={selected || preferred.includes(host)} onChange={e => setPreferred(old => e.target.checked ? [...old,host] : old.filter(x => x !== host))}/>
+          </label>;
+        })}
+      </section>;
     })}
+    </div>
     <div style={{display:'flex',gap:8,marginTop:10}}>
       <button className="st-hash-btn" disabled={busy} onClick={probe}>{busy ? 'Проверка…' : 'Проверить пинг'}</button>
       <button className="st-hash-btn" disabled={busy} onClick={save}>Сохранить</button>

@@ -361,7 +361,7 @@ func WorkerGroup(
 		}
 		signalOnce.Do(func() {
 			close(signalReady)
-			log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
+			log.Printf("[ГРУППА #%d] Разрешён запуск следующей группы; готовность туннеля проверяется отдельно", groupID)
 		})
 	}
 

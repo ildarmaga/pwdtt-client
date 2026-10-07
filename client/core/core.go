@@ -276,7 +276,7 @@ func (c *Core) Start() (<-chan Event, error) {
 			return nil, err
 		}
 	}
-	peer, err := net.ResolveUDPAddr("udp", peerAddr)
+	peer, err := sessionPeerResolver.resolve(peerAddr, c.cfg.TunAlreadyReady && (tunnelMode == "raw" || tunnelMode == "csqtt"), net.ResolveUDPAddr)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("resolve peer: %w", err)
@@ -434,7 +434,7 @@ func (c *Core) Start() (<-chan Event, error) {
 
 			waitTun := func(ctx context.Context) bool {
 				// Soft уже открыл tunReady; обычный старт ждёт wg_config/raw_config.
-				timeout := 20 * time.Second
+				timeout := 150 * time.Second
 				if c.cfg.TunAlreadyReady {
 					timeout = 2 * time.Second
 				}

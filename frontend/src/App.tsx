@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import DevPreviewShell from './components/DevPreviewShell';
 import Connect from './pages/Connect';
 import Logs from './pages/Logs';
+import Turn from './pages/Turn';
 import Toast from './components/Toast';
 import { wdttLinkStore, resolveWdttImport, isImportableInput } from './lib/utils/wdttLink';
 import { isPasteTargetEditable } from './lib/utils/inputPaste';
@@ -153,6 +154,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Connect />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/turn" element={<Turn />} />
           </Route>
         </Routes>
         <Toast />

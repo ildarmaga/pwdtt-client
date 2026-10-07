@@ -6,6 +6,7 @@ import {
   IconSettings2,
   IconRoute,
   IconBrandVk,
+  IconNetwork,
 } from '@tabler/icons-react';
 import { useMobileUI } from '../lib/useMobileUI';
 import { serverStore } from '../lib/store';
@@ -22,6 +23,7 @@ function shortDeviceId(id: string): string {
 const NAV = [
   { path: '/', icon: (s: number) => <IconPlugConnected stroke={2} size={s} /> },
   { path: '/logs', icon: (s: number) => <IconTerminal2 stroke={2} size={s} /> },
+  { path: '/turn', icon: (s: number) => <IconNetwork stroke={2} size={s} /> },
 ];
 
 interface Props {
@@ -99,6 +101,8 @@ export default function Sidebar({ onSettings, onRouting, onVKLogin, pathname: pa
           {NAV.map(({ path, icon }) => (
             <button
               key={path}
+              title={path === '/turn' ? 'TURN-серверы' : path === '/logs' ? 'Журнал' : 'Подключение'}
+              aria-label={path === '/turn' ? 'TURN-серверы' : path === '/logs' ? 'Журнал' : 'Подключение'}
               className={`nav-btn${pathname === path ? ' nav-btn--active' : ''}`}
               onClick={() => navigate(path)}
             >

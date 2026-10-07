@@ -25,23 +25,24 @@ var vkStaticHostIPs = map[string][]string{
 		"87.240.129.140", "87.240.137.206", "87.240.137.207", "87.240.139.193",
 		"87.240.190.70", "87.240.190.75", "87.240.137.130", "87.240.137.208", "93.186.225.205",
 	},
-	"login.vk.ru": {"93.186.237.1", "95.213.56.1"},
-	"login.vk.com": {"93.186.237.1", "95.213.56.1", "87.240.137.130", "95.213.0.1"},
-	"id.vk.ru":      {"93.186.237.1", "95.213.56.1"},
-	"id.vk.com":     {"93.186.237.1", "95.213.56.1"},
+	"login.vk.ru":    {"93.186.237.1", "95.213.56.1"},
+	"login.vk.com":   {"93.186.237.1", "95.213.56.1", "87.240.137.130", "95.213.0.1"},
+	"id.vk.ru":       {"93.186.237.1", "95.213.56.1"},
+	"id.vk.com":      {"93.186.237.1", "95.213.56.1"},
 	"queuev4.vk.com": {"93.186.237.6", "93.186.237.7", "93.186.237.16", "95.213.56.3", "95.213.56.4"},
 	"queuev4.vk.ru":  {"93.186.237.6", "93.186.237.7", "95.213.56.3", "95.213.56.4"},
 	"eh.vk.com":      {"93.186.237.6", "93.186.237.7", "95.213.56.2", "95.213.56.3", "95.213.56.4"},
 	"st4-9.vk.com":   {"95.142.203.40"},
-	"vk.com":        {"87.240.137.130", "87.240.139.193", "93.186.225.205", "87.240.190.75"},
-	"m.vk.com":      {"87.240.137.130", "87.240.139.193"},
-	"oauth.vk.com":  {"87.240.137.130", "87.240.139.193"},
+	"vk.com":         {"87.240.137.130", "87.240.139.193", "93.186.225.205", "87.240.190.75"},
+	"m.vk.com":       {"87.240.137.130", "87.240.139.193"},
+	"oauth.vk.com":   {"87.240.137.130", "87.240.139.193"},
 }
 
 var vkRuntimeHostIPs sync.Map // host -> []string, filled by resolveVKHostsOnce
 
 type vkAwareDialer struct {
-	inner net.Dialer
+	inner    net.Dialer
+	ipOffset int
 }
 
 func (d *vkAwareDialer) Dial(network, addr string) (net.Conn, error) {
@@ -58,7 +59,8 @@ func (d *vkAwareDialer) DialContext(ctx context.Context, network, addr string) (
 		return d.inner.DialContext(ctx, network, addr)
 	}
 	var lastErr error
-	for _, ip := range ips {
+	for i := range ips {
+		ip := ips[(i+d.ipOffset)%len(ips)]
 		target := net.JoinHostPort(ip, port)
 		conn, dialErr := d.inner.DialContext(ctx, network, target)
 		if dialErr == nil {
@@ -84,12 +86,29 @@ func vkDialIPs(host string) []string {
 }
 
 func resolveVKHostsOnce() {
+	resolveVKHosts(false)
+}
+
+// RefreshVKHostIPs refreshes bootstrap addresses before a fresh RAW connection,
+// while its DNS is still available. Worker recovery reuses the retained results.
+func RefreshVKHostIPs() {
+	resolveVKHosts(true)
+}
+
+func resolveVKHosts(refresh bool) {
 	hosts := []string{
 		"api.vk.me", "api.vk.ru", "login.vk.ru", "login.vk.com", "id.vk.com",
 		"queuev4.vk.com", "queuev4.vk.ru", "eh.vk.com", "calls.okcdn.ru", "vk.com",
 	}
 	r := &net.Resolver{PreferGo: false} // OS DNS (router) — same path curl uses on Windows
 	for _, host := range hosts {
+		// Reuse bootstrap results during recovery: system DNS may still point
+		// into the retained but disconnected tunnel. The dialer uses these IPs.
+		if cached, ok := vkRuntimeHostIPs.Load(host); ok && !refresh {
+			if ips, ok := cached.([]string); ok && len(ips) > 0 {
+				continue
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		ips, err := r.LookupHost(ctx, host)
 		cancel()
@@ -118,8 +137,13 @@ func NewVKHTTPClientForProxy(jar fhttp.CookieJar) (tlsclient.HttpClient, error) 
 }
 
 func newVKHTTPClientOpts(proxyMode bool, jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
+	return newVKHTTPClientOffset(proxyMode, 0, jar...)
+}
+
+func newVKHTTPClientOffset(proxyMode bool, offset int, jar ...fhttp.CookieJar) (tlsclient.HttpClient, error) {
 	resolveVKHostsOnce()
 	dialer := &vkAwareDialer{
+		ipOffset: offset,
 		inner: net.Dialer{
 			Timeout:   15 * time.Second,
 			KeepAlive: 30 * time.Second,

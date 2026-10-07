@@ -309,6 +309,18 @@ func RunSession(
 
 	// Keepalive goroutine (TURN binding request)
 	var sessionWg sync.WaitGroup
+	// Repair transactions may wait for STUN retransmissions. Keep them off
+	// the data/keepalive loop and serialize them per allocation.
+	repairRequests := make(chan struct{})
+	sessionWg.Add(1)
+	go func() {
+		defer sessionWg.Done()
+		runPathRepairs(sessCtx, repairRequests, func() {
+			if repairErr := tc.CreatePermission(peer); repairErr != nil && sessCtx.Err() == nil {
+				log.Printf("[ВОРКЕР #%d] [ВОССТАНОВЛЕНИЕ] Permission: %v", sessionID, repairErr)
+			}
+		})
+	}()
 	sessionWg.Add(1)
 	go func() {
 		defer sessionWg.Done()
@@ -514,6 +526,8 @@ func RunSession(
 	slot := &WorkerSlot{ID: sessionID}
 	slot.PathRTTMs.Store(time.Since(allocStart).Milliseconds())
 	d.Register(slot)
+	noteRelayReady(selectedURL, 1)
+	defer noteRelayReady(selectedURL, -1)
 	defer d.Unregister(slot)
 	sendCh := d.SendCh
 	if slot.SendCh != nil {
@@ -530,18 +544,17 @@ func RunSession(
 	proxyWg.Add(3) // +1 for keepalive goroutine
 
 	stopDTLS := context.AfterFunc(sessCtx, func() {
+		tc.Close() // Unblock pending TURN repair transactions during shutdown.
 		_ = activeConn.SetDeadline(time.Now())
 		_ = activeConn.Close()
 	})
 	defer stopDTLS()
 
-	// lastInbound / lastOutbound — consent-freshness: путь мёртв только если
-	// нет ответа И нет успешных отправок (upload-only воркеры без pong не убиваются).
+	// Every worker receives a server pong, including upload-only workers.
+	// A successful UDP write alone does not confirm a live path.
 	var lastInbound atomic.Int64
-	var lastOutbound atomic.Int64
 	now := time.Now().UnixNano()
 	lastInbound.Store(now)
-	lastOutbound.Store(now)
 	var dtlsWriteMu sync.Mutex
 	writeDTLS := func(payload []byte) (int, error) {
 		if tp.TunnelMode != "raw" && tp.TunnelMode != "csqtt" {
@@ -563,19 +576,33 @@ func RunSession(
 		t := time.NewTicker(pingInterval)
 		defer t.Stop()
 		ping := []byte{keepaliveByte}
+		var recovery pathRecovery
 		for {
 			select {
 			case <-sessCtx.Done():
 				return
 			case <-t.C:
-				inIdle := time.Since(time.Unix(0, lastInbound.Load()))
-				outIdle := time.Since(time.Unix(0, lastOutbound.Load()))
-				// Чёрная дыра: ни ответа, ни успешной отправки — убиваем воркер.
-				if inIdle > consentTimeout && outIdle > consentTimeout {
+				checkTime := time.Now()
+				inbound := time.Unix(0, lastInbound.Load())
+				wasRecovering := recovery.recovering
+				action := recovery.check(checkTime, inbound)
+				if action == pathHealthy && wasRecovering {
+					log.Printf("[ВОРКЕР #%d] [ВОССТАНОВЛЕНИЕ] ответы вернулись relay=%s, allocation сохранена", sessionID, relayHost)
+				}
+				if action == pathRestart {
 					log.Printf("[ВОРКЕР #%d] [CONSENT] нет ответа %.0fs relay=%s — путь мёртв, пересоздание",
-						sessionID, inIdle.Seconds(), relayHost)
+						sessionID, checkTime.Sub(inbound).Seconds(), relayHost)
 					sessCancel()
 					return
+				}
+				if action == pathRepair {
+					// Reissue permission on the existing allocation/socket. Pion
+					// maintains Refresh/ChannelBind timers; do not reallocate here.
+					log.Printf("[ВОРКЕР #%d] [ВОССТАНОВЛЕНИЕ] нет ответов %.0fs relay=%s, обновляем Permission без смены allocation", sessionID, checkTime.Sub(inbound).Seconds(), relayHost)
+					select {
+					case repairRequests <- struct{}{}:
+					default: // A previous repair is still awaiting its reply.
+					}
 				}
 				// Без WriteDeadline: абсолютный дедлайн протекал на Writer и
 				// убивал воркер ровно через ~15s (ticker 10s + deadline 5s).
@@ -594,7 +621,6 @@ func RunSession(
 					sessCancel()
 					return
 				}
-				lastOutbound.Store(time.Now().UnixNano())
 			}
 		}
 	}()
@@ -649,7 +675,6 @@ func RunSession(
 				log.Printf("[ВОРКЕР #%d] Ошибка Writer relay=%s: %v", sessionID, relayHost, writeErr)
 				return
 			}
-			lastOutbound.Store(time.Now().UnixNano())
 		}
 	}()
 

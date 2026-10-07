@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	neturl "net/url"
 	"strings"
 
@@ -122,6 +124,17 @@ func getVKCredsViaVKCallsPath(ctx context.Context, linkID string, streamID int) 
 		neturl.QueryEscape(fmt.Sprintf(`{"version":2,"device_id":"%s","client_version":"1.0.1"}`, okDeviceID)) +
 		"&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA"
 	resp4, err := doRequest(step4URL)
+	// Retry anonymous login on another resolved endpoint when TCP connected
+	// but the HTTP response timed out. Keep the choice local to this login.
+	for attempt := 1; attempt < len(vkDialIPs("calls.okcdn.ru")) && attempt < 3 && retryVKLoginTimeout(ctx, err); attempt++ {
+		log.Printf("[STREAM %d] [VK Calls] auth timeout, trying next endpoint (%d)", streamID, attempt+1)
+		client.CloseIdleConnections()
+		client, err = newVKHTTPClientOffset(false, attempt)
+		if err != nil {
+			break
+		}
+		resp4, err = doRequest(step4URL)
+	}
 	if err != nil {
 		return "", "", nil, fmt.Errorf("step4 auth.anonymLogin: %w", err)
 	}
@@ -238,4 +251,12 @@ func truncResp(resp map[string]interface{}) string {
 		return fmt.Sprintf("%v", resp)
 	}
 	return truncateBody(string(b), 300)
+}
+
+func retryVKLoginTimeout(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout()
 }

@@ -31,6 +31,10 @@ type TURNProbe struct {
 var turnSettingsMu sync.Mutex
 var turnDiscoveryMu sync.Mutex
 
+func (a *App) GetActiveTURNWorkers() map[string]int {
+	return core.ActiveTURNWorkers()
+}
+
 // Discover credentials without creating TURN allocations, TUN, or VPN workers.
 func (a *App) DiscoverTURNRelays(hashes []string) (TURNSettings, error) {
 	if a.orch != nil && a.orch.IsRunning() && len(core.KnownTURNURLs()) > 0 {
@@ -154,9 +158,6 @@ func (a *App) SaveTURNSelection(preferred []string) error {
 
 func (a *App) ProbeTURNRelays() []TURNProbe {
 	settings := a.GetTURNSettings()
-	if len(settings.Relays) > 32 {
-		settings.Relays = settings.Relays[:32]
-	}
 	ips := []string{}
 	for _, url := range settings.Relays {
 		host, _, _ := net.SplitHostPort(url)

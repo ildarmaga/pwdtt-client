@@ -43,9 +43,30 @@ var (
 	relayHealthMap      = map[string]*relayHealth{}
 	relayLive           = map[string]int{}
 	relayKnownURLs      = map[string]bool{}
+	relayReadyURLs      = map[string]int{}
 	relayPreferences    []string
 	relayPreferencesSet bool
 )
+
+func noteRelayReady(url string, delta int) {
+	relayHealthMu.Lock()
+	defer relayHealthMu.Unlock()
+	relayReadyURLs[url] += delta
+	if relayReadyURLs[url] <= 0 {
+		delete(relayReadyURLs, url)
+	}
+}
+
+// ActiveTURNWorkers counts only sessions that reached READY, not dial attempts.
+func ActiveTURNWorkers() map[string]int {
+	relayHealthMu.Lock()
+	defer relayHealthMu.Unlock()
+	result := make(map[string]int, len(relayReadyURLs))
+	for url, count := range relayReadyURLs {
+		result[url] = count
+	}
+	return result
+}
 
 func SetRelayPreferences(hosts []string) {
 	relayHealthMu.Lock()

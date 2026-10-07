@@ -991,6 +991,9 @@ func (o *Orchestrator) launch(p ConnectParams) (*coreSession, error) {
 		cfg.Hashes = p.Hashes
 	}
 
+	if !cfg.TunAlreadyReady && (tunnelMode == "raw" || tunnelMode == "csqtt") {
+		core.RefreshVKHostIPs()
+	}
 	c := core.New(cfg)
 	c.SetOnTurnIPsUpdated(func(ips []string) {
 		EnsureTurnDirectRoutes(ips)
